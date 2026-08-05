@@ -1,0 +1,34 @@
+name: QuickNote
+options:
+  deploymentTarget:
+    macOS: "14.0"
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    PRODUCT_BUNDLE_IDENTIFIER: com.xixi.quicknote
+    CODE_SIGN_IDENTITY: "-"
+targets:
+  QuickNote:
+    type: application
+    platform: macOS
+    sources: [QuickNote]
+    info:
+      path: QuickNote/Info.plist
+      properties:
+        CFBundleDisplayName: QuickNote
+        LSApplicationCategoryType: public.app-category.productivity
+        NSHighResolutionCapable: true
+  QuickNoteTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources: [QuickNoteTests]
+    dependencies:
+      - target: QuickNote
+schemes:
+  QuickNote:
+    build:
+      targets:
+        QuickNote: all
+        QuickNoteTests: [test]
+    test:
+      targets: [QuickNoteTests]
