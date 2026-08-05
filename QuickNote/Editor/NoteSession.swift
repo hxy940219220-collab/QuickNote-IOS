@@ -27,26 +27,26 @@ final class NoteSession: ObservableObject {
     }
 
     func createAndOpen() throws {
-        try perform(.create(PendingCreate()))
+        try performNew(.create(PendingCreate()))
     }
 
     func open(_ note: NoteRecord) throws {
-        try perform(.open(note))
+        try performNew(.open(note))
     }
 
     @discardableResult
     func createAndOpenRecovering() -> Bool {
-        attempt(.create(PendingCreate()))
+        attemptNew(.create(PendingCreate()))
     }
 
     @discardableResult
     func openRecovering(_ note: NoteRecord) -> Bool {
-        attempt(.open(note))
+        attemptNew(.open(note))
     }
 
     @discardableResult
     func togglePinnedRecovering(_ note: NoteRecord) -> Bool {
-        attempt(.setPinned(note, to: !note.isPinned, updatedAt: .now))
+        attemptNew(.setPinned(note, to: !note.isPinned, updatedAt: .now))
     }
 
     func update(document: NSAttributedString, cursorLocation: Int) {
@@ -78,7 +78,7 @@ final class NoteSession: ObservableObject {
     }
 
     func togglePinned(_ note: NoteRecord) throws {
-        try perform(.setPinned(note, to: !note.isPinned, updatedAt: .now))
+        try performNew(.setPinned(note, to: !note.isPinned, updatedAt: .now))
     }
 
     func flush() throws {
@@ -96,6 +96,19 @@ final class NoteSession: ObservableObject {
         } catch {
             return false
         }
+    }
+
+    private func attemptNew(_ operation: PendingOperation) -> Bool {
+        guard pendingOperation == nil else { return false }
+        return attempt(operation)
+    }
+
+    private func performNew(_ operation: PendingOperation) throws {
+        if pendingOperation != nil {
+            if let saveError { throw saveError }
+            throw SessionError.operationPending
+        }
+        try perform(operation)
     }
 
     private func perform(_ operation: PendingOperation) throws {
@@ -165,5 +178,9 @@ final class NoteSession: ObservableObject {
 
     private final class PendingCreate {
         var note: NoteRecord?
+    }
+
+    private enum SessionError: Error {
+        case operationPending
     }
 }

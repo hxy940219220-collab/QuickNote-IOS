@@ -182,6 +182,12 @@ final class NotePersistenceTests: XCTestCase {
         XCTAssertEqual(try repository.allNotes().count, 1)
         XCTAssertEqual(notificationCount, 0)
 
+        XCTAssertFalse(session.createAndOpenRecovering())
+        XCTAssertNil(session.currentNote)
+        XCTAssertNotNil(session.saveError)
+        XCTAssertEqual(try repository.allNotes().count, 1)
+        XCTAssertEqual(notificationCount, 0)
+
         session.retrySave()
 
         XCTAssertEqual(session.currentNote?.id, pendingNote.id)
