@@ -19,6 +19,18 @@ final class StatusMenuController: NSObject {
         item.menu = menu
     }
 
+    func setShortcutUnavailable() {
+        guard menu.item(withTag: 900) == nil else { return }
+        let warning = NSMenuItem(
+            title: "双击 Command 未启用，请检查键盘监听权限",
+            action: nil,
+            keyEquivalent: ""
+        )
+        warning.tag = 900
+        warning.isEnabled = false
+        menu.insertItem(warning, at: 0)
+    }
+
     @objc private func showPanel() { showAction() }
     @objc private func quit() { quitAction() }
 }

@@ -16,14 +16,25 @@ final class PanelCoordinator {
 
     func toggleFromCommand() throws {
         dismissTask?.cancel()
-        let note: NoteRecord
-        if let currentNote = session.currentNote {
-            note = currentNote
-        } else {
-            note = try repository.recentNotes(limit: 1).first ?? repository.createNote()
+        let isOpening = machine.state == .hidden
+        if isOpening {
+            CaptureLatencyProbe.begin()
         }
-        machine.send(.toggleCommand(noteID: note.id))
-        try render(note: note, activate: true)
+        do {
+            let note: NoteRecord
+            if let currentNote = session.currentNote {
+                note = currentNote
+            } else {
+                note = try repository.recentNotes(limit: 1).first ?? repository.createNote()
+            }
+            machine.send(.toggleCommand(noteID: note.id))
+            try render(note: note, activate: true)
+        } catch {
+            if isOpening {
+                CaptureLatencyProbe.cancel()
+            }
+            throw error
+        }
     }
 
     func hover(note: NoteRecord) throws {

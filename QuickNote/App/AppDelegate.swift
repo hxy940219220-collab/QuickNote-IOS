@@ -55,7 +55,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 showAction: togglePanel,
                 quitAction: { NSApp.terminate(nil) }
             )
-            _ = commandMonitor.start(onDoubleCommand: togglePanel)
+            let monitorStarted = commandMonitor.start(onDoubleCommand: togglePanel)
+            if !monitorStarted {
+                statusMenu?.setShortcutUnavailable()
+            }
 
             modelContainer = container
             self.repository = repository

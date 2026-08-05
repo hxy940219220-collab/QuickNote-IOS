@@ -35,7 +35,9 @@ final class NotePanelController {
                 guard let self,
                       let content = self.panel.contentView,
                       let editor = self.findTextView(in: content) else { return }
-                self.panel.makeFirstResponder(editor)
+                if self.panel.makeFirstResponder(editor) {
+                    CaptureLatencyProbe.end()
+                }
             }
         } else {
             panel.orderFrontRegardless()
@@ -43,6 +45,7 @@ final class NotePanelController {
     }
 
     func hideAndRestoreFocus() {
+        CaptureLatencyProbe.cancel()
         panel.orderOut(nil)
         previousApp?.activate(options: [])
         previousApp = nil
