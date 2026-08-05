@@ -9,13 +9,19 @@ final class EdgeRailController {
         backing: .buffered,
         defer: false
     )
-    private var mouseMonitor: Any?
+    private var globalMouseMonitor: Any?
+    private var localMouseMonitor: Any?
     private var notes: [NoteRecord] = []
     private weak var currentScreen: NSScreen?
     private var hoverTask: Task<Void, Never>?
 
     var onHover: ((NoteRecord) -> Void)?
     var onExit: (() -> Void)?
+
+    isolated deinit {
+        if let globalMouseMonitor { NSEvent.removeMonitor(globalMouseMonitor) }
+        if let localMouseMonitor { NSEvent.removeMonitor(localMouseMonitor) }
+    }
 
     func start(notes: [NoteRecord]) {
         window.level = .floating
@@ -24,8 +30,13 @@ final class EdgeRailController {
         update(notes: notes)
         reposition()
         window.orderFrontRegardless()
-        mouseMonitor = NSEvent.addGlobalMonitorForEvents(matching: .mouseMoved) { [weak self] _ in
+        removeMouseMonitors()
+        globalMouseMonitor = NSEvent.addGlobalMonitorForEvents(matching: .mouseMoved) { [weak self] _ in
             Task { @MainActor in self?.reposition() }
+        }
+        localMouseMonitor = NSEvent.addLocalMonitorForEvents(matching: .mouseMoved) { [weak self] event in
+            self?.reposition()
+            return event
         }
     }
 
@@ -48,6 +59,13 @@ final class EdgeRailController {
             guard !Task.isCancelled else { return }
             self?.onHover?(note)
         }
+    }
+
+    private func removeMouseMonitors() {
+        if let globalMouseMonitor { NSEvent.removeMonitor(globalMouseMonitor) }
+        if let localMouseMonitor { NSEvent.removeMonitor(localMouseMonitor) }
+        globalMouseMonitor = nil
+        localMouseMonitor = nil
     }
 
     private func reposition() {
