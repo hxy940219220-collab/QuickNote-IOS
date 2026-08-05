@@ -120,4 +120,77 @@ final class NotePersistenceTests: XCTestCase {
         XCTAssertTrue(session.isDirty)
         XCTAssertNotNil(session.saveError)
     }
+
+    func testFailedPinPublishesErrorAndRetryPersistsIntendedValueOnce() throws {
+        let configuration = ModelConfiguration(isStoredInMemoryOnly: true)
+        let container = try ModelContainer(for: NoteRecord.self, configurations: configuration)
+        let repository = NoteRepository(context: container.mainContext)
+        let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        var saveAttempt = 0
+        var failingAttempt: Int?
+        let session = NoteSession(
+            repository: repository,
+            documents: NoteDocumentStore(root: root),
+            saveRepository: {
+                saveAttempt += 1
+                if saveAttempt == failingAttempt { throw TestError.saveFailed }
+                try repository.save()
+            }
+        )
+        try session.createAndOpen()
+        let note = try XCTUnwrap(session.currentNote)
+        var notificationCount = 0
+        session.onSaved = { notificationCount += 1 }
+        failingAttempt = 3
+
+        XCTAssertFalse(session.togglePinnedRecovering(note))
+        XCTAssertTrue(note.isPinned)
+        XCTAssertNotNil(session.saveError)
+        XCTAssertEqual(notificationCount, 0)
+
+        session.retrySave()
+
+        XCTAssertTrue(note.isPinned)
+        XCTAssertNil(session.saveError)
+        XCTAssertEqual(notificationCount, 1)
+    }
+
+    func testFailedCreatePublishesErrorAndRetryReusesPendingNote() throws {
+        let configuration = ModelConfiguration(isStoredInMemoryOnly: true)
+        let container = try ModelContainer(for: NoteRecord.self, configurations: configuration)
+        let repository = NoteRepository(context: container.mainContext)
+        let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        var shouldFail = true
+        let session = NoteSession(
+            repository: repository,
+            documents: NoteDocumentStore(root: root),
+            saveRepository: {
+                if shouldFail {
+                    shouldFail = false
+                    throw TestError.saveFailed
+                }
+                try repository.save()
+            }
+        )
+        var notificationCount = 0
+        session.onSaved = { notificationCount += 1 }
+
+        XCTAssertFalse(session.createAndOpenRecovering())
+        let pendingNote = try XCTUnwrap(repository.allNotes().first)
+        XCTAssertNil(session.currentNote)
+        XCTAssertNotNil(session.saveError)
+        XCTAssertEqual(try repository.allNotes().count, 1)
+        XCTAssertEqual(notificationCount, 0)
+
+        session.retrySave()
+
+        XCTAssertEqual(session.currentNote?.id, pendingNote.id)
+        XCTAssertNil(session.saveError)
+        XCTAssertEqual(try repository.allNotes().count, 1)
+        XCTAssertEqual(notificationCount, 1)
+    }
+}
+
+private enum TestError: Error {
+    case saveFailed
 }

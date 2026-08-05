@@ -10,28 +10,43 @@ final class NoteSession: ObservableObject {
 
     private let repository: NoteRepository
     private let documents: NoteDocumentStore
+    private let saveRepository: () throws -> Void
     private var saveTask: Task<Void, Never>?
+    private var pendingOperation: PendingOperation?
 
     var onSaved: (() -> Void)?
 
-    init(repository: NoteRepository, documents: NoteDocumentStore) {
+    init(
+        repository: NoteRepository,
+        documents: NoteDocumentStore,
+        saveRepository: (() throws -> Void)? = nil
+    ) {
         self.repository = repository
         self.documents = documents
+        self.saveRepository = saveRepository ?? repository.save
     }
 
     func createAndOpen() throws {
-        try flush()
-        let note = repository.createNote()
-        try repository.save()
-        currentNote = note
-        document = try documents.load(id: note.id)
+        try perform(.create(PendingCreate()))
     }
 
     func open(_ note: NoteRecord) throws {
-        try flush()
-        let loadedDocument = try documents.load(id: note.id)
-        currentNote = note
-        document = loadedDocument
+        try perform(.open(note))
+    }
+
+    @discardableResult
+    func createAndOpenRecovering() -> Bool {
+        attempt(.create(PendingCreate()))
+    }
+
+    @discardableResult
+    func openRecovering(_ note: NoteRecord) -> Bool {
+        attempt(.open(note))
+    }
+
+    @discardableResult
+    func togglePinnedRecovering(_ note: NoteRecord) -> Bool {
+        attempt(.setPinned(note, to: !note.isPinned, updatedAt: .now))
     }
 
     func update(document: NSAttributedString, cursorLocation: Int) {
@@ -51,21 +66,75 @@ final class NoteSession: ObservableObject {
     }
 
     func retrySave() {
+        if let pendingOperation {
+            _ = attempt(pendingOperation)
+            return
+        }
         do {
-            try flush()
+            try persistCurrent(notify: true)
         } catch {
             saveError = error
         }
     }
 
     func togglePinned(_ note: NoteRecord) throws {
-        note.isPinned.toggle()
-        note.updatedAt = .now
-        try repository.save()
-        onSaved?()
+        try perform(.setPinned(note, to: !note.isPinned, updatedAt: .now))
     }
 
     func flush() throws {
+        if let pendingOperation {
+            try perform(pendingOperation)
+        } else {
+            try persistCurrent(notify: true)
+        }
+    }
+
+    private func attempt(_ operation: PendingOperation) -> Bool {
+        do {
+            try perform(operation)
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    private func perform(_ operation: PendingOperation) throws {
+        do {
+            try execute(operation)
+        } catch {
+            pendingOperation = operation
+            saveError = error
+            throw error
+        }
+        pendingOperation = nil
+        saveError = nil
+        onSaved?()
+    }
+
+    private func execute(_ operation: PendingOperation) throws {
+        switch operation {
+        case let .open(note):
+            try persistCurrent(notify: false)
+            let loadedDocument = try documents.load(id: note.id)
+            currentNote = note
+            document = loadedDocument
+        case let .create(pending):
+            try persistCurrent(notify: false)
+            let note = pending.note ?? repository.createNote()
+            pending.note = note
+            try saveRepository()
+            let loadedDocument = try documents.load(id: note.id)
+            currentNote = note
+            document = loadedDocument
+        case let .setPinned(note, intendedValue, updatedAt):
+            try persistCurrent(notify: false)
+            note.isPinned = intendedValue
+            note.updatedAt = updatedAt
+            try saveRepository()
+        }
+    }
+
+    private func persistCurrent(notify: Bool) throws {
         saveTask?.cancel()
         saveTask = nil
         guard let note = currentNote else { return }
@@ -77,7 +146,7 @@ final class NoteSession: ObservableObject {
                 .map { $0.trimmingCharacters(in: .whitespaces) }
                 .first(where: { !$0.isEmpty }) ?? "新便签"
             note.updatedAt = .now
-            try repository.save()
+            try saveRepository()
         } catch {
             isDirty = true
             saveError = error
@@ -85,6 +154,16 @@ final class NoteSession: ObservableObject {
         }
         isDirty = false
         saveError = nil
-        onSaved?()
+        if notify { onSaved?() }
+    }
+
+    private enum PendingOperation {
+        case open(NoteRecord)
+        case create(PendingCreate)
+        case setPinned(NoteRecord, to: Bool, updatedAt: Date)
+    }
+
+    private final class PendingCreate {
+        var note: NoteRecord?
     }
 }

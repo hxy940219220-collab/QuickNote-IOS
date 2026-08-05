@@ -49,25 +49,16 @@ struct RootNoteView: View {
     }
 
     private func open(_ note: NoteRecord) {
-        do {
-            try session.open(note)
-            session.onSaved?()
-            drawerOpen = false
-        } catch {}
+        if session.openRecovering(note) { drawerOpen = false }
     }
 
     private func create() {
-        do {
-            try session.createAndOpen()
-            session.onSaved?()
-            drawerOpen = false
-        } catch {}
+        if session.createAndOpenRecovering() { drawerOpen = false }
     }
 
     private func togglePin(_ note: NoteRecord) {
-        do {
-            try session.togglePinned(note)
-            notes = try allNotes()
-        } catch {}
+        if session.togglePinnedRecovering(note) {
+            notes = (try? allNotes()) ?? notes
+        }
     }
 }
