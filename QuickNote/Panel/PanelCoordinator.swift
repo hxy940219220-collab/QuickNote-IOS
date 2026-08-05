@@ -36,6 +36,21 @@ final class PanelCoordinator {
     func activateEditor() {
         dismissTask?.cancel()
         machine.send(.editorActivated)
+        session.retrySave()
+    }
+
+    func presentCurrentNote() throws {
+        guard let note = session.currentNote else { return }
+        dismissTask?.cancel()
+        switch machine.state {
+        case .hidden:
+            machine.send(.toggleCommand(noteID: note.id))
+        case .transient:
+            machine.send(.editorActivated)
+        case .editing:
+            break
+        }
+        try render(note: note, activate: true)
     }
 
     func pointerExited() {
