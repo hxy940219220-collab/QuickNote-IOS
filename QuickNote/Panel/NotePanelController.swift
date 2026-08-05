@@ -32,11 +32,19 @@ final class NotePanelController {
             NSApp.activate(ignoringOtherApps: true)
             panel.makeKeyAndOrderFront(nil)
             DispatchQueue.main.async { [weak self] in
-                guard let self,
-                      let content = self.panel.contentView,
-                      let editor = self.findTextView(in: content) else { return }
+                guard let self else {
+                    CaptureLatencyProbe.cancel()
+                    return
+                }
+                guard let content = self.panel.contentView,
+                      let editor = self.findTextView(in: content) else {
+                    CaptureLatencyProbe.cancel()
+                    return
+                }
                 if self.panel.makeFirstResponder(editor) {
                     CaptureLatencyProbe.end()
+                } else {
+                    CaptureLatencyProbe.cancel()
                 }
             }
         } else {
