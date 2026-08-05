@@ -1,5 +1,6 @@
 import AppKit
 import SwiftData
+import SwiftUI
 import XCTest
 @testable import QuickNote
 
@@ -17,22 +18,50 @@ final class NotePersistenceTests: XCTestCase {
         let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
         let store = NoteDocumentStore(root: root)
         let id = UUID()
-        let image = NSImage(size: NSSize(width: 2, height: 2))
-        image.lockFocus()
-        NSColor.systemBlue.setFill()
-        NSRect(x: 0, y: 0, width: 2, height: 2).fill()
-        image.unlockFocus()
         let attachment = NSTextAttachment()
-        attachment.image = image
+        attachment.image = testImage()
         let document = NSMutableAttributedString(string: "图：")
         document.append(NSAttributedString(attachment: attachment))
         try store.save(document, id: id)
         let loaded = try store.load(id: id)
-        var count = 0
-        loaded.enumerateAttribute(.attachment, in: NSRange(location: 0, length: loaded.length)) { value, _, _ in
-            if value is NSTextAttachment { count += 1 }
-        }
-        XCTAssertEqual(count, 1)
+        XCTAssertEqual(loaded.attachmentCount, 1)
+    }
+
+    func testPastedImageAutosavesAndReopensThroughEditor() async throws {
+        let configuration = ModelConfiguration(isStoredInMemoryOnly: true)
+        let container = try ModelContainer(for: NoteRecord.self, configurations: configuration)
+        let repository = NoteRepository(context: container.mainContext)
+        let documents = NoteDocumentStore(
+            root: FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        )
+        let session = NoteSession(repository: repository, documents: documents)
+        try session.createAndOpen()
+        let note = try XCTUnwrap(session.currentNote)
+        let editor = RichTextEditor(
+            document: session.document,
+            cursorLocation: 0,
+            onChange: session.update,
+            onActivate: {}
+        )
+        let host = NSHostingView(rootView: editor)
+        host.frame = NSRect(x: 0, y: 0, width: 320, height: 240)
+        host.layoutSubtreeIfNeeded()
+        let textView = try XCTUnwrap(host.descendant(ofType: NSTextView.self))
+        let pasteboard = NSPasteboard(name: NSPasteboard.Name(UUID().uuidString))
+        pasteboard.clearContents()
+        XCTAssertTrue(pasteboard.writeObjects([testImage()]))
+
+        XCTAssertTrue(textView.readSelection(from: pasteboard))
+        try await Task.sleep(for: .milliseconds(400))
+
+        let reopened = NoteSession(repository: repository, documents: documents)
+        try reopened.open(note)
+        XCTAssertEqual(reopened.document.attachmentCount, 1)
+        let attachment = try XCTUnwrap(
+            reopened.document.attribute(.attachment, at: 0, effectiveRange: nil) as? NSTextAttachment
+        )
+        let imageData = try XCTUnwrap(attachment.fileWrapper?.regularFileContents)
+        XCTAssertNotNil(NSImage(data: imageData))
     }
 
     func testSessionFlushesDocumentMetadataAndCursor() throws {
@@ -199,4 +228,30 @@ final class NotePersistenceTests: XCTestCase {
 
 private enum TestError: Error {
     case saveFailed
+}
+
+private extension NSView {
+    func descendant<T: NSView>(ofType type: T.Type) -> T? {
+        if let match = self as? T { return match }
+        return subviews.lazy.compactMap { $0.descendant(ofType: type) }.first
+    }
+}
+
+private extension NSAttributedString {
+    var attachmentCount: Int {
+        var count = 0
+        enumerateAttribute(.attachment, in: NSRange(location: 0, length: length)) { value, _, _ in
+            if value is NSTextAttachment { count += 1 }
+        }
+        return count
+    }
+}
+
+private func testImage() -> NSImage {
+    let image = NSImage(size: NSSize(width: 2, height: 2))
+    image.lockFocus()
+    NSColor.systemBlue.setFill()
+    NSRect(x: 0, y: 0, width: 2, height: 2).fill()
+    image.unlockFocus()
+    return image
 }
