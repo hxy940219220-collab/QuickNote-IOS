@@ -5,6 +5,8 @@ import Combine
 final class NoteSession: ObservableObject {
     @Published private(set) var currentNote: NoteRecord?
     @Published private(set) var document = NSAttributedString(string: "")
+    @Published private(set) var isDirty = false
+    @Published private(set) var saveError: (any Error)?
 
     private let repository: NoteRepository
     private let documents: NoteDocumentStore
@@ -18,9 +20,11 @@ final class NoteSession: ObservableObject {
     }
 
     func createAndOpen() throws {
+        try flush()
         let note = repository.createNote()
         try repository.save()
-        try open(note)
+        currentNote = note
+        document = try documents.load(id: note.id)
     }
 
     func open(_ note: NoteRecord) throws {
@@ -33,11 +37,24 @@ final class NoteSession: ObservableObject {
     func update(document: NSAttributedString, cursorLocation: Int) {
         self.document = NSAttributedString(attributedString: document)
         currentNote?.cursorLocation = cursorLocation
+        isDirty = true
         saveTask?.cancel()
         saveTask = Task { @MainActor [weak self] in
-            try? await Task.sleep(for: .milliseconds(250))
+            do {
+                try await Task.sleep(for: .milliseconds(250))
+            } catch {
+                return
+            }
             guard !Task.isCancelled else { return }
-            try? self?.flush()
+            self?.retrySave()
+        }
+    }
+
+    func retrySave() {
+        do {
+            try flush()
+        } catch {
+            saveError = error
         }
     }
 
@@ -52,14 +69,22 @@ final class NoteSession: ObservableObject {
         saveTask?.cancel()
         saveTask = nil
         guard let note = currentNote else { return }
-        try documents.save(document, id: note.id)
-        note.plainText = document.string
-        note.title = document.string
-            .components(separatedBy: .newlines)
-            .map { $0.trimmingCharacters(in: .whitespaces) }
-            .first(where: { !$0.isEmpty }) ?? "新便签"
-        note.updatedAt = .now
-        try repository.save()
+        do {
+            try documents.save(document, id: note.id)
+            note.plainText = document.string
+            note.title = document.string
+                .components(separatedBy: .newlines)
+                .map { $0.trimmingCharacters(in: .whitespaces) }
+                .first(where: { !$0.isEmpty }) ?? "新便签"
+            note.updatedAt = .now
+            try repository.save()
+        } catch {
+            isDirty = true
+            saveError = error
+            throw error
+        }
+        isDirty = false
+        saveError = nil
         onSaved?()
     }
 }

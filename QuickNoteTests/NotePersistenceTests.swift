@@ -75,4 +75,49 @@ final class NotePersistenceTests: XCTestCase {
         XCTAssertEqual(note.cursorLocation, 4)
         XCTAssertEqual(try documents.load(id: note.id).string, "最新内容")
     }
+
+    func testAutosaveFailurePreservesDirtyDocumentAndCanRetry() async throws {
+        let configuration = ModelConfiguration(isStoredInMemoryOnly: true)
+        let container = try ModelContainer(for: NoteRecord.self, configurations: configuration)
+        let repository = NoteRepository(context: container.mainContext)
+        let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        try Data().write(to: root)
+        let documents = NoteDocumentStore(root: root)
+        let session = NoteSession(repository: repository, documents: documents)
+        try session.createAndOpen()
+        let note = try XCTUnwrap(session.currentNote)
+
+        session.update(document: NSAttributedString(string: "不能丢的内容"), cursorLocation: 6)
+        try await Task.sleep(for: .milliseconds(400))
+
+        XCTAssertTrue(session.isDirty)
+        XCTAssertNotNil(session.saveError)
+        XCTAssertEqual(session.document.string, "不能丢的内容")
+        XCTAssertEqual(note.plainText, "")
+
+        try FileManager.default.removeItem(at: root)
+        session.retrySave()
+
+        XCTAssertFalse(session.isDirty)
+        XCTAssertNil(session.saveError)
+        XCTAssertEqual(try documents.load(id: note.id).string, "不能丢的内容")
+    }
+
+    func testCreateAndOpenDoesNotCreateNoteWhenOutgoingFlushFails() throws {
+        let configuration = ModelConfiguration(isStoredInMemoryOnly: true)
+        let container = try ModelContainer(for: NoteRecord.self, configurations: configuration)
+        let repository = NoteRepository(context: container.mainContext)
+        let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        try Data().write(to: root)
+        let session = NoteSession(repository: repository, documents: NoteDocumentStore(root: root))
+        try session.createAndOpen()
+        session.update(document: NSAttributedString(string: "待保存"), cursorLocation: 3)
+
+        XCTAssertThrowsError(try session.createAndOpen())
+
+        XCTAssertEqual(try repository.allNotes().count, 1)
+        XCTAssertEqual(session.document.string, "待保存")
+        XCTAssertTrue(session.isDirty)
+        XCTAssertNotNil(session.saveError)
+    }
 }
