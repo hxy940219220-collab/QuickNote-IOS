@@ -1,0 +1,29 @@
+import XCTest
+@testable import QuickNote
+
+final class DoubleCommandDetectorTests: XCTestCase {
+    func testTwoCompletePressesWithinWindowTrigger() {
+        var detector = DoubleCommandDetector(maxInterval: 0.300)
+        XCTAssertFalse(detector.observe(.commandChanged(isDown: true, time: 1.00)))
+        XCTAssertFalse(detector.observe(.commandChanged(isDown: false, time: 1.04)))
+        XCTAssertFalse(detector.observe(.commandChanged(isDown: true, time: 1.20)))
+        XCTAssertTrue(detector.observe(.commandChanged(isDown: false, time: 1.24)))
+    }
+
+    func testOtherKeyCancelsPendingPress() {
+        var detector = DoubleCommandDetector(maxInterval: 0.300)
+        _ = detector.observe(.commandChanged(isDown: true, time: 1.00))
+        _ = detector.observe(.commandChanged(isDown: false, time: 1.04))
+        _ = detector.observe(.otherKey)
+        _ = detector.observe(.commandChanged(isDown: true, time: 1.20))
+        XCTAssertFalse(detector.observe(.commandChanged(isDown: false, time: 1.24)))
+    }
+
+    func testSlowSecondPressDoesNotTrigger() {
+        var detector = DoubleCommandDetector(maxInterval: 0.300)
+        _ = detector.observe(.commandChanged(isDown: true, time: 1.00))
+        _ = detector.observe(.commandChanged(isDown: false, time: 1.04))
+        _ = detector.observe(.commandChanged(isDown: true, time: 1.50))
+        XCTAssertFalse(detector.observe(.commandChanged(isDown: false, time: 1.54)))
+    }
+}
