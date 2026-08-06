@@ -37,6 +37,9 @@ final class RichTextEditorController: ObservableObject {
     private static let linkDetector = try? NSDataDetector(
         types: NSTextCheckingResult.CheckingType.link.rawValue
     )
+    private static let listPrefix = try? NSRegularExpression(
+        pattern: #"^([\t ]*)(\d+|[A-Za-z])\.\s+"#
+    )
 
     func connect(_ textView: NSTextView) {
         self.textView = textView
@@ -154,6 +157,46 @@ final class RichTextEditorController: ObservableObject {
                   storage.attribute(.link, at: result.range.location, effectiveRange: nil) == nil else { return }
             storage.addAttribute(.link, value: url, range: result.range)
         }
+    }
+
+    @discardableResult
+    func continueListAfterNewline() -> Bool {
+        guard let textView, let storage = textView.textStorage else { return false }
+        let selection = textView.selectedRange()
+        guard selection.length == 0 else { return false }
+        let paragraph = (storage.string as NSString).paragraphRange(for: selection)
+        let beforeCursor = NSRange(
+            location: paragraph.location,
+            length: selection.location - paragraph.location
+        )
+        let line = (storage.string as NSString).substring(with: beforeCursor)
+        let lineRange = NSRange(location: 0, length: (line as NSString).length)
+        guard let match = Self.listPrefix?.firstMatch(in: line, range: lineRange) else { return false }
+        if match.range.length == lineRange.length {
+            storage.deleteCharacters(in: beforeCursor)
+            commit(textView, preserving: NSRange(location: paragraph.location, length: 0))
+            return true
+        }
+        let value = line as NSString
+        let indentation = value.substring(with: match.range(at: 1))
+        let marker = value.substring(with: match.range(at: 2))
+        let next: String
+        if let number = Int(marker) {
+            next = String(number + 1)
+        } else {
+            guard let scalar = marker.unicodeScalars.first,
+                  scalar.value != 90,
+                  scalar.value != 122,
+                  let following = UnicodeScalar(scalar.value + 1) else { return false }
+            next = String(following)
+        }
+        let content = NSAttributedString(
+            string: "\n\(indentation)\(next). ",
+            attributes: textView.typingAttributes
+        )
+        storage.replaceCharacters(in: selection, with: content)
+        commit(textView, preserving: NSRange(location: selection.location + content.length, length: 0))
+        return true
     }
 
     func insertChecklistItem() {
@@ -514,6 +557,11 @@ struct RichTextEditor: NSViewRepresentable {
         func textDidChange(_ notification: Notification) {
             guard let textView = notification.object as? NSTextView else { return }
             owner.onChange(textView.attributedString(), textView.selectedRange().location)
+        }
+
+        func textView(_ textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
+            guard commandSelector == #selector(NSResponder.insertNewline(_:)) else { return false }
+            return owner.controller.continueListAfterNewline()
         }
 
         func textView(

@@ -223,6 +223,63 @@ final class NotePersistenceTests: XCTestCase {
         XCTAssertNotNil(textView.textStorage?.attribute(.link, at: 0, effectiveRange: nil))
     }
 
+    func testNumberedLineContinuesAfterNewline() throws {
+        let controller = RichTextEditorController()
+        var document = NSAttributedString(string: "1. 第一项")
+        let editor = RichTextEditor(
+            document: document,
+            cursorLocation: document.length,
+            controller: controller,
+            onChange: { updated, _ in document = updated },
+            onActivate: {}
+        )
+        let host = NSHostingView(rootView: editor)
+        host.frame = NSRect(x: 0, y: 0, width: 320, height: 240)
+        host.layoutSubtreeIfNeeded()
+        _ = try XCTUnwrap(host.descendant(ofType: NSTextView.self))
+
+        XCTAssertTrue(controller.continueListAfterNewline())
+        XCTAssertEqual(document.string, "1. 第一项\n2. ")
+    }
+
+    func testAlphabeticLineContinuesAfterNewline() throws {
+        let controller = RichTextEditorController()
+        var document = NSAttributedString(string: "B. 第二项")
+        let editor = RichTextEditor(
+            document: document,
+            cursorLocation: document.length,
+            controller: controller,
+            onChange: { updated, _ in document = updated },
+            onActivate: {}
+        )
+        let host = NSHostingView(rootView: editor)
+        host.frame = NSRect(x: 0, y: 0, width: 320, height: 240)
+        host.layoutSubtreeIfNeeded()
+        _ = try XCTUnwrap(host.descendant(ofType: NSTextView.self))
+
+        XCTAssertTrue(controller.continueListAfterNewline())
+        XCTAssertEqual(document.string, "B. 第二项\nC. ")
+    }
+
+    func testEmptyNumberedLineExitsSequence() throws {
+        let controller = RichTextEditorController()
+        var document = NSAttributedString(string: "1. 第一项\n2. ")
+        let editor = RichTextEditor(
+            document: document,
+            cursorLocation: document.length,
+            controller: controller,
+            onChange: { updated, _ in document = updated },
+            onActivate: {}
+        )
+        let host = NSHostingView(rootView: editor)
+        host.frame = NSRect(x: 0, y: 0, width: 320, height: 240)
+        host.layoutSubtreeIfNeeded()
+        _ = try XCTUnwrap(host.descendant(ofType: NSTextView.self))
+
+        XCTAssertTrue(controller.continueListAfterNewline())
+        XCTAssertEqual(document.string, "1. 第一项\n")
+    }
+
     func testTextBackgroundColorCanBeAppliedAndCleared() throws {
         let controller = RichTextEditorController()
         var document = NSAttributedString(string: "背景颜色")
