@@ -96,6 +96,63 @@ final class NotePersistenceTests: XCTestCase {
         XCTAssertEqual(document.attachmentCount, 1)
     }
 
+    func testTableInsertionPlacesCaretInVisibleParagraphBelowTable() throws {
+        let controller = RichTextEditorController()
+        var document = NSAttributedString(string: "提示词")
+        let editor = RichTextEditor(
+            document: document,
+            cursorLocation: document.length,
+            controller: controller,
+            onChange: { updated, _ in document = updated },
+            onActivate: {}
+        )
+        let host = NSHostingView(rootView: editor)
+        host.frame = NSRect(x: 0, y: 0, width: 320, height: 240)
+        host.layoutSubtreeIfNeeded()
+        let textView = try XCTUnwrap(host.descendant(ofType: NSTextView.self))
+
+        controller.insertTable()
+
+        let caret = textView.selectedRange()
+        XCTAssertLessThan(caret.location, document.length)
+        if caret.location < document.length {
+            let style = document.attribute(.paragraphStyle, at: caret.location, effectiveRange: nil)
+                as? NSParagraphStyle
+            XCTAssertTrue(style?.textBlocks.isEmpty ?? true)
+        }
+    }
+
+    func testDeleteCurrentTableRemovesAllCellsAndPreservesSurroundingText() throws {
+        let controller = RichTextEditorController()
+        var document = NSAttributedString(string: "表格前")
+        let editor = RichTextEditor(
+            document: document,
+            cursorLocation: document.length,
+            controller: controller,
+            onChange: { updated, _ in document = updated },
+            onActivate: {}
+        )
+        let host = NSHostingView(rootView: editor)
+        host.frame = NSRect(x: 0, y: 0, width: 320, height: 240)
+        host.layoutSubtreeIfNeeded()
+        let textView = try XCTUnwrap(host.descendant(ofType: NSTextView.self))
+        controller.insertTable()
+        var firstCellLocation: Int?
+        document.enumerateAttribute(.paragraphStyle, in: NSRange(location: 0, length: document.length)) {
+            value, range, stop in
+            guard (value as? NSParagraphStyle)?.textBlocks.contains(where: { $0 is NSTextTableBlock }) == true else {
+                return
+            }
+            firstCellLocation = range.location
+            stop.pointee = true
+        }
+        textView.setSelectedRange(NSRange(location: try XCTUnwrap(firstCellLocation), length: 0))
+
+        XCTAssertTrue(controller.deleteCurrentTable())
+        XCTAssertEqual(document.tableBlockCount, 0)
+        XCTAssertTrue(document.string.contains("表格前"))
+    }
+
     func testTagsPersistAndParticipateInSearch() throws {
         let configuration = ModelConfiguration(isStoredInMemoryOnly: true)
         let container = try ModelContainer(for: NoteRecord.self, configurations: configuration)

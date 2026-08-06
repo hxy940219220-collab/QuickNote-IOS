@@ -21,42 +21,59 @@ struct RootNoteView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 8) {
-                toolbarButton(
-                    "便签列表",
-                    systemImage: "sidebar.left",
-                    action: toggleDrawer
-                )
-                .offset(y: -1)
-                .keyboardShortcut("k", modifiers: .command)
+            ZStack {
+                HStack(spacing: 8) {
+                    toolbarButton(
+                        "便签列表",
+                        systemImage: "sidebar.left",
+                        action: toggleDrawer
+                    )
+                    .offset(y: -1)
+                    .keyboardShortcut("k", modifiers: .command)
 
-                TimelineView(.periodic(from: .now, by: 60)) { context in
-                    Button {
-                        selectedDate = context.date
-                        calendarPresented.toggle()
-                    } label: {
-                        Text(CalendarText.toolbarDate(for: context.date))
-                            .font(.system(size: 12, weight: .medium))
+                    TimelineView(.periodic(from: .now, by: 60)) { context in
+                        Button {
+                            selectedDate = context.date
+                            calendarPresented.toggle()
+                        } label: {
+                            Text(CalendarText.toolbarDate(for: context.date))
+                                .font(.system(size: 12, weight: .medium))
+                        }
+                        .buttonStyle(.borderless)
+                        .help("查看日历")
+                        .accessibilityLabel(CalendarText.fullDate(for: context.date))
+                        .popover(isPresented: $calendarPresented, arrowEdge: .top) {
+                            CalendarPopoverView(selectedDate: $selectedDate)
+                        }
                     }
-                    .buttonStyle(.borderless)
-                    .help("查看日历")
-                    .accessibilityLabel(CalendarText.fullDate(for: context.date))
-                    .popover(isPresented: $calendarPresented, arrowEdge: .top) {
-                        CalendarPopoverView(selectedDate: $selectedDate)
+
+                    Spacer(minLength: 8)
+
+                    toolbarButton("权限与快捷键帮助", systemImage: "questionmark.circle") {
+                        helpPresented.toggle()
                     }
+                    .popover(isPresented: $helpPresented, arrowEdge: .top) {
+                        QuickNoteHelpView()
+                    }
+
+                    toolbarButton("AI 模型", systemImage: "sparkles", action: showAISettings)
+
+                    toolbarButton(
+                        windowLocked ? "取消锁定" : "锁定在最前",
+                        systemImage: windowLocked ? "lock.fill" : "lock.open",
+                        action: toggleWindowLock
+                    )
+
+                    toolbarButton("新建便签", systemImage: "square.and.pencil", action: create)
+                        .keyboardShortcut("n", modifiers: .command)
                 }
+                .padding(.leading, 74)
+                .padding(.trailing, 10)
 
                 HStack(spacing: 2) {
-                    Button {
+                    toolbarButton("格式", systemImage: "textformat") {
                         formatPresented.toggle()
-                    } label: {
-                        Text("格式")
-                            .font(.system(size: 12, weight: .medium))
-                            .frame(height: 26)
-                            .padding(.horizontal, 6)
                     }
-                    .buttonStyle(.borderless)
-                    .help("格式")
                     .popover(isPresented: $formatPresented, arrowEdge: .top) {
                         NoteFormatPopover(controller: editorController)
                     }
@@ -68,38 +85,31 @@ struct RootNoteView: View {
                         NoteTagsPopover(session: session)
                     }
 
-                    toolbarButton("插入表格", systemImage: "tablecells") {
-                        editorController.insertTable()
+                    Menu {
+                        Button("插入 2 × 2 表格", systemImage: "tablecells") {
+                            editorController.insertTable()
+                        }
+                        Divider()
+                        Button("删除当前表格", systemImage: "trash", role: .destructive) {
+                            if !editorController.deleteCurrentTable() { NSSound.beep() }
+                        }
+                    } label: {
+                        Image(systemName: "tablecells")
+                            .frame(width: 26, height: 26)
+                            .contentShape(Rectangle())
                     }
+                    .menuStyle(.borderlessButton)
+                    .menuIndicator(.hidden)
+                    .fixedSize()
+                    .help("表格")
+                    .accessibilityLabel("表格")
 
                     toolbarButton("插入文件", systemImage: "paperclip", action: chooseFiles)
                 }
                 .padding(.horizontal, 4)
                 .frame(height: 30)
                 .background(Color(nsColor: .controlBackgroundColor), in: Capsule())
-
-                Spacer(minLength: 8)
-
-                toolbarButton("权限与快捷键帮助", systemImage: "questionmark.circle") {
-                    helpPresented.toggle()
-                }
-                .popover(isPresented: $helpPresented, arrowEdge: .top) {
-                    QuickNoteHelpView()
-                }
-
-                toolbarButton("AI 模型", systemImage: "sparkles", action: showAISettings)
-
-                toolbarButton(
-                    windowLocked ? "取消锁定" : "锁定在最前",
-                    systemImage: windowLocked ? "lock.fill" : "lock.open",
-                    action: toggleWindowLock
-                )
-
-                toolbarButton("新建便签", systemImage: "square.and.pencil", action: create)
-                    .keyboardShortcut("n", modifiers: .command)
             }
-            .padding(.leading, 74)
-            .padding(.trailing, 10)
             .frame(height: 38)
             .background(Color(nsColor: .windowBackgroundColor))
 
@@ -227,7 +237,11 @@ struct RootNoteView: View {
 
 private struct NoteFormatPopover: View {
     let controller: RichTextEditorController
-    @State private var textColor = Color(nsColor: .labelColor)
+    private let textColors: [(name: String, color: NSColor)] = [
+        ("默认", .labelColor), ("红色", .systemRed), ("橙色", .systemOrange),
+        ("黄色", .systemYellow), ("绿色", .systemGreen), ("薄荷色", .systemMint),
+        ("青色", .systemCyan), ("蓝色", .systemBlue), ("紫色", .systemPurple), ("粉色", .systemPink),
+    ]
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -240,17 +254,34 @@ private struct NoteFormatPopover: View {
                     .underline()
                 formatButton("S", help: "删除线", action: controller.toggleStrikethrough)
                     .strikethrough()
-                Divider().frame(height: 24)
-                ColorPicker("文字颜色", selection: $textColor, supportsOpacity: false)
-                    .labelsHidden()
-                    .frame(width: 28)
-                    .onChange(of: textColor) { _, color in
-                        controller.applyTextColor(NSColor(color))
-                    }
             }
             .padding(.bottom, 10)
 
             Divider()
+
+            Text("文字颜色")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(.secondary)
+                .padding(.top, 10)
+                .padding(.bottom, 7)
+
+            HStack(spacing: 4) {
+                ForEach(textColors, id: \.name) { item in
+                    Button {
+                        controller.applyTextColor(item.color)
+                    } label: {
+                        Circle()
+                            .fill(Color(nsColor: item.color))
+                            .frame(width: 16, height: 16)
+                            .overlay(Circle().stroke(Color.primary.opacity(0.14), lineWidth: 0.5))
+                    }
+                    .buttonStyle(.plain)
+                    .help(item.name)
+                    .accessibilityLabel("文字颜色：\(item.name)")
+                }
+            }
+
+            Divider().padding(.vertical, 10)
 
             ForEach(EditorTextStyle.allCases) { style in
                 Button {

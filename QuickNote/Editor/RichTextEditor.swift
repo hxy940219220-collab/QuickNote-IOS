@@ -129,8 +129,38 @@ final class RichTextEditorController: ObservableObject {
                 ))
             }
         }
-        content.append(NSAttributedString(string: "\n", attributes: [.font: NSFont.systemFont(ofSize: 15)]))
-        replaceSelection(with: content, in: textView)
+        let bodyParagraph = NSMutableParagraphStyle()
+        bodyParagraph.paragraphSpacingBefore = 6
+        content.append(NSAttributedString(
+            string: " \n",
+            attributes: [.font: NSFont.systemFont(ofSize: 15), .paragraphStyle: bodyParagraph]
+        ))
+        replaceSelection(
+            with: content,
+            in: textView,
+            selecting: NSRange(location: content.length - 2, length: 1)
+        )
+    }
+
+    @discardableResult
+    func deleteCurrentTable() -> Bool {
+        guard let textView, let storage = textView.textStorage, storage.length > 0 else { return false }
+        let cursor = min(textView.selectedRange().location, storage.length - 1)
+        guard let style = storage.attribute(.paragraphStyle, at: cursor, effectiveRange: nil) as? NSParagraphStyle,
+              let table = style.textBlocks.compactMap({ $0 as? NSTextTableBlock }).first?.table else {
+            return false
+        }
+        var tableRange = NSRange(location: NSNotFound, length: 0)
+        storage.enumerateAttribute(.paragraphStyle, in: NSRange(location: 0, length: storage.length)) {
+            value, range, _ in
+            let blocks = (value as? NSParagraphStyle)?.textBlocks.compactMap { $0 as? NSTextTableBlock } ?? []
+            guard blocks.contains(where: { $0.table === table }) else { return }
+            tableRange = tableRange.location == NSNotFound ? range : NSUnionRange(tableRange, range)
+        }
+        guard tableRange.location != NSNotFound else { return false }
+        storage.deleteCharacters(in: tableRange)
+        commit(textView, preserving: NSRange(location: min(tableRange.location, storage.length), length: 0))
+        return true
     }
 
     func insertFiles(_ urls: [URL]) throws {
@@ -218,10 +248,17 @@ final class RichTextEditorController: ObservableObject {
         }
     }
 
-    private func replaceSelection(with content: NSAttributedString, in textView: NSTextView) {
+    private func replaceSelection(
+        with content: NSAttributedString,
+        in textView: NSTextView,
+        selecting relativeSelection: NSRange? = nil
+    ) {
         let range = textView.selectedRange()
         textView.textStorage?.replaceCharacters(in: range, with: content)
-        commit(textView, preserving: NSRange(location: range.location + content.length, length: 0))
+        let selection = relativeSelection.map {
+            NSRange(location: range.location + $0.location, length: $0.length)
+        } ?? NSRange(location: range.location + content.length, length: 0)
+        commit(textView, preserving: selection)
     }
 
     private func commit(_ textView: NSTextView, preserving selection: NSRange) {
