@@ -25,6 +25,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var panelCoordinator: PanelCoordinator?
     private var edgeRail: EdgeRailController?
     private var selectionActions: SelectionActionController?
+    private var aiSettings: AISettingsController?
     private var presentationLifecycle: AppPresentationLifecycle?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -73,12 +74,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let presentationLifecycle = AppPresentationLifecycle {
                 try? coordinator.presentCurrentNote()
             }
+            let aiSettings = AISettingsController()
             let selectionActions = SelectionActionController(
                 session: session,
-                presentNote: { try? coordinator.presentCurrentNote() }
+                presentNote: { try? coordinator.presentCurrentNote() },
+                showSettings: aiSettings.show
             )
             statusMenu = StatusMenuController(
                 showAction: { _ = presentationLifecycle.applicationShouldHandleReopen() },
+                settingsAction: aiSettings.show,
                 quitAction: { NSApp.terminate(nil) }
             )
             let monitorStarted = commandMonitor.start(
@@ -95,6 +99,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             panelCoordinator = coordinator
             edgeRail = rail
             self.selectionActions = selectionActions
+            self.aiSettings = aiSettings
             self.presentationLifecycle = presentationLifecycle
             presentationLifecycle.applicationDidLaunch()
         } catch {

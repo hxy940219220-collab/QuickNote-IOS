@@ -41,6 +41,20 @@ final class AppShellTests: XCTestCase {
         XCTAssertEqual(CommandEventMonitor.selectionHotKeyModifiers, UInt32(optionKey))
     }
 
+    func testProviderPresetsBuildOpenAICompatibleChatURLs() throws {
+        for provider in AIProvider.allCases {
+            let configuration = AIConfiguration(
+                provider: provider,
+                baseURL: provider.defaultBaseURL,
+                model: provider.defaultModel,
+                apiKey: "test"
+            )
+            let url = try XCTUnwrap(configuration.chatCompletionsURL)
+            XCTAssertTrue(url.absoluteString.hasSuffix("/chat/completions"), provider.name)
+            XCTAssertFalse(url.absoluteString.contains("//chat/completions"), provider.name)
+        }
+    }
+
     func testConfiguredDoubleCommandIntervalAllowsAComfortableDoubleTap() {
         XCTAssertEqual(AppConfiguration.doubleCommandInterval, 0.500, accuracy: 0.001)
     }

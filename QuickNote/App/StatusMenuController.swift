@@ -5,14 +5,21 @@ final class StatusMenuController: NSObject {
     private let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
     private let menu = NSMenu()
     private let showAction: () -> Void
+    private let settingsAction: () -> Void
     private let quitAction: () -> Void
 
-    init(showAction: @escaping () -> Void, quitAction: @escaping () -> Void) {
+    init(
+        showAction: @escaping () -> Void,
+        settingsAction: @escaping () -> Void,
+        quitAction: @escaping () -> Void
+    ) {
         self.showAction = showAction
+        self.settingsAction = settingsAction
         self.quitAction = quitAction
         super.init()
         item.button?.image = NSImage(systemSymbolName: "note.text", accessibilityDescription: "QuickNote")
         menu.addItem(withTitle: "打开便签", action: #selector(showPanel), keyEquivalent: "")
+        menu.addItem(withTitle: "AI 设置…", action: #selector(showSettings), keyEquivalent: ",")
         menu.addItem(.separator())
         menu.addItem(withTitle: "退出 QuickNote", action: #selector(quit), keyEquivalent: "q")
         menu.items.forEach { $0.target = self }
@@ -32,5 +39,6 @@ final class StatusMenuController: NSObject {
     }
 
     @objc private func showPanel() { showAction() }
+    @objc private func showSettings() { settingsAction() }
     @objc private func quit() { quitAction() }
 }

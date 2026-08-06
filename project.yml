@@ -22,6 +22,9 @@ targets:
     type: bundle.unit-test
     platform: macOS
     sources: [QuickNoteTests]
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
     dependencies:
       - target: QuickNote
 schemes:
