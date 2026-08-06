@@ -4,12 +4,45 @@ struct RootNoteView: View {
     @ObservedObject var session: NoteSession
     let allNotes: () throws -> [NoteRecord]
     let activateEditor: () -> Void
+    let drawerVisibilityChanged: (Bool) -> Void
+    let setWindowLocked: (Bool) -> Void
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var drawerOpen = false
+    @State private var windowLocked = false
     @State private var notes: [NoteRecord] = []
 
     var body: some View {
         VStack(spacing: 0) {
+            HStack(spacing: 8) {
+                toolbarButton(
+                    "便签列表",
+                    systemImage: "sidebar.left",
+                    action: toggleDrawer
+                )
+                .keyboardShortcut("k", modifiers: .command)
+
+                Spacer(minLength: 8)
+
+                if session.saveError == nil {
+                    Text(session.isDirty ? "保存中…" : "已保存")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
+
+                toolbarButton(
+                    windowLocked ? "取消锁定" : "锁定在最前",
+                    systemImage: windowLocked ? "lock.fill" : "lock.open",
+                    action: toggleWindowLock
+                )
+
+                toolbarButton("新建便签", systemImage: "square.and.pencil", action: create)
+                    .keyboardShortcut("n", modifiers: .command)
+            }
+            .padding(.leading, 74)
+            .padding(.trailing, 10)
+            .frame(height: 38)
+            .background(Color(nsColor: .windowBackgroundColor))
+
             if let error = session.saveError {
                 HStack {
                     Image(systemName: "exclamationmark.triangle.fill")
@@ -22,39 +55,6 @@ struct RootNoteView: View {
                 .foregroundStyle(.white)
                 .background(Color.red)
             }
-
-            HStack(spacing: 8) {
-                toolbarButton(
-                    "便签列表",
-                    systemImage: "sidebar.left",
-                    action: toggleDrawer
-                )
-                .keyboardShortcut("k", modifiers: .command)
-
-                Text(session.currentNote?.title ?? "新便签")
-                    .font(.system(size: 12, weight: .medium))
-                    .lineLimit(1)
-                    .foregroundStyle(.secondary)
-
-                Spacer(minLength: 8)
-
-                if session.saveError == nil {
-                    Text(session.isDirty ? "保存中…" : "已保存")
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
-                }
-
-                toolbarButton(
-                    session.currentNote?.isPinned == true ? "取消置顶" : "置顶",
-                    systemImage: session.currentNote?.isPinned == true ? "pin.fill" : "pin",
-                    action: toggleCurrentPin
-                )
-
-                toolbarButton("新建便签", systemImage: "square.and.pencil", action: create)
-                    .keyboardShortcut("n", modifiers: .command)
-            }
-            .padding(.horizontal, 10)
-            .frame(height: 38)
 
             Divider()
 
@@ -92,6 +92,7 @@ struct RootNoteView: View {
                 }
             }
         }
+        .ignoresSafeArea(.container, edges: .top)
     }
 
     private func toggleDrawer() {
@@ -113,12 +114,13 @@ struct RootNoteView: View {
         }
     }
 
-    private func toggleCurrentPin() {
-        guard let note = session.currentNote else { return }
-        togglePin(note)
+    private func toggleWindowLock() {
+        windowLocked.toggle()
+        setWindowLocked(windowLocked)
     }
 
     private func setDrawerOpen(_ open: Bool) {
+        drawerVisibilityChanged(open)
         if reduceMotion {
             drawerOpen = open
         } else {

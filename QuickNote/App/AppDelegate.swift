@@ -48,12 +48,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
 
             var coordinator: PanelCoordinator!
+            var panel: NotePanelController!
             let root = RootNoteView(
                 session: session,
                 allNotes: repository.allNotes,
-                activateEditor: { coordinator.activateEditor() }
+                activateEditor: { coordinator.activateEditor() },
+                drawerVisibilityChanged: { panel.setDrawerOpen($0) },
+                setWindowLocked: { panel.setLocked($0) }
             )
-            let panel = NotePanelController(rootView: root)
+            panel = NotePanelController(rootView: root)
             coordinator = PanelCoordinator(panel: panel, session: session, repository: repository)
 
             let rail = EdgeRailController()

@@ -10,7 +10,40 @@ final class NotePanelControllerTests: XCTestCase {
 
         let frame = NotePanelController.panelFrame(in: visibleFrame)
 
-        XCTAssertEqual(frame, NSRect(x: 2_430, y: 238, width: 420, height: 520))
+        XCTAssertEqual(frame, NSRect(x: 2_380, y: 238, width: 520, height: 520))
+    }
+
+    func testReopeningKeepsUserPosition() {
+        let visibleFrame = NSRect(x: 0, y: 0, width: 1_440, height: 900)
+        let movedFrame = NSRect(x: 160, y: 120, width: 520, height: 520)
+
+        XCTAssertEqual(
+            NotePanelController.presentationFrame(
+                current: movedFrame,
+                hasBeenPositioned: true,
+                in: visibleFrame
+            ),
+            movedFrame
+        )
+    }
+
+    func testDrawerExpandsOutsideToTheLeftWithoutShrinkingEditor() {
+        let visibleFrame = NSRect(x: 0, y: 0, width: 1_440, height: 900)
+        let current = NSRect(x: 460, y: 190, width: 520, height: 520)
+
+        let expanded = NotePanelController.drawerFrame(
+            from: current,
+            opening: true,
+            in: visibleFrame
+        )
+
+        XCTAssertEqual(expanded, NSRect(x: 250, y: 190, width: 730, height: 520))
+        XCTAssertEqual(expanded.maxX, current.maxX)
+    }
+
+    func testWindowLockUsesFloatingLevelOnlyWhileLocked() {
+        XCTAssertEqual(NotePanelController.windowLevel(isLocked: false), .normal)
+        XCTAssertEqual(NotePanelController.windowLevel(isLocked: true), .floating)
     }
 
     func testCollapsedFrameUsesLeftRailAsAnimationOrigin() {
