@@ -89,6 +89,8 @@ final class SelectionActionController {
         panel.isOpaque = false
         panel.backgroundColor = .clear
         panel.hasShadow = true
+        panel.isMovable = true
+        panel.isMovableByWindowBackground = true
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         panel.contentView = NSHostingView(
             rootView: SelectionActionView(
@@ -176,11 +178,21 @@ private struct SelectionActionView: View {
                         .foregroundStyle(.tertiary)
                 }
             }
-            Spacer()
-            Button("导入便签", action: importSource)
-                .buttonStyle(.borderedProminent)
-                .controlSize(.small)
+            Spacer(minLength: 4)
+            Button(action: importSource) {
+                Label("导入便签", systemImage: "square.and.arrow.down")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(Color(nsColor: .alternateSelectedControlTextColor))
+                    .padding(.horizontal, 9)
+                    .frame(height: 25)
+                    .background(Color.accentColor, in: RoundedRectangle(cornerRadius: 6))
+            }
+                .buttonStyle(.plain)
+                .fixedSize()
+                .layoutPriority(2)
                 .disabled(state.source.isEmpty || state.isLoading)
+                .opacity(state.source.isEmpty || state.isLoading ? 0.45 : 1)
+                .help("将选中文字导入便签")
             iconButton("AI 设置", image: "gearshape", action: settings)
             iconButton("关闭", image: "xmark", action: close)
         }
