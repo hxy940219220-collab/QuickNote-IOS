@@ -4,7 +4,6 @@ import SwiftUI
 @MainActor
 final class SelectionActionController {
     private let session: NoteSession
-    private let presentNote: () -> Void
     private let showSettings: () -> Void
     private let aiStore: AIConfigurationStore
     private let state = SelectionActionState()
@@ -13,12 +12,10 @@ final class SelectionActionController {
 
     init(
         session: NoteSession,
-        presentNote: @escaping () -> Void,
         showSettings: @escaping () -> Void,
         aiStore: AIConfigurationStore = .shared
     ) {
         self.session = session
-        self.presentNote = presentNote
         self.showSettings = showSettings
         self.aiStore = aiStore
     }
@@ -34,17 +31,17 @@ final class SelectionActionController {
         } catch {
             state.notice = error.localizedDescription
         }
-        resize(height: state.source.isEmpty ? 245 : 225)
+        resize(height: state.source.isEmpty ? 200 : 185)
         positionNearPointer()
         NSApp.activate(ignoringOtherApps: true)
         panel.makeKeyAndOrderFront(nil)
     }
 
-    private func append(_ text: String) {
+    private func append(_ text: String, kind: SelectionImportKind) {
         do {
             try session.appendPlainText(text)
-            panel.orderOut(nil)
-            presentNote()
+            state.importedKind = kind
+            state.notice = ""
         } catch {
             state.notice = "导入失败：\(error.localizedDescription)"
         }
@@ -58,7 +55,7 @@ final class SelectionActionController {
         state.result = ""
         state.resultProvider = ""
         state.notice = ""
-        resize(height: 270)
+        resize(height: 220)
         analysisTask = Task { [weak self] in
             guard let self else { return }
             do {
@@ -67,19 +64,19 @@ final class SelectionActionController {
                 state.result = result.text
                 state.resultProvider = result.providerName
                 state.isLoading = false
-                resize(height: 450)
+                resize(height: SelectionPanelLayout.resultHeight(for: result.text))
             } catch is CancellationError {
             } catch {
                 state.isLoading = false
                 state.notice = error.localizedDescription
-                resize(height: 300)
+                resize(height: 240)
             }
         }
     }
 
     private func makePanel() -> NSPanel {
         let panel = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 520, height: 225),
+            contentRect: NSRect(x: 0, y: 0, width: 520, height: 185),
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
             defer: false
@@ -95,9 +92,13 @@ final class SelectionActionController {
         panel.contentView = NSHostingView(
             rootView: SelectionActionView(
                 state: state,
-                importSource: { [weak self] in self?.append(self?.state.source ?? "") },
+                importSource: { [weak self] in
+                    self?.append(self?.state.source ?? "", kind: .source)
+                },
                 perform: { [weak self] action in self?.run(action) },
-                importResult: { [weak self] in self?.append(self?.state.result ?? "") },
+                importResult: { [weak self] in
+                    self?.append(self?.state.result ?? "", kind: .result)
+                },
                 settings: showSettings,
                 close: { [weak panel] in panel?.orderOut(nil) }
             )
@@ -124,6 +125,22 @@ final class SelectionActionController {
     }
 }
 
+enum SelectionPanelLayout {
+    static func resultHeight(for text: String) -> CGFloat {
+        let bounds = (text as NSString).boundingRect(
+            with: NSSize(width: 470, height: CGFloat.greatestFiniteMagnitude),
+            options: [.usesLineFragmentOrigin, .usesFontLeading],
+            attributes: [.font: NSFont.systemFont(ofSize: 13)]
+        )
+        return min(max(230 + ceil(bounds.height), 300), 390)
+    }
+}
+
+private enum SelectionImportKind {
+    case source
+    case result
+}
+
 @MainActor
 private final class SelectionActionState: ObservableObject {
     @Published var source = ""
@@ -132,6 +149,7 @@ private final class SelectionActionState: ObservableObject {
     @Published var notice = ""
     @Published var isLoading = false
     @Published var activeAction: AITextAction?
+    @Published var importedKind: SelectionImportKind?
 
     func reset() {
         source = ""
@@ -140,6 +158,7 @@ private final class SelectionActionState: ObservableObject {
         notice = ""
         isLoading = false
         activeAction = nil
+        importedKind = nil
     }
 }
 
@@ -154,7 +173,6 @@ private struct SelectionActionView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 13) {
             header
-            actions
             sourcePreview
             response
         }
@@ -168,7 +186,7 @@ private struct SelectionActionView: View {
     }
 
     private var header: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 6) {
             VStack(alignment: .leading, spacing: 2) {
                 Text("选中内容")
                     .font(.system(size: 15, weight: .semibold))
@@ -178,22 +196,12 @@ private struct SelectionActionView: View {
                         .foregroundStyle(.tertiary)
                 }
             }
-            Spacer(minLength: 4)
-            Button(action: importSource) {
-                Label("导入便签", systemImage: "square.and.arrow.down")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(Color(nsColor: .alternateSelectedControlTextColor))
-                    .padding(.horizontal, 9)
-                    .frame(height: 25)
-                    .background(Color.accentColor, in: RoundedRectangle(cornerRadius: 6))
-            }
-                .buttonStyle(.plain)
-                .fixedSize()
-                .layoutPriority(2)
+            actions
+            Spacer(minLength: 0)
+            importButton(imported: state.importedKind == .source, action: importSource)
                 .disabled(state.source.isEmpty || state.isLoading)
                 .opacity(state.source.isEmpty || state.isLoading ? 0.45 : 1)
                 .help("将选中文字导入便签")
-            iconButton("AI 设置", image: "gearshape", action: settings)
             iconButton("关闭", image: "xmark", action: close)
         }
     }
@@ -210,7 +218,7 @@ private struct SelectionActionView: View {
     }
 
     private var actions: some View {
-        HStack(spacing: 7) {
+        HStack(spacing: 5) {
             ForEach([AITextAction.explain, .analyze, .translate, .expand], id: \.rawValue) { action in
                 Button { perform(action) } label: {
                     Label(action.title, systemImage: action.icon)
@@ -219,6 +227,7 @@ private struct SelectionActionView: View {
             }
         }
         .controlSize(.small)
+        .fixedSize()
         .disabled(state.source.isEmpty || state.isLoading)
     }
 
@@ -237,10 +246,12 @@ private struct SelectionActionView: View {
             HStack {
                 Text(state.activeAction?.title ?? "结果")
                     .font(.system(size: 12, weight: .semibold))
-                Spacer()
                 Text(state.resultProvider)
                     .font(.system(size: 10))
                     .foregroundStyle(.tertiary)
+                Spacer()
+                importButton(imported: state.importedKind == .result, action: importResult)
+                Color.clear.frame(width: 28, height: 1)
             }
             ScrollView {
                 Text(state.result)
@@ -249,12 +260,6 @@ private struct SelectionActionView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
             .frame(maxHeight: 168)
-            HStack {
-                Spacer()
-                Button("导入便签", action: importResult)
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.small)
-            }
         } else if !state.notice.isEmpty && !state.source.isEmpty {
             Divider()
             HStack(alignment: .firstTextBaseline, spacing: 8) {
@@ -280,6 +285,20 @@ private struct SelectionActionView: View {
         .buttonStyle(.plain)
         .help(label)
         .accessibilityLabel(label)
+    }
+
+    private func importButton(imported: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Label(imported ? "已导入便签" : "导入便签", systemImage: imported ? "checkmark" : "square.and.arrow.down")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(Color(nsColor: .alternateSelectedControlTextColor))
+                .padding(.horizontal, 9)
+                .frame(height: 25)
+                .background(Color.accentColor, in: RoundedRectangle(cornerRadius: 6))
+        }
+        .buttonStyle(.plain)
+        .fixedSize()
+        .layoutPriority(2)
     }
 }
 

@@ -73,6 +73,16 @@ final class AppShellTests: XCTestCase {
         XCTAssertEqual(store.displayName(for: .fourth), "模型 4")
     }
 
+    func testSelectionResultPanelGrowsWithContentAndStopsBeforeClipping() {
+        let short = SelectionPanelLayout.resultHeight(for: "简短解释")
+        let medium = SelectionPanelLayout.resultHeight(for: String(repeating: "容器化部署说明。", count: 30))
+        let long = SelectionPanelLayout.resultHeight(for: String(repeating: "很长的分析内容。", count: 300))
+
+        XCTAssertEqual(short, 300)
+        XCTAssertGreaterThan(medium, short)
+        XCTAssertEqual(long, 390)
+    }
+
     func testConfiguredDoubleCommandIntervalAllowsAComfortableDoubleTap() {
         XCTAssertEqual(AppConfiguration.doubleCommandInterval, 0.500, accuracy: 0.001)
     }

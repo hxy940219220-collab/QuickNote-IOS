@@ -78,7 +78,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             let selectionActions = SelectionActionController(
                 session: session,
-                presentNote: { try? coordinator.presentCurrentNote() },
                 showSettings: aiSettings.show
             )
             statusMenu = StatusMenuController(
