@@ -34,6 +34,9 @@ enum EditorTextStyle: String, CaseIterable, Identifiable {
 @MainActor
 final class RichTextEditorController: ObservableObject {
     private weak var textView: NSTextView?
+    private static let linkDetector = try? NSDataDetector(
+        types: NSTextCheckingResult.CheckingType.link.rawValue
+    )
 
     func connect(_ textView: NSTextView) {
         self.textView = textView
@@ -120,6 +123,37 @@ final class RichTextEditorController: ObservableObject {
             storage.addAttribute(.paragraphStyle, value: style, range: range)
         }
         commit(textView, preserving: selection)
+    }
+
+    func applyLineHeightMultiple(_ multiple: CGFloat) {
+        guard let textView, let storage = textView.textStorage else { return }
+        let selection = textView.selectedRange()
+        let target = paragraphRange(in: textView)
+        let value = max(1, multiple)
+        if target.length == 0 {
+            let style = (textView.typingAttributes[.paragraphStyle] as? NSParagraphStyle)?
+                .mutableCopy() as? NSMutableParagraphStyle ?? NSMutableParagraphStyle()
+            style.lineHeightMultiple = value
+            textView.typingAttributes[.paragraphStyle] = style
+            return
+        }
+        enumerateParagraphs(in: target, text: storage.string) { range in
+            let style = (storage.attribute(.paragraphStyle, at: range.location, effectiveRange: nil)
+                as? NSParagraphStyle)?.mutableCopy() as? NSMutableParagraphStyle ?? NSMutableParagraphStyle()
+            style.lineHeightMultiple = value
+            storage.addAttribute(.paragraphStyle, value: style, range: range)
+        }
+        commit(textView, preserving: selection)
+    }
+
+    func detectLinks(in textView: NSTextView) {
+        guard let storage = textView.textStorage else { return }
+        let range = NSRange(location: 0, length: storage.length)
+        Self.linkDetector?.enumerateMatches(in: storage.string, range: range) { result, _, _ in
+            guard let result, let url = result.url,
+                  storage.attribute(.link, at: result.range.location, effectiveRange: nil) == nil else { return }
+            storage.addAttribute(.link, value: url, range: result.range)
+        }
     }
 
     func insertChecklistItem() {
@@ -438,11 +472,13 @@ struct RichTextEditor: NSViewRepresentable {
         textView.importsGraphics = true
         textView.allowsUndo = true
         textView.isAutomaticTextCompletionEnabled = false
+        textView.isAutomaticLinkDetectionEnabled = true
         textView.font = .systemFont(ofSize: 15)
         textView.textContainerInset = NSSize(width: 12, height: 12)
         textView.delegate = context.coordinator
         controller.connect(textView)
         textView.textStorage?.setAttributedString(document)
+        controller.detectLinks(in: textView)
         textView.setSelectedRange(NSRange(location: clampedCursorLocation, length: 0))
         scroll.hasVerticalScroller = true
         return scroll
@@ -454,6 +490,7 @@ struct RichTextEditor: NSViewRepresentable {
         controller.connect(textView)
         if !textView.attributedString().isEqual(to: document) {
             textView.textStorage?.setAttributedString(document)
+            controller.detectLinks(in: textView)
         }
         if textView.selectedRange().location != clampedCursorLocation {
             textView.setSelectedRange(NSRange(location: clampedCursorLocation, length: 0))

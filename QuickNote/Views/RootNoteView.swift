@@ -333,6 +333,19 @@ private struct ParagraphFormatPopover: View {
             paragraphRow("居中对齐", image: "text.aligncenter") { controller.applyAlignment(.center) }
             paragraphRow("右对齐", image: "text.alignright") { controller.applyAlignment(.right) }
             Divider().padding(.vertical, 4)
+            Menu {
+                lineSpacingButton("单倍", value: 1)
+                lineSpacingButton("1.25 倍", value: 1.25)
+                lineSpacingButton("1.5 倍", value: 1.5)
+                lineSpacingButton("双倍", value: 2)
+            } label: {
+                Label("行间距", systemImage: "arrow.up.and.down.text.horizontal")
+                    .font(.system(size: 12))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 6)
+                    .frame(height: 30)
+            }
+            .menuStyle(.borderlessButton)
             paragraphRow("增加缩进", image: "increase.indent") { controller.changeIndent(by: 18) }
             paragraphRow("减少缩进", image: "decrease.indent") { controller.changeIndent(by: -18) }
         }
@@ -353,6 +366,10 @@ private struct ParagraphFormatPopover: View {
                 .frame(height: 30)
         }
         .buttonStyle(.plain)
+    }
+
+    private func lineSpacingButton(_ title: String, value: CGFloat) -> some View {
+        Button(title) { controller.applyLineHeightMultiple(value) }
     }
 }
 

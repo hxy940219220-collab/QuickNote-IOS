@@ -181,6 +181,48 @@ final class NotePersistenceTests: XCTestCase {
         XCTAssertEqual(style?.headIndent, 0)
     }
 
+    func testParagraphLineSpacingCanBeChanged() throws {
+        let controller = RichTextEditorController()
+        var document = NSAttributedString(string: "第一行\n第二行")
+        let editor = RichTextEditor(
+            document: document,
+            cursorLocation: 0,
+            controller: controller,
+            onChange: { updated, _ in document = updated },
+            onActivate: {}
+        )
+        let host = NSHostingView(rootView: editor)
+        host.frame = NSRect(x: 0, y: 0, width: 320, height: 240)
+        host.layoutSubtreeIfNeeded()
+        let textView = try XCTUnwrap(host.descendant(ofType: NSTextView.self))
+        textView.setSelectedRange(NSRange(location: 0, length: document.length))
+
+        controller.applyLineHeightMultiple(1.5)
+
+        let first = document.attribute(.paragraphStyle, at: 0, effectiveRange: nil) as? NSParagraphStyle
+        let second = document.attribute(.paragraphStyle, at: 4, effectiveRange: nil) as? NSParagraphStyle
+        XCTAssertEqual(first?.lineHeightMultiple, 1.5)
+        XCTAssertEqual(second?.lineHeightMultiple, 1.5)
+    }
+
+    func testEditorEnablesAutomaticLinkDetection() throws {
+        let document = NSAttributedString(string: "https://example.com")
+        let editor = RichTextEditor(
+            document: document,
+            cursorLocation: document.length,
+            controller: RichTextEditorController(),
+            onChange: { _, _ in },
+            onActivate: {}
+        )
+        let host = NSHostingView(rootView: editor)
+        host.frame = NSRect(x: 0, y: 0, width: 320, height: 240)
+        host.layoutSubtreeIfNeeded()
+        let textView = try XCTUnwrap(host.descendant(ofType: NSTextView.self))
+
+        XCTAssertTrue(textView.isAutomaticLinkDetectionEnabled)
+        XCTAssertNotNil(textView.textStorage?.attribute(.link, at: 0, effectiveRange: nil))
+    }
+
     func testTextBackgroundColorCanBeAppliedAndCleared() throws {
         let controller = RichTextEditorController()
         var document = NSAttributedString(string: "背景颜色")
