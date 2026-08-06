@@ -2,6 +2,20 @@ import AppKit
 import SwiftData
 
 @MainActor
+struct AppPresentationLifecycle {
+    let presentCurrentNote: () -> Void
+
+    func applicationDidLaunch() {
+        presentCurrentNote()
+    }
+
+    func applicationShouldHandleReopen() -> Bool {
+        presentCurrentNote()
+        return true
+    }
+}
+
+@MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusMenu: StatusMenuController?
     private let commandMonitor = CommandEventMonitor()
@@ -10,6 +24,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var session: NoteSession?
     private var panelCoordinator: PanelCoordinator?
     private var edgeRail: EdgeRailController?
+    private var presentationLifecycle: AppPresentationLifecycle?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
@@ -51,8 +66,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
 
             let togglePanel: () -> Void = { _ = try? coordinator.toggleFromCommand() }
+            let presentationLifecycle = AppPresentationLifecycle {
+                try? coordinator.presentCurrentNote()
+            }
             statusMenu = StatusMenuController(
-                showAction: togglePanel,
+                showAction: { _ = presentationLifecycle.applicationShouldHandleReopen() },
                 quitAction: { NSApp.terminate(nil) }
             )
             let monitorStarted = commandMonitor.start(onDoubleCommand: togglePanel)
@@ -65,9 +83,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self.session = session
             panelCoordinator = coordinator
             edgeRail = rail
+            self.presentationLifecycle = presentationLifecycle
+            presentationLifecycle.applicationDidLaunch()
         } catch {
             NSAlert(error: error).runModal()
         }
+    }
+
+    func applicationShouldHandleReopen(
+        _ sender: NSApplication,
+        hasVisibleWindows flag: Bool
+    ) -> Bool {
+        presentationLifecycle?.applicationShouldHandleReopen() ?? false
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
