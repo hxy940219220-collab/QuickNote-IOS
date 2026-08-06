@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 struct RootNoteView: View {
@@ -11,6 +12,7 @@ struct RootNoteView: View {
     @State private var drawerOpen = false
     @State private var windowLocked = false
     @State private var calendarPresented = false
+    @State private var helpPresented = false
     @State private var selectedDate = Date()
     @State private var notes: [NoteRecord] = []
 
@@ -42,6 +44,13 @@ struct RootNoteView: View {
                 }
 
                 Spacer(minLength: 8)
+
+                toolbarButton("权限与快捷键帮助", systemImage: "questionmark.circle") {
+                    helpPresented.toggle()
+                }
+                .popover(isPresented: $helpPresented, arrowEdge: .top) {
+                    QuickNoteHelpView()
+                }
 
                 toolbarButton("AI 模型", systemImage: "sparkles", action: showAISettings)
 
@@ -164,6 +173,95 @@ struct RootNoteView: View {
         .buttonStyle(.borderless)
         .help(label)
         .accessibilityLabel(label)
+    }
+}
+
+private struct QuickNoteHelpView: View {
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("权限与快捷键")
+                        .font(.system(size: 18, weight: .semibold))
+                    Text("只开启需要的系统权限；完成后重新打开 QuickNote。")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                }
+
+                permissionSection(
+                    number: "1",
+                    title: "输入监控",
+                    path: "隐私与安全性 → 输入监控",
+                    detail: "用于在 QuickNote 已运行时监听双击 Command，从而呼出或收起便签。若列表中没有 QuickNote，点“+”添加 /Applications/QuickNote.app，再打开开关。",
+                    button: "打开输入监控",
+                    settingsPane: "Privacy_ListenEvent"
+                )
+
+                Divider()
+
+                permissionSection(
+                    number: "2",
+                    title: "辅助功能",
+                    path: "隐私与安全性 → 辅助功能",
+                    detail: "用于读取你主动选中的文字。选中文字后按 Option + 空格，即可打开 AI 分析栏。若列表中没有 QuickNote，点“+”添加 App 并打开开关。",
+                    button: "打开辅助功能",
+                    settingsPane: "Privacy_Accessibility"
+                )
+
+                Divider()
+
+                HStack(alignment: .top, spacing: 10) {
+                    Image(systemName: "key.fill")
+                        .foregroundStyle(Color.accentColor)
+                        .frame(width: 22, height: 22)
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text("API Key 与钥匙串")
+                            .font(.system(size: 13, weight: .semibold))
+                        Text("API Key 只保存在这台 Mac 的系统钥匙串中。首次保存或使用时，macOS 会请求授权，请选择“始终允许”（推荐）或“允许”。AI 请求内容只会发送给你当前选择的服务商。")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            }
+            .padding(18)
+        }
+        .frame(width: 380, height: 430)
+    }
+
+    private func permissionSection(
+        number: String,
+        title: String,
+        path: String,
+        detail: String,
+        button: String,
+        settingsPane: String
+    ) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Text(number)
+                .font(.system(size: 11, weight: .semibold))
+                .frame(width: 22, height: 22)
+                .background(Color.accentColor.opacity(0.12), in: Circle())
+                .foregroundStyle(Color.accentColor)
+
+            VStack(alignment: .leading, spacing: 5) {
+                Text(title)
+                    .font(.system(size: 13, weight: .semibold))
+                Text(path)
+                    .font(.system(size: 11, weight: .medium))
+                Text(detail)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Button(button) {
+                    guard let url = URL(
+                        string: "x-apple.systempreferences:com.apple.preference.security?\(settingsPane)"
+                    ) else { return }
+                    NSWorkspace.shared.open(url)
+                }
+                .controlSize(.small)
+            }
+        }
     }
 }
 

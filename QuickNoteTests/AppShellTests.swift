@@ -55,6 +55,16 @@ final class AppShellTests: XCTestCase {
         }
     }
 
+    func testTranslationRequestsPronunciationForBothTargetLanguages() {
+        XCTAssertTrue(AITextAction.translate.instruction.contains("拼音"))
+        XCTAssertTrue(AITextAction.translate.instruction.contains("IPA"))
+    }
+
+    @MainActor
+    func testAPIKeysUseOneCanonicalKeychainVault() {
+        XCTAssertEqual(AIConfigurationStore.keychainVaultAccount, "profiles.v1")
+    }
+
     func testAIConfigurationFillsSidebarWithNineModelSlots() {
         XCTAssertEqual(AIProfileSlot.allCases.map(\.title), (1...9).map { "模型 \($0)" })
         XCTAssertEqual(AIProfileSlot.allCases.count, 9)

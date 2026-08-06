@@ -93,6 +93,7 @@ struct AIConfiguration: Sendable {
 @MainActor
 final class AIConfigurationStore {
     static let shared = AIConfigurationStore()
+    static let keychainVaultAccount = "profiles.v1"
 
     private let defaults: UserDefaults
     private let keychain: APIKeyKeychain
@@ -172,19 +173,12 @@ final class AIConfigurationStore {
         if let cachedAPIKeys { return cachedAPIKeys }
         var keys: [Int: String] = [:]
         do {
-            if let vault = try keychain.read(account: "profiles.v1"),
+            if let vault = try keychain.read(account: Self.keychainVaultAccount),
                let data = vault.data(using: .utf8),
                let decoded = try? JSONDecoder().decode([String: String].self, from: data) {
                 for (index, value) in decoded {
                     if let index = Int(index) { keys[index] = value }
                 }
-            } else if let value = try keychain.read(account: "slot.0"), !value.isEmpty {
-                keys[AIProfileSlot.first.rawValue] = value
-                try? saveAPIKeys(keys)
-            } else if let legacyProvider = defaults.string(forKey: "ai.selectedProvider"),
-                      let value = try keychain.read(account: legacyProvider), !value.isEmpty {
-                keys[AIProfileSlot.first.rawValue] = value
-                try? saveAPIKeys(keys)
             }
         } catch {
             // Cache the denial too, so one cancelled prompt cannot trigger a prompt loop.
@@ -196,7 +190,7 @@ final class AIConfigurationStore {
     private func saveAPIKeys(_ keys: [Int: String]) throws {
         let encoded = Dictionary(uniqueKeysWithValues: keys.map { (String($0.key), $0.value) })
         let data = try JSONEncoder().encode(encoded)
-        try keychain.write(String(decoding: data, as: UTF8.self), account: "profiles.v1")
+        try keychain.write(String(decoding: data, as: UTF8.self), account: Self.keychainVaultAccount)
     }
 }
 
@@ -309,7 +303,7 @@ enum AITextAction: String, Sendable {
         case .expand:
             "围绕材料拓展相关知识，给出 3 至 5 个最有价值的关联点，并说明联系与实际例子。"
         case .translate:
-            "识别材料的主要语言。中文翻译成自然英文，英文或其他语言翻译成中文；只输出译文并保留原段落结构。"
+            "识别材料的主要语言。中文翻译成自然英文，英文或其他语言翻译成中文。若译为中文，每段后另起一行附“拼音：”，使用带声调拼音；若译为英文，每段后另起一行附“音标：”，使用 IPA。只输出译文和对应读音，并保留原段落结构。"
         }
     }
 }

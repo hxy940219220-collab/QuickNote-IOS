@@ -210,8 +210,7 @@ private struct SelectionActionView: View {
             actions
             Spacer(minLength: 8)
             importButton(imported: state.importedKind == .source, action: importSource)
-                .disabled(state.source.isEmpty || state.isLoading)
-                .opacity(state.source.isEmpty || state.isLoading ? 0.45 : 1)
+                .disabled(state.source.isEmpty)
                 .help("将选中文字导入便签")
             iconButton("关闭", image: "xmark", action: close)
                 .padding(.leading, 8)
