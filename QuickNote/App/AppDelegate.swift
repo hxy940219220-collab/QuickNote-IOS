@@ -49,6 +49,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 try session.createAndOpen()
             }
 
+            let aiSettings = AISettingsController()
             var coordinator: PanelCoordinator!
             var panel: NotePanelController!
             let root = RootNoteView(
@@ -56,7 +57,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 allNotes: repository.allNotes,
                 activateEditor: { coordinator.activateEditor() },
                 drawerVisibilityChanged: { panel.setDrawerOpen($0) },
-                setWindowLocked: { panel.setLocked($0) }
+                setWindowLocked: { panel.setLocked($0) },
+                showAISettings: aiSettings.show
             )
             panel = NotePanelController(rootView: root)
             coordinator = PanelCoordinator(panel: panel, session: session, repository: repository)
@@ -74,7 +76,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let presentationLifecycle = AppPresentationLifecycle {
                 try? coordinator.presentCurrentNote()
             }
-            let aiSettings = AISettingsController()
             let selectionActions = SelectionActionController(
                 session: session,
                 presentNote: { try? coordinator.presentCurrentNote() },

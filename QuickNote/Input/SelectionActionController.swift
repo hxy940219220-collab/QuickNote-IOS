@@ -152,8 +152,8 @@ private struct SelectionActionView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 13) {
             header
-            sourcePreview
             actions
+            sourcePreview
             response
         }
         .padding(15)
@@ -177,9 +177,10 @@ private struct SelectionActionView: View {
                 }
             }
             Spacer()
-            Text("⌥Space")
-                .font(.system(size: 10, weight: .medium, design: .rounded))
-                .foregroundStyle(.tertiary)
+            Button("导入便签", action: importSource)
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+                .disabled(state.source.isEmpty || state.isLoading)
             iconButton("AI 设置", image: "gearshape", action: settings)
             iconButton("关闭", image: "xmark", action: close)
         }
@@ -198,12 +199,7 @@ private struct SelectionActionView: View {
 
     private var actions: some View {
         HStack(spacing: 7) {
-            Button(action: importSource) {
-                Label("导入便签", systemImage: "square.and.arrow.down")
-            }
-            .buttonStyle(.borderedProminent)
-
-            ForEach([AITextAction.explain, .analyze, .expand, .translate], id: \.rawValue) { action in
+            ForEach([AITextAction.explain, .analyze, .translate, .expand], id: \.rawValue) { action in
                 Button { perform(action) } label: {
                     Label(action.title, systemImage: action.icon)
                 }
@@ -243,7 +239,7 @@ private struct SelectionActionView: View {
             .frame(maxHeight: 168)
             HStack {
                 Spacer()
-                Button("导入结果", action: importResult)
+                Button("导入便签", action: importResult)
                     .buttonStyle(.borderedProminent)
                     .controlSize(.small)
             }

@@ -6,6 +6,7 @@ struct RootNoteView: View {
     let activateEditor: () -> Void
     let drawerVisibilityChanged: (Bool) -> Void
     let setWindowLocked: (Bool) -> Void
+    let showAISettings: () -> Void
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var drawerOpen = false
     @State private var windowLocked = false
@@ -24,8 +25,6 @@ struct RootNoteView: View {
                 .offset(y: -1)
                 .keyboardShortcut("k", modifiers: .command)
 
-                Spacer(minLength: 8)
-
                 TimelineView(.periodic(from: .now, by: 60)) { context in
                     Button {
                         selectedDate = context.date
@@ -41,6 +40,10 @@ struct RootNoteView: View {
                         CalendarPopoverView(selectedDate: $selectedDate)
                     }
                 }
+
+                Spacer(minLength: 8)
+
+                toolbarButton("AI 模型", systemImage: "sparkles", action: showAISettings)
 
                 toolbarButton(
                     windowLocked ? "取消锁定" : "锁定在最前",

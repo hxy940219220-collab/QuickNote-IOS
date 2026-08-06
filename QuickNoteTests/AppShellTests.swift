@@ -55,6 +55,11 @@ final class AppShellTests: XCTestCase {
         }
     }
 
+    func testAIConfigurationOffersExactlyThreeModelSlots() {
+        XCTAssertEqual(AIProfileSlot.allCases.map(\.title), ["模型 1", "模型 2", "模型 3"])
+        XCTAssertEqual(AIProfileSlot.allCases.map(\.defaultProvider), [.siliconFlow, .openAI, .deepSeek])
+    }
+
     func testConfiguredDoubleCommandIntervalAllowsAComfortableDoubleTap() {
         XCTAssertEqual(AppConfiguration.doubleCommandInterval, 0.500, accuracy: 0.001)
     }

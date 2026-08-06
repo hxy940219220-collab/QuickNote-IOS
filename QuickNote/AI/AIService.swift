@@ -51,6 +51,23 @@ enum AIProvider: String, CaseIterable, Identifiable, Sendable {
     }
 }
 
+enum AIProfileSlot: Int, CaseIterable, Identifiable, Sendable {
+    case first
+    case second
+    case third
+
+    var id: Int { rawValue }
+    var title: String { "模型 \(rawValue + 1)" }
+
+    var defaultProvider: AIProvider {
+        switch self {
+        case .first: .siliconFlow
+        case .second: .openAI
+        case .third: .deepSeek
+        }
+    }
+}
+
 struct AIConfiguration: Sendable {
     let provider: AIProvider
     let baseURL: String
@@ -83,39 +100,55 @@ final class AIConfigurationStore {
         self.keychain = keychain
     }
 
-    var selectedProvider: AIProvider {
-        get { AIProvider(rawValue: defaults.string(forKey: "ai.selectedProvider") ?? "") ?? .siliconFlow }
-        set { defaults.set(newValue.rawValue, forKey: "ai.selectedProvider") }
+    var activeSlot: AIProfileSlot {
+        get { AIProfileSlot(rawValue: defaults.integer(forKey: "ai.activeSlot")) ?? .first }
+        set { defaults.set(newValue.rawValue, forKey: "ai.activeSlot") }
     }
 
-    func draft(for provider: AIProvider) -> AIConfigurationDraft {
-        AIConfigurationDraft(
+    func draft(for slot: AIProfileSlot) -> AIConfigurationDraft {
+        let storedProvider = defaults.string(forKey: key("provider", slot))
+        let legacyProvider = defaults.string(forKey: "ai.selectedProvider")
+        let provider = AIProvider(rawValue: storedProvider ?? (slot == .first ? legacyProvider : nil) ?? "")
+            ?? slot.defaultProvider
+        let legacyBaseURL = slot == .first ? defaults.string(forKey: legacyKey("baseURL", provider)) : nil
+        let legacyModel = slot == .first ? defaults.string(forKey: legacyKey("model", provider)) : nil
+        let slotAPIKey = (try? keychain.read(account: keychainAccount(slot))) ?? ""
+        let legacyAPIKey = slot == .first ? ((try? keychain.read(account: provider.rawValue)) ?? "") : ""
+        return AIConfigurationDraft(
             provider: provider,
-            baseURL: defaults.string(forKey: key("baseURL", provider)) ?? provider.defaultBaseURL,
-            model: defaults.string(forKey: key("model", provider)) ?? provider.defaultModel,
-            apiKey: (try? keychain.read(account: provider.rawValue)) ?? ""
+            baseURL: defaults.string(forKey: key("baseURL", slot)) ?? legacyBaseURL ?? provider.defaultBaseURL,
+            model: defaults.string(forKey: key("model", slot)) ?? legacyModel ?? provider.defaultModel,
+            apiKey: slotAPIKey.isEmpty ? legacyAPIKey : slotAPIKey
         )
     }
 
-    func save(_ draft: AIConfigurationDraft) throws {
+    func save(_ draft: AIConfigurationDraft, to slot: AIProfileSlot, activate: Bool = true) throws {
         let configuration = try draft.validated()
-        defaults.set(configuration.baseURL, forKey: key("baseURL", draft.provider))
-        defaults.set(configuration.model, forKey: key("model", draft.provider))
-        selectedProvider = draft.provider
-        try keychain.write(configuration.apiKey, account: draft.provider.rawValue)
+        defaults.set(configuration.provider.rawValue, forKey: key("provider", slot))
+        defaults.set(configuration.baseURL, forKey: key("baseURL", slot))
+        defaults.set(configuration.model, forKey: key("model", slot))
+        try keychain.write(configuration.apiKey, account: keychainAccount(slot))
+        if activate { activeSlot = slot }
     }
 
     func activeConfiguration() throws -> AIConfiguration {
-        try draft(for: selectedProvider).validated()
+        try draft(for: activeSlot).validated()
     }
 
     var hasActiveAPIKey: Bool {
-        guard let value = try? keychain.read(account: selectedProvider.rawValue) else { return false }
-        return !value.isEmpty
+        !draft(for: activeSlot).apiKey.isEmpty
     }
 
-    private func key(_ field: String, _ provider: AIProvider) -> String {
+    private func key(_ field: String, _ slot: AIProfileSlot) -> String {
+        "ai.slot.\(slot.rawValue).\(field)"
+    }
+
+    private func legacyKey(_ field: String, _ provider: AIProvider) -> String {
         "ai.\(provider.rawValue).\(field)"
+    }
+
+    private func keychainAccount(_ slot: AIProfileSlot) -> String {
+        "slot.\(slot.rawValue)"
     }
 }
 
@@ -376,12 +409,12 @@ final class AISettingsController {
 
     private func makePanel() -> NSPanel {
         let panel = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 600, height: 390),
+            contentRect: NSRect(x: 0, y: 0, width: 620, height: 420),
             styleMask: [.titled, .closable],
             backing: .buffered,
             defer: false
         )
-        panel.title = "AI 服务"
+        panel.title = "AI 模型"
         panel.isReleasedWhenClosed = false
         panel.contentView = NSHostingView(rootView: AISettingsView(store: store))
         return panel
@@ -390,6 +423,8 @@ final class AISettingsController {
 
 private struct AISettingsView: View {
     let store: AIConfigurationStore
+    @State private var slot: AIProfileSlot
+    @State private var activeSlot: AIProfileSlot
     @State private var provider: AIProvider
     @State private var baseURL: String
     @State private var model: String
@@ -399,9 +434,11 @@ private struct AISettingsView: View {
 
     init(store: AIConfigurationStore) {
         self.store = store
-        let provider = store.selectedProvider
-        let draft = store.draft(for: provider)
-        _provider = State(initialValue: provider)
+        let slot = store.activeSlot
+        let draft = store.draft(for: slot)
+        _slot = State(initialValue: slot)
+        _activeSlot = State(initialValue: slot)
+        _provider = State(initialValue: draft.provider)
         _baseURL = State(initialValue: draft.baseURL)
         _model = State(initialValue: draft.model)
         _apiKey = State(initialValue: draft.apiKey)
@@ -409,37 +446,63 @@ private struct AISettingsView: View {
 
     var body: some View {
         HStack(spacing: 0) {
-            List(AIProvider.allCases) { item in
+            List(AIProfileSlot.allCases) { item in
                 Button {
-                    provider = item
+                    slot = item
+                    load(item)
                 } label: {
-                    HStack {
-                        Text(item.name)
-                        Spacer()
-                        if item == provider {
-                            Image(systemName: "checkmark")
-                                .foregroundStyle(.tint)
+                    HStack(spacing: 9) {
+                        Image(systemName: item == activeSlot ? "checkmark.circle.fill" : "circle")
+                            .foregroundStyle(item == activeSlot ? Color.accentColor : Color.secondary.opacity(0.45))
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(item.title)
+                                .font(.system(size: 12, weight: .medium))
+                            Text(profileDetail(item))
+                                .font(.system(size: 10))
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
                         }
+                        Spacer()
                     }
+                    .padding(.vertical, 4)
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
             }
             .listStyle(.sidebar)
-            .frame(width: 145)
+            .frame(width: 180)
 
             Divider()
 
             VStack(alignment: .leading, spacing: 18) {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(provider.name)
+                    HStack {
+                        Text(slot.title)
+                        if slot == activeSlot {
+                            Text("使用中")
+                                .font(.system(size: 10, weight: .medium))
+                                .foregroundStyle(Color.accentColor)
+                                .padding(.horizontal, 7)
+                                .padding(.vertical, 3)
+                                .background(Color.accentColor.opacity(0.1), in: Capsule())
+                        }
+                    }
                         .font(.system(size: 20, weight: .semibold))
-                    Text("OpenAI-compatible")
+                    Text("最多保存 3 个模型配置，保存后自动设为当前模型。")
                         .font(.system(size: 11, weight: .medium))
                         .foregroundStyle(.secondary)
                 }
 
                 VStack(alignment: .leading, spacing: 12) {
+                    field("服务商") {
+                        Picker("", selection: providerBinding) {
+                            ForEach(AIProvider.allCases) { provider in
+                                Text(provider.name).tag(provider)
+                            }
+                        }
+                        .labelsHidden()
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
                     field("Base URL") {
                         TextField("https://…", text: $baseURL)
                             .textFieldStyle(.roundedBorder)
@@ -467,7 +530,7 @@ private struct AISettingsView: View {
                     Button("恢复预设", action: restorePreset)
                     Button(isTesting ? "测试中…" : "测试连接", action: testConnection)
                         .disabled(isTesting)
-                    Button("保存", action: save)
+                    Button("保存并使用", action: save)
                         .buttonStyle(.borderedProminent)
                 }
 
@@ -475,8 +538,7 @@ private struct AISettingsView: View {
             }
             .padding(22)
         }
-        .onChange(of: provider) { _, provider in load(provider) }
-        .frame(width: 600, height: 390)
+        .frame(width: 620, height: 420)
     }
 
     private func field<Content: View>(_ label: String, @ViewBuilder content: () -> Content) -> some View {
@@ -488,8 +550,9 @@ private struct AISettingsView: View {
         }
     }
 
-    private func load(_ provider: AIProvider) {
-        let draft = store.draft(for: provider)
+    private func load(_ slot: AIProfileSlot) {
+        let draft = store.draft(for: slot)
+        provider = draft.provider
         baseURL = draft.baseURL
         model = draft.model
         apiKey = draft.apiKey
@@ -504,16 +567,18 @@ private struct AISettingsView: View {
 
     private func save() {
         do {
-            try store.save(draft)
-            status = "已保存。"
+            try store.save(draft, to: slot)
+            activeSlot = slot
+            status = "已保存并切换为当前模型。"
         } catch {
             status = error.localizedDescription
         }
     }
 
     private func testConnection() {
+        let configuration: AIConfiguration
         do {
-            try store.save(draft)
+            configuration = try draft.validated()
         } catch {
             status = error.localizedDescription
             return
@@ -523,7 +588,6 @@ private struct AISettingsView: View {
         Task {
             defer { isTesting = false }
             do {
-                let configuration = try store.activeConfiguration()
                 _ = try await OpenAICompatibleClient.complete(
                     configuration: configuration,
                     system: "你是连接测试助手。",
@@ -538,5 +602,24 @@ private struct AISettingsView: View {
 
     private var draft: AIConfigurationDraft {
         AIConfigurationDraft(provider: provider, baseURL: baseURL, model: model, apiKey: apiKey)
+    }
+
+    private var providerBinding: Binding<AIProvider> {
+        Binding(
+            get: { provider },
+            set: { newProvider in
+                guard newProvider != provider else { return }
+                provider = newProvider
+                baseURL = newProvider.defaultBaseURL
+                model = newProvider.defaultModel
+                apiKey = ""
+                status = "已载入 \(newProvider.name) 预设，请填写 API Key。"
+            }
+        )
+    }
+
+    private func profileDetail(_ slot: AIProfileSlot) -> String {
+        let draft = store.draft(for: slot)
+        return draft.apiKey.isEmpty ? "未配置" : "\(draft.provider.name) · \(draft.model)"
     }
 }
