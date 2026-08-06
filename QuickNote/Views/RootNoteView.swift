@@ -19,6 +19,7 @@ struct RootNoteView: View {
                     systemImage: "sidebar.left",
                     action: toggleDrawer
                 )
+                .offset(y: -1)
                 .keyboardShortcut("k", modifiers: .command)
 
                 Spacer(minLength: 8)
@@ -65,7 +66,8 @@ struct RootNoteView: View {
                         selectedID: session.currentNote?.id,
                         select: open,
                         create: create,
-                        togglePin: togglePin
+                        togglePin: togglePin,
+                        delete: delete
                     )
                     .frame(width: 190)
                     .transition(.move(edge: .leading).combined(with: .opacity))
@@ -111,6 +113,12 @@ struct RootNoteView: View {
     private func togglePin(_ note: NoteRecord) {
         if session.togglePinnedRecovering(note) {
             notes = (try? allNotes()) ?? notes
+        }
+    }
+
+    private func delete(_ note: NoteRecord) {
+        if session.deleteRecovering(note) {
+            notes = (try? allNotes()) ?? notes.filter { $0.id != note.id }
         }
     }
 

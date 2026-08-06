@@ -6,7 +6,10 @@ struct NoteDrawerView: View {
     let select: (NoteRecord) -> Void
     let create: () -> Void
     let togglePin: (NoteRecord) -> Void
+    let delete: (NoteRecord) -> Void
     @State private var query = ""
+    @State private var pendingDeletion: NoteRecord?
+    @State private var confirmingDeletion = false
 
     var body: some View {
         VStack(spacing: 10) {
@@ -42,9 +45,16 @@ struct NoteDrawerView: View {
                     HStack(spacing: 6) {
                         Button(action: { select(note) }) {
                             VStack(alignment: .leading, spacing: 3) {
-                                Text(note.title)
-                                    .fontWeight(note.id == selectedID ? .semibold : .regular)
-                                    .lineLimit(1)
+                                HStack(spacing: 4) {
+                                    Text(note.title)
+                                        .fontWeight(note.id == selectedID ? .semibold : .regular)
+                                        .lineLimit(1)
+                                    if note.isPinned {
+                                        Image(systemName: "pin.fill")
+                                            .font(.caption2)
+                                            .foregroundStyle(Color.accentColor)
+                                    }
+                                }
                                 Text(note.updatedAt, style: .relative)
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
@@ -53,13 +63,30 @@ struct NoteDrawerView: View {
                         }
                         .buttonStyle(.plain)
 
-                        Button(action: { togglePin(note) }) {
-                            Image(systemName: note.isPinned ? "pin.fill" : "pin")
-                                .foregroundStyle(note.isPinned ? Color.accentColor : .secondary)
+                        Menu {
+                            Button(action: { togglePin(note) }) {
+                                Label(
+                                    note.isPinned ? "取消置顶" : "置顶",
+                                    systemImage: note.isPinned ? "pin.slash" : "pin"
+                                )
+                            }
+                            Divider()
+                            Button(role: .destructive) {
+                                pendingDeletion = note
+                                confirmingDeletion = true
+                            } label: {
+                                Label("删除", systemImage: "trash")
+                            }
+                        } label: {
+                            Image(systemName: "ellipsis")
+                                .frame(width: 22, height: 22)
+                                .contentShape(Rectangle())
                         }
-                        .buttonStyle(.borderless)
-                        .help(note.isPinned ? "取消置顶" : "置顶")
-                        .accessibilityLabel(note.isPinned ? "取消置顶" : "置顶")
+                        .menuStyle(.borderlessButton)
+                        .menuIndicator(.hidden)
+                        .fixedSize()
+                        .help("编辑便签")
+                        .accessibilityLabel("编辑便签")
                     }
                     .padding(.vertical, 3)
                     .listRowBackground(
@@ -72,6 +99,15 @@ struct NoteDrawerView: View {
         }
         .padding(10)
         .background(Color(nsColor: .controlBackgroundColor))
+        .alert("删除便签？", isPresented: $confirmingDeletion, presenting: pendingDeletion) { note in
+            Button("删除", role: .destructive) {
+                delete(note)
+                pendingDeletion = nil
+            }
+            Button("取消", role: .cancel) { pendingDeletion = nil }
+        } message: { note in
+            Text("“\(note.title)”将被永久删除。")
+        }
     }
 
     private var filtered: [NoteRecord] {

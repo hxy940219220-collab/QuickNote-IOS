@@ -27,6 +27,13 @@ struct NoteDocumentStore {
         try wrapper.write(to: url(for: id), options: .atomic, originalContentsURL: nil)
     }
 
+    func delete(id: UUID) throws {
+        let url = url(for: id)
+        if FileManager.default.fileExists(atPath: url.path) {
+            try FileManager.default.removeItem(at: url)
+        }
+    }
+
     private func url(for id: UUID) -> URL {
         root.appending(path: "\(id.uuidString).rtfd")
     }

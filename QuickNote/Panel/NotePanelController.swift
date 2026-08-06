@@ -124,7 +124,7 @@ final class NotePanelController: NSObject, NSWindowDelegate {
     }
 
     static func windowLevel(isLocked: Bool) -> NSWindow.Level {
-        isLocked ? .floating : .normal
+        isLocked ? .statusBar : .normal
     }
 
     static func collapsedFrame(in visibleFrame: NSRect) -> NSRect {
@@ -148,6 +148,7 @@ final class NotePanelController: NSObject, NSWindowDelegate {
 
     func setLocked(_ locked: Bool) {
         panel.level = Self.windowLevel(isLocked: locked)
+        if locked { panel.orderFrontRegardless() }
     }
 
     func hideAndRestoreFocus() {

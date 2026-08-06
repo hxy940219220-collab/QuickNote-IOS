@@ -41,9 +41,9 @@ final class NotePanelControllerTests: XCTestCase {
         XCTAssertEqual(expanded.maxX, current.maxX)
     }
 
-    func testWindowLockUsesFloatingLevelOnlyWhileLocked() {
+    func testWindowLockUsesElevatedSystemLevelOnlyWhileLocked() {
         XCTAssertEqual(NotePanelController.windowLevel(isLocked: false), .normal)
-        XCTAssertEqual(NotePanelController.windowLevel(isLocked: true), .floating)
+        XCTAssertEqual(NotePanelController.windowLevel(isLocked: true), .statusBar)
     }
 
     func testCollapsedFrameUsesLeftRailAsAnimationOrigin() {

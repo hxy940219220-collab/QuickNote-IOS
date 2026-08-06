@@ -13,6 +13,7 @@ final class NoteSession: ObservableObject {
     private let saveRepository: () throws -> Void
     private var saveTask: Task<Void, Never>?
     private var pendingOperation: PendingOperation?
+    private var pendingDocumentDeletion: UUID?
 
     var onSaved: (() -> Void)?
 
@@ -79,6 +80,36 @@ final class NoteSession: ObservableObject {
 
     func togglePinned(_ note: NoteRecord) throws {
         try performNew(.setPinned(note, to: !note.isPinned, updatedAt: .now))
+    }
+
+    @discardableResult
+    func deleteRecovering(_ note: NoteRecord) -> Bool {
+        guard pendingOperation == nil else { return false }
+        do {
+            try persistCurrent(notify: false)
+            if currentNote?.id == note.id {
+                let replacement = try repository.allNotes().first { $0.id != note.id }
+                    ?? repository.createNote()
+                currentNote = replacement
+                document = try documents.load(id: replacement.id)
+                isDirty = false
+            }
+            repository.delete(note)
+            pendingDocumentDeletion = note.id
+            do {
+                try saveRepository()
+            } catch {
+                saveError = error
+                return true
+            }
+            finishDocumentDeletion()
+            saveError = nil
+            onSaved?()
+            return true
+        } catch {
+            saveError = error
+            return false
+        }
     }
 
     func flush() throws {
@@ -160,6 +191,7 @@ final class NoteSession: ObservableObject {
                 .first(where: { !$0.isEmpty }) ?? "新便签"
             note.updatedAt = .now
             try saveRepository()
+            finishDocumentDeletion()
         } catch {
             isDirty = true
             saveError = error
@@ -168,6 +200,12 @@ final class NoteSession: ObservableObject {
         isDirty = false
         saveError = nil
         if notify { onSaved?() }
+    }
+
+    private func finishDocumentDeletion() {
+        guard let id = pendingDocumentDeletion else { return }
+        try? documents.delete(id: id)
+        pendingDocumentDeletion = nil
     }
 
     private enum PendingOperation {

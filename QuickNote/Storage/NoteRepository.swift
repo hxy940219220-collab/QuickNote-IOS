@@ -13,6 +13,8 @@ final class NoteRepository {
         return note
     }
 
+    func delete(_ note: NoteRecord) { context.delete(note) }
+
     func allNotes() throws -> [NoteRecord] {
         try context.fetch(
             FetchDescriptor<NoteRecord>(sortBy: [SortDescriptor(\.updatedAt, order: .reverse)])

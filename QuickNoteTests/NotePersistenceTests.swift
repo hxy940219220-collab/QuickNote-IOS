@@ -224,6 +224,27 @@ final class NotePersistenceTests: XCTestCase {
         XCTAssertEqual(try repository.allNotes().count, 1)
         XCTAssertEqual(notificationCount, 1)
     }
+
+    func testDeletingCurrentNoteSelectsTheRemainingNote() throws {
+        let configuration = ModelConfiguration(isStoredInMemoryOnly: true)
+        let container = try ModelContainer(for: NoteRecord.self, configurations: configuration)
+        let repository = NoteRepository(context: container.mainContext)
+        let session = NoteSession(
+            repository: repository,
+            documents: NoteDocumentStore(
+                root: FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+            )
+        )
+        try session.createAndOpen()
+        let remaining = try XCTUnwrap(session.currentNote)
+        try session.createAndOpen()
+        let deleted = try XCTUnwrap(session.currentNote)
+
+        XCTAssertTrue(session.deleteRecovering(deleted))
+
+        XCTAssertEqual(session.currentNote?.id, remaining.id)
+        XCTAssertEqual(try repository.allNotes().map(\.id), [remaining.id])
+    }
 }
 
 private enum TestError: Error {
