@@ -83,6 +83,18 @@ final class AppShellTests: XCTestCase {
         XCTAssertEqual(store.displayName(for: .fourth), "模型 4")
     }
 
+    @MainActor
+    func testActivatingModelReplacesThePreviousActiveSlot() throws {
+        let suite = "QuickNoteTests.ActiveAIProfile.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let store = AIConfigurationStore(defaults: defaults)
+        store.activeSlot = .first
+
+        XCTAssertEqual(store.activate(.third), .third)
+        XCTAssertEqual(store.activeSlot, .third)
+    }
+
     func testSelectionResultPanelGrowsWithContentAndStopsBeforeClipping() {
         let short = SelectionPanelLayout.resultHeight(for: "简短解释")
         let medium = SelectionPanelLayout.resultHeight(for: String(repeating: "容器化部署说明。", count: 30))

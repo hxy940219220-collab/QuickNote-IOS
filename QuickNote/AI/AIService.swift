@@ -109,6 +109,12 @@ final class AIConfigurationStore {
         set { defaults.set(newValue.rawValue, forKey: "ai.activeSlot") }
     }
 
+    @discardableResult
+    func activate(_ slot: AIProfileSlot) -> AIProfileSlot {
+        activeSlot = slot
+        return slot
+    }
+
     func draft(for slot: AIProfileSlot) -> AIConfigurationDraft {
         let storedProvider = defaults.string(forKey: key("provider", slot))
         let legacyProvider = defaults.string(forKey: "ai.selectedProvider")
@@ -497,6 +503,7 @@ private struct AISettingsView: View {
                 Button {
                     finishNameEditing()
                     slot = item
+                    activeSlot = store.activate(item)
                     load(item)
                 } label: {
                     HStack(spacing: 9) {
