@@ -22,11 +22,7 @@ final class NotePanelController {
     }
 
     func show(activate: Bool, on screen: NSScreen) {
-        let visible = screen.visibleFrame
-        panel.setFrame(
-            NSRect(x: visible.minX + 8, y: visible.midY - 260, width: 420, height: 520),
-            display: true
-        )
+        panel.setFrame(Self.panelFrame(in: screen.visibleFrame), display: true)
         if activate {
             previousApp = NSWorkspace.shared.frontmostApplication
             NSApp.activate(ignoringOtherApps: true)
@@ -50,6 +46,10 @@ final class NotePanelController {
         } else {
             panel.orderFrontRegardless()
         }
+    }
+
+    static func panelFrame(in visibleFrame: NSRect) -> NSRect {
+        NSRect(x: visibleFrame.midX - 210, y: visibleFrame.midY - 260, width: 420, height: 520)
     }
 
     func hideAndRestoreFocus() {
