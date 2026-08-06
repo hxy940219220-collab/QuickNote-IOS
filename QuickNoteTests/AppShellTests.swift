@@ -2,6 +2,19 @@ import XCTest
 @testable import QuickNote
 
 final class AppShellTests: XCTestCase {
+    func testChineseCalendarDetailsForKnownDate() throws {
+        var gregorian = Calendar(identifier: .gregorian)
+        gregorian.timeZone = try XCTUnwrap(TimeZone(identifier: "Asia/Shanghai"))
+        let date = try XCTUnwrap(
+            gregorian.date(from: DateComponents(year: 2026, month: 8, day: 6))
+        )
+
+        XCTAssertEqual(CalendarText.toolbarDate(for: date, timeZone: gregorian.timeZone), "8月6日")
+        XCTAssertEqual(CalendarText.fullDate(for: date, timeZone: gregorian.timeZone), "2026年8月6日")
+        XCTAssertEqual(CalendarText.weekday(for: date, timeZone: gregorian.timeZone), "星期四")
+        XCTAssertEqual(CalendarText.lunarDate(for: date, timeZone: gregorian.timeZone), "农历 六月廿四")
+    }
+
     @MainActor
     func testMonitorDoesNotStartWhenInputMonitoringIsDenied() {
         let monitor = CommandEventMonitor()

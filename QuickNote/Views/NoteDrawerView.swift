@@ -44,20 +44,15 @@ struct NoteDrawerView: View {
                 List(filtered) { note in
                     HStack(spacing: 6) {
                         Button(action: { select(note) }) {
-                            VStack(alignment: .leading, spacing: 3) {
-                                HStack(spacing: 4) {
-                                    Text(note.title)
-                                        .fontWeight(note.id == selectedID ? .semibold : .regular)
-                                        .lineLimit(1)
-                                    if note.isPinned {
-                                        Image(systemName: "pin.fill")
-                                            .font(.caption2)
-                                            .foregroundStyle(Color.accentColor)
-                                    }
+                            HStack(spacing: 4) {
+                                Text(note.title)
+                                    .fontWeight(note.id == selectedID ? .semibold : .regular)
+                                    .lineLimit(1)
+                                if note.isPinned {
+                                    Image(systemName: "pin.fill")
+                                        .font(.caption2)
+                                        .foregroundStyle(Color.accentColor)
                                 }
-                                Text(note.updatedAt, style: .relative)
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
                             }
                             .frame(maxWidth: .infinity, alignment: .leading)
                         }

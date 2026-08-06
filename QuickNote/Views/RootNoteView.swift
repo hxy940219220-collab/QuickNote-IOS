@@ -9,6 +9,8 @@ struct RootNoteView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var drawerOpen = false
     @State private var windowLocked = false
+    @State private var calendarPresented = false
+    @State private var selectedDate = Date()
     @State private var notes: [NoteRecord] = []
 
     var body: some View {
@@ -24,10 +26,20 @@ struct RootNoteView: View {
 
                 Spacer(minLength: 8)
 
-                if session.saveError == nil {
-                    Text(session.isDirty ? "保存中…" : "已保存")
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
+                TimelineView(.periodic(from: .now, by: 60)) { context in
+                    Button {
+                        selectedDate = context.date
+                        calendarPresented.toggle()
+                    } label: {
+                        Text(CalendarText.toolbarDate(for: context.date))
+                            .font(.system(size: 12, weight: .medium))
+                    }
+                    .buttonStyle(.borderless)
+                    .help("查看日历")
+                    .accessibilityLabel(CalendarText.fullDate(for: context.date))
+                    .popover(isPresented: $calendarPresented, arrowEdge: .top) {
+                        CalendarPopoverView(selectedDate: $selectedDate)
+                    }
                 }
 
                 toolbarButton(
@@ -149,5 +161,74 @@ struct RootNoteView: View {
         .buttonStyle(.borderless)
         .help(label)
         .accessibilityLabel(label)
+    }
+}
+
+private struct CalendarPopoverView: View {
+    @Binding var selectedDate: Date
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(CalendarText.fullDate(for: selectedDate))
+                .font(.system(size: 18, weight: .semibold))
+
+            HStack(spacing: 10) {
+                Text(CalendarText.weekday(for: selectedDate))
+                Text(CalendarText.lunarDate(for: selectedDate))
+                    .foregroundStyle(.secondary)
+            }
+            .font(.system(size: 12, weight: .medium))
+
+            Divider()
+
+            DatePicker("日期", selection: $selectedDate, displayedComponents: .date)
+                .datePickerStyle(.graphical)
+                .labelsHidden()
+                .environment(\.locale, Locale(identifier: "zh_CN"))
+        }
+        .padding(14)
+        .frame(width: 240)
+    }
+}
+
+enum CalendarText {
+    static func toolbarDate(for date: Date, timeZone: TimeZone = .current) -> String {
+        let components = gregorianComponents(for: date, timeZone: timeZone)
+        return "\(components.month ?? 0)月\(components.day ?? 0)日"
+    }
+
+    static func fullDate(for date: Date, timeZone: TimeZone = .current) -> String {
+        let components = gregorianComponents(for: date, timeZone: timeZone)
+        return "\(components.year ?? 0)年\(components.month ?? 0)月\(components.day ?? 0)日"
+    }
+
+    static func weekday(for date: Date, timeZone: TimeZone = .current) -> String {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = timeZone
+        let names = ["星期日", "星期一", "星期二", "星期三", "星期四", "星期五", "星期六"]
+        return names[calendar.component(.weekday, from: date) - 1]
+    }
+
+    static func lunarDate(for date: Date, timeZone: TimeZone = .current) -> String {
+        var calendar = Calendar(identifier: .chinese)
+        calendar.timeZone = timeZone
+        let components = calendar.dateComponents([.month, .day, .isLeapMonth], from: date)
+        let months = ["正月", "二月", "三月", "四月", "五月", "六月", "七月", "八月", "九月", "十月", "冬月", "腊月"]
+        let days = [
+            "初一", "初二", "初三", "初四", "初五", "初六", "初七", "初八", "初九", "初十",
+            "十一", "十二", "十三", "十四", "十五", "十六", "十七", "十八", "十九", "二十",
+            "廿一", "廿二", "廿三", "廿四", "廿五", "廿六", "廿七", "廿八", "廿九", "三十",
+        ]
+        guard let month = components.month,
+              let day = components.day,
+              months.indices.contains(month - 1),
+              days.indices.contains(day - 1) else { return "农历" }
+        return "农历 \(components.isLeapMonth == true ? "闰" : "")\(months[month - 1])\(days[day - 1])"
+    }
+
+    private static func gregorianComponents(for date: Date, timeZone: TimeZone) -> DateComponents {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = timeZone
+        return calendar.dateComponents([.year, .month, .day], from: date)
     }
 }
