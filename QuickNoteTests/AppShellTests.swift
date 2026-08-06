@@ -55,9 +55,22 @@ final class AppShellTests: XCTestCase {
         }
     }
 
-    func testAIConfigurationOffersExactlyThreeModelSlots() {
-        XCTAssertEqual(AIProfileSlot.allCases.map(\.title), ["模型 1", "模型 2", "模型 3"])
-        XCTAssertEqual(AIProfileSlot.allCases.map(\.defaultProvider), [.siliconFlow, .openAI, .deepSeek])
+    func testAIConfigurationFillsSidebarWithNineModelSlots() {
+        XCTAssertEqual(AIProfileSlot.allCases.map(\.title), (1...9).map { "模型 \($0)" })
+        XCTAssertEqual(AIProfileSlot.allCases.count, 9)
+    }
+
+    @MainActor
+    func testModelSlotNamesCanBeRenamedAndReset() throws {
+        let suite = "QuickNoteTests.AIProfileName.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let store = AIConfigurationStore(defaults: defaults)
+
+        store.rename(.fourth, to: "  工作模型  ")
+        XCTAssertEqual(store.displayName(for: .fourth), "工作模型")
+        store.rename(.fourth, to: "  ")
+        XCTAssertEqual(store.displayName(for: .fourth), "模型 4")
     }
 
     func testConfiguredDoubleCommandIntervalAllowsAComfortableDoubleTap() {

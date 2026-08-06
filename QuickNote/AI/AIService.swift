@@ -55,16 +55,18 @@ enum AIProfileSlot: Int, CaseIterable, Identifiable, Sendable {
     case first
     case second
     case third
+    case fourth
+    case fifth
+    case sixth
+    case seventh
+    case eighth
+    case ninth
 
     var id: Int { rawValue }
     var title: String { "模型 \(rawValue + 1)" }
 
     var defaultProvider: AIProvider {
-        switch self {
-        case .first: .siliconFlow
-        case .second: .openAI
-        case .third: .deepSeek
-        }
+        AIProvider.allCases[rawValue % AIProvider.allCases.count]
     }
 }
 
@@ -94,6 +96,7 @@ final class AIConfigurationStore {
 
     private let defaults: UserDefaults
     private let keychain: APIKeyKeychain
+    private var cachedAPIKeys: [Int: String]?
 
     init(defaults: UserDefaults = .standard, keychain: APIKeyKeychain = APIKeyKeychain()) {
         self.defaults = defaults
@@ -112,23 +115,36 @@ final class AIConfigurationStore {
             ?? slot.defaultProvider
         let legacyBaseURL = slot == .first ? defaults.string(forKey: legacyKey("baseURL", provider)) : nil
         let legacyModel = slot == .first ? defaults.string(forKey: legacyKey("model", provider)) : nil
-        let slotAPIKey = (try? keychain.read(account: keychainAccount(slot))) ?? ""
-        let legacyAPIKey = slot == .first ? ((try? keychain.read(account: provider.rawValue)) ?? "") : ""
         return AIConfigurationDraft(
+            name: displayName(for: slot),
             provider: provider,
             baseURL: defaults.string(forKey: key("baseURL", slot)) ?? legacyBaseURL ?? provider.defaultBaseURL,
             model: defaults.string(forKey: key("model", slot)) ?? legacyModel ?? provider.defaultModel,
-            apiKey: slotAPIKey.isEmpty ? legacyAPIKey : slotAPIKey
+            apiKey: loadAPIKeys()[slot.rawValue] ?? ""
         )
     }
 
     func save(_ draft: AIConfigurationDraft, to slot: AIProfileSlot, activate: Bool = true) throws {
         let configuration = try draft.validated()
+        var apiKeys = loadAPIKeys()
+        if apiKeys[slot.rawValue] != configuration.apiKey {
+            apiKeys[slot.rawValue] = configuration.apiKey
+            try saveAPIKeys(apiKeys)
+            cachedAPIKeys = apiKeys
+        }
+        defaults.set(normalizedName(draft.name, for: slot), forKey: key("name", slot))
         defaults.set(configuration.provider.rawValue, forKey: key("provider", slot))
         defaults.set(configuration.baseURL, forKey: key("baseURL", slot))
         defaults.set(configuration.model, forKey: key("model", slot))
-        try keychain.write(configuration.apiKey, account: keychainAccount(slot))
         if activate { activeSlot = slot }
+    }
+
+    func displayName(for slot: AIProfileSlot) -> String {
+        normalizedName(defaults.string(forKey: key("name", slot)) ?? "", for: slot)
+    }
+
+    func rename(_ slot: AIProfileSlot, to name: String) {
+        defaults.set(normalizedName(name, for: slot), forKey: key("name", slot))
     }
 
     func activeConfiguration() throws -> AIConfiguration {
@@ -147,12 +163,45 @@ final class AIConfigurationStore {
         "ai.\(provider.rawValue).\(field)"
     }
 
-    private func keychainAccount(_ slot: AIProfileSlot) -> String {
-        "slot.\(slot.rawValue)"
+    private func normalizedName(_ name: String, for slot: AIProfileSlot) -> String {
+        let value = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        return value.isEmpty ? slot.title : String(value.prefix(30))
+    }
+
+    private func loadAPIKeys() -> [Int: String] {
+        if let cachedAPIKeys { return cachedAPIKeys }
+        var keys: [Int: String] = [:]
+        do {
+            if let vault = try keychain.read(account: "profiles.v1"),
+               let data = vault.data(using: .utf8),
+               let decoded = try? JSONDecoder().decode([String: String].self, from: data) {
+                for (index, value) in decoded {
+                    if let index = Int(index) { keys[index] = value }
+                }
+            } else if let value = try keychain.read(account: "slot.0"), !value.isEmpty {
+                keys[AIProfileSlot.first.rawValue] = value
+                try? saveAPIKeys(keys)
+            } else if let legacyProvider = defaults.string(forKey: "ai.selectedProvider"),
+                      let value = try keychain.read(account: legacyProvider), !value.isEmpty {
+                keys[AIProfileSlot.first.rawValue] = value
+                try? saveAPIKeys(keys)
+            }
+        } catch {
+            // Cache the denial too, so one cancelled prompt cannot trigger a prompt loop.
+        }
+        cachedAPIKeys = keys
+        return keys
+    }
+
+    private func saveAPIKeys(_ keys: [Int: String]) throws {
+        let encoded = Dictionary(uniqueKeysWithValues: keys.map { (String($0.key), $0.value) })
+        let data = try JSONEncoder().encode(encoded)
+        try keychain.write(String(decoding: data, as: UTF8.self), account: "profiles.v1")
     }
 }
 
 struct AIConfigurationDraft: Sendable {
+    var name: String
     var provider: AIProvider
     var baseURL: String
     var model: String
@@ -191,7 +240,7 @@ enum AIConfigurationError: LocalizedError {
 struct APIKeyKeychain: Sendable {
     private let service = "com.xixi.quicknote.ai"
 
-    func read(account: String) throws -> String {
+    func read(account: String) throws -> String? {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
@@ -201,7 +250,7 @@ struct APIKeyKeychain: Sendable {
         ]
         var item: CFTypeRef?
         let status = SecItemCopyMatching(query as CFDictionary, &item)
-        if status == errSecItemNotFound { return "" }
+        if status == errSecItemNotFound { return nil }
         guard status == errSecSuccess, let data = item as? Data else {
             throw AIConfigurationError.keychain(status)
         }
@@ -425,12 +474,15 @@ private struct AISettingsView: View {
     let store: AIConfigurationStore
     @State private var slot: AIProfileSlot
     @State private var activeSlot: AIProfileSlot
+    @State private var profileName: String
     @State private var provider: AIProvider
     @State private var baseURL: String
     @State private var model: String
     @State private var apiKey: String
     @State private var status = ""
     @State private var isTesting = false
+    @State private var editingName = false
+    @FocusState private var nameFocused: Bool
 
     init(store: AIConfigurationStore) {
         self.store = store
@@ -438,6 +490,7 @@ private struct AISettingsView: View {
         let draft = store.draft(for: slot)
         _slot = State(initialValue: slot)
         _activeSlot = State(initialValue: slot)
+        _profileName = State(initialValue: draft.name)
         _provider = State(initialValue: draft.provider)
         _baseURL = State(initialValue: draft.baseURL)
         _model = State(initialValue: draft.model)
@@ -448,6 +501,7 @@ private struct AISettingsView: View {
         HStack(spacing: 0) {
             List(AIProfileSlot.allCases) { item in
                 Button {
+                    finishNameEditing()
                     slot = item
                     load(item)
                 } label: {
@@ -455,7 +509,7 @@ private struct AISettingsView: View {
                         Image(systemName: item == activeSlot ? "checkmark.circle.fill" : "circle")
                             .foregroundStyle(item == activeSlot ? Color.accentColor : Color.secondary.opacity(0.45))
                         VStack(alignment: .leading, spacing: 2) {
-                            Text(item.title)
+                            Text(store.displayName(for: item))
                                 .font(.system(size: 12, weight: .medium))
                             Text(profileDetail(item))
                                 .font(.system(size: 10))
@@ -476,8 +530,26 @@ private struct AISettingsView: View {
 
             VStack(alignment: .leading, spacing: 18) {
                 VStack(alignment: .leading, spacing: 4) {
-                    HStack {
-                        Text(slot.title)
+                    HStack(spacing: 7) {
+                        if editingName {
+                            TextField("模型名称", text: $profileName)
+                                .textFieldStyle(.plain)
+                                .font(.system(size: 20, weight: .semibold))
+                                .frame(maxWidth: 220)
+                                .focused($nameFocused)
+                                .onSubmit { finishNameEditing() }
+                        } else {
+                            Text(profileName)
+                                .font(.system(size: 20, weight: .semibold))
+                                .onTapGesture(count: 2, perform: beginNameEditing)
+                        }
+                        Button(action: beginNameEditing) {
+                            Image(systemName: "pencil")
+                                .font(.system(size: 11, weight: .medium))
+                        }
+                        .buttonStyle(.plain)
+                        .help("编辑模型名称")
+                        .accessibilityLabel("编辑模型名称")
                         if slot == activeSlot {
                             Text("使用中")
                                 .font(.system(size: 10, weight: .medium))
@@ -486,9 +558,9 @@ private struct AISettingsView: View {
                                 .padding(.vertical, 3)
                                 .background(Color.accentColor.opacity(0.1), in: Capsule())
                         }
+                        Spacer()
                     }
-                        .font(.system(size: 20, weight: .semibold))
-                    Text("最多保存 3 个模型配置，保存后自动设为当前模型。")
+                    Text("每个槽位可独立保存配置，保存后自动设为当前模型。")
                         .font(.system(size: 11, weight: .medium))
                         .foregroundStyle(.secondary)
                 }
@@ -539,6 +611,9 @@ private struct AISettingsView: View {
             .padding(22)
         }
         .frame(width: 620, height: 420)
+        .onChange(of: nameFocused) { _, focused in
+            if !focused && editingName { finishNameEditing() }
+        }
     }
 
     private func field<Content: View>(_ label: String, @ViewBuilder content: () -> Content) -> some View {
@@ -552,6 +627,7 @@ private struct AISettingsView: View {
 
     private func load(_ slot: AIProfileSlot) {
         let draft = store.draft(for: slot)
+        profileName = draft.name
         provider = draft.provider
         baseURL = draft.baseURL
         model = draft.model
@@ -601,7 +677,7 @@ private struct AISettingsView: View {
     }
 
     private var draft: AIConfigurationDraft {
-        AIConfigurationDraft(provider: provider, baseURL: baseURL, model: model, apiKey: apiKey)
+        AIConfigurationDraft(name: profileName, provider: provider, baseURL: baseURL, model: model, apiKey: apiKey)
     }
 
     private var providerBinding: Binding<AIProvider> {
@@ -621,5 +697,18 @@ private struct AISettingsView: View {
     private func profileDetail(_ slot: AIProfileSlot) -> String {
         let draft = store.draft(for: slot)
         return draft.apiKey.isEmpty ? "未配置" : "\(draft.provider.name) · \(draft.model)"
+    }
+
+    private func beginNameEditing() {
+        editingName = true
+        nameFocused = true
+    }
+
+    private func finishNameEditing() {
+        guard editingName else { return }
+        store.rename(slot, to: profileName)
+        profileName = store.displayName(for: slot)
+        editingName = false
+        nameFocused = false
     }
 }
