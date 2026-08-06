@@ -140,7 +140,7 @@ private struct SelectionActionView: View {
                 Text("选中文字")
                     .font(.system(size: 13, weight: .semibold))
                 Spacer()
-                Text("⌘⇧Space")
+                Text("⌥Space")
                     .font(.system(size: 10, weight: .medium, design: .rounded))
                     .foregroundStyle(.tertiary)
                 Button(action: close) {
@@ -248,7 +248,7 @@ private enum SelectionCaptureError: LocalizedError {
         case .accessibilityPermission:
             "请在“系统设置 → 隐私与安全性 → 辅助功能”中允许 QuickNote，然后重新触发快捷键。"
         case .noSelection:
-            "没有读取到选中文字。请先选中文字，再按 ⌘⇧Space。"
+            "没有读取到选中文字。请先选中文字，再按 ⌥Space。"
         }
     }
 }

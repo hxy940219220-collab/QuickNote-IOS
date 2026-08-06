@@ -1,4 +1,5 @@
 import AppKit
+import Carbon
 
 @MainActor
 final class CommandEventMonitor {
@@ -7,21 +8,14 @@ final class CommandEventMonitor {
     private var detector = DoubleCommandDetector(maxInterval: AppConfiguration.doubleCommandInterval)
     private var action: (() -> Void)?
     private var selectionAction: (() -> Void)?
+    private var selectionHotKey: EventHotKeyRef?
+    private var selectionHotKeyHandler: EventHandlerRef?
+
+    nonisolated static let selectionHotKeyCode = UInt32(kVK_Space)
+    nonisolated static let selectionHotKeyModifiers = UInt32(optionKey)
 
     nonisolated static func requiresTapRecovery(for type: CGEventType) -> Bool {
         type == .tapDisabledByTimeout || type == .tapDisabledByUserInput
-    }
-
-    nonisolated static func isSelectionShortcut(
-        type: CGEventType,
-        keyCode: Int64,
-        flags: CGEventFlags
-    ) -> Bool {
-        type == .keyDown
-            && keyCode == 49
-            && flags.contains([.maskCommand, .maskShift])
-            && !flags.contains(.maskControl)
-            && !flags.contains(.maskAlternate)
     }
 
     func start(
@@ -31,9 +25,10 @@ final class CommandEventMonitor {
             CGPreflightListenEventAccess() || CGRequestListenEventAccess()
         }
     ) -> Bool {
-        guard ensureListenAccess() else { return false }
         action = onDoubleCommand
         selectionAction = onSelectionShortcut
+        registerSelectionHotKey()
+        guard ensureListenAccess() else { return false }
         let mask = (1 << CGEventType.flagsChanged.rawValue) | (1 << CGEventType.keyDown.rawValue)
         let context = Unmanaged.passUnretained(self).toOpaque()
         guard let tap = CGEvent.tapCreate(
@@ -67,16 +62,6 @@ final class CommandEventMonitor {
     }
 
     private func consume(type: CGEventType, event: CGEvent) {
-        if Self.isSelectionShortcut(
-            type: type,
-            keyCode: event.getIntegerValueField(.keyboardEventKeycode),
-            flags: event.flags
-        ) {
-            detector = DoubleCommandDetector(maxInterval: AppConfiguration.doubleCommandInterval)
-            selectionAction?()
-            return
-        }
-
         let triggered: Bool
         if type == .keyDown {
             triggered = detector.observe(.otherKey)
@@ -85,6 +70,37 @@ final class CommandEventMonitor {
             triggered = detector.observe(.commandChanged(isDown: commandIsDown, time: event.timestamp.seconds))
         }
         if triggered { action?() }
+    }
+
+    private func registerSelectionHotKey() {
+        guard selectionHotKey == nil else { return }
+        var eventType = EventTypeSpec(
+            eventClass: OSType(kEventClassKeyboard),
+            eventKind: UInt32(kEventHotKeyPressed)
+        )
+        let context = Unmanaged.passUnretained(self).toOpaque()
+        InstallEventHandler(
+            GetApplicationEventTarget(),
+            { _, _, context in
+                guard let context else { return OSStatus(eventNotHandledErr) }
+                let monitor = Unmanaged<CommandEventMonitor>.fromOpaque(context).takeUnretainedValue()
+                Task { @MainActor in monitor.selectionAction?() }
+                return noErr
+            },
+            1,
+            &eventType,
+            context,
+            &selectionHotKeyHandler
+        )
+        let identifier = EventHotKeyID(signature: 0x514E6F74, id: 1)
+        RegisterEventHotKey(
+            Self.selectionHotKeyCode,
+            Self.selectionHotKeyModifiers,
+            identifier,
+            GetApplicationEventTarget(),
+            0,
+            &selectionHotKey
+        )
     }
 }
 

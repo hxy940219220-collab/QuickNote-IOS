@@ -1,3 +1,4 @@
+import Carbon
 import XCTest
 @testable import QuickNote
 
@@ -35,21 +36,9 @@ final class AppShellTests: XCTestCase {
         XCTAssertFalse(CommandEventMonitor.requiresTapRecovery(for: .flagsChanged))
     }
 
-    func testCommandShiftSpaceIsSelectionShortcut() {
-        XCTAssertTrue(
-            CommandEventMonitor.isSelectionShortcut(
-                type: .keyDown,
-                keyCode: 49,
-                flags: [.maskCommand, .maskShift]
-            )
-        )
-        XCTAssertFalse(
-            CommandEventMonitor.isSelectionShortcut(
-                type: .keyDown,
-                keyCode: 49,
-                flags: [.maskCommand, .maskShift, .maskAlternate]
-            )
-        )
+    func testSelectionHotKeyIsOptionSpace() {
+        XCTAssertEqual(CommandEventMonitor.selectionHotKeyCode, 49)
+        XCTAssertEqual(CommandEventMonitor.selectionHotKeyModifiers, UInt32(optionKey))
     }
 
     func testConfiguredDoubleCommandIntervalAllowsAComfortableDoubleTap() {
