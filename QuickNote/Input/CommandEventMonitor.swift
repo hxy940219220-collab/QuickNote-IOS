@@ -6,19 +6,34 @@ final class CommandEventMonitor {
     private var source: CFRunLoopSource?
     private var detector = DoubleCommandDetector(maxInterval: AppConfiguration.doubleCommandInterval)
     private var action: (() -> Void)?
+    private var selectionAction: (() -> Void)?
 
     nonisolated static func requiresTapRecovery(for type: CGEventType) -> Bool {
         type == .tapDisabledByTimeout || type == .tapDisabledByUserInput
     }
 
+    nonisolated static func isSelectionShortcut(
+        type: CGEventType,
+        keyCode: Int64,
+        flags: CGEventFlags
+    ) -> Bool {
+        type == .keyDown
+            && keyCode == 49
+            && flags.contains([.maskCommand, .maskShift])
+            && !flags.contains(.maskControl)
+            && !flags.contains(.maskAlternate)
+    }
+
     func start(
         onDoubleCommand: @escaping () -> Void,
+        onSelectionShortcut: @escaping () -> Void = {},
         ensureListenAccess: () -> Bool = {
             CGPreflightListenEventAccess() || CGRequestListenEventAccess()
         }
     ) -> Bool {
         guard ensureListenAccess() else { return false }
         action = onDoubleCommand
+        selectionAction = onSelectionShortcut
         let mask = (1 << CGEventType.flagsChanged.rawValue) | (1 << CGEventType.keyDown.rawValue)
         let context = Unmanaged.passUnretained(self).toOpaque()
         guard let tap = CGEvent.tapCreate(
@@ -52,6 +67,16 @@ final class CommandEventMonitor {
     }
 
     private func consume(type: CGEventType, event: CGEvent) {
+        if Self.isSelectionShortcut(
+            type: type,
+            keyCode: event.getIntegerValueField(.keyboardEventKeycode),
+            flags: event.flags
+        ) {
+            detector = DoubleCommandDetector(maxInterval: AppConfiguration.doubleCommandInterval)
+            selectionAction?()
+            return
+        }
+
         let triggered: Bool
         if type == .keyDown {
             triggered = detector.observe(.otherKey)

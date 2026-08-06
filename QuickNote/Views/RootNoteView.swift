@@ -166,11 +166,19 @@ struct RootNoteView: View {
 
 private struct CalendarPopoverView: View {
     @Binding var selectedDate: Date
+    @State private var displayedMonth: Date
+
+    private let columns = Array(repeating: GridItem(.fixed(28), spacing: 4), count: 7)
+
+    init(selectedDate: Binding<Date>) {
+        _selectedDate = selectedDate
+        _displayedMonth = State(initialValue: CalendarText.startOfMonth(for: selectedDate.wrappedValue))
+    }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 0) {
             Text(CalendarText.fullDate(for: selectedDate))
-                .font(.system(size: 18, weight: .semibold))
+                .font(.system(size: 20, weight: .semibold))
 
             HStack(spacing: 10) {
                 Text(CalendarText.weekday(for: selectedDate))
@@ -178,20 +186,81 @@ private struct CalendarPopoverView: View {
                     .foregroundStyle(.secondary)
             }
             .font(.system(size: 12, weight: .medium))
+            .padding(.top, 6)
 
             Divider()
+                .padding(.vertical, 12)
 
-            DatePicker("日期", selection: $selectedDate, displayedComponents: .date)
-                .datePickerStyle(.graphical)
-                .labelsHidden()
-                .environment(\.locale, Locale(identifier: "zh_CN"))
+            HStack {
+                Text(CalendarText.monthTitle(for: displayedMonth))
+                    .font(.system(size: 13, weight: .semibold))
+
+                Spacer()
+
+                monthButton("上个月", image: "chevron.left", offset: -1)
+                monthButton("下个月", image: "chevron.right", offset: 1)
+            }
+            .padding(.bottom, 8)
+
+            LazyVGrid(columns: columns, spacing: 4) {
+                ForEach(Array(CalendarText.weekdaySymbols.enumerated()), id: \.offset) { _, symbol in
+                    Text(symbol)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 28, height: 20)
+                }
+
+                ForEach(Array(CalendarText.monthGrid(containing: displayedMonth).enumerated()), id: \.offset) { _, date in
+                    dayButton(date)
+                }
+            }
         }
         .padding(14)
-        .frame(width: 240)
+        .frame(width: 248)
+    }
+
+    private func monthButton(_ label: String, image: String, offset: Int) -> some View {
+        Button {
+            displayedMonth = CalendarText.addingMonths(offset, to: displayedMonth)
+        } label: {
+            Image(systemName: image)
+                .font(.system(size: 10, weight: .semibold))
+                .frame(width: 22, height: 22)
+        }
+        .buttonStyle(.borderless)
+        .help(label)
+        .accessibilityLabel(label)
+    }
+
+    private func dayButton(_ date: Date) -> some View {
+        let selected = CalendarText.isSameDay(date, selectedDate)
+        let inMonth = CalendarText.isSameMonth(date, displayedMonth)
+        let today = CalendarText.isToday(date)
+
+        return Button {
+            selectedDate = date
+            displayedMonth = CalendarText.startOfMonth(for: date)
+        } label: {
+            Text(CalendarText.dayNumber(for: date))
+                .font(.system(size: 12, weight: selected ? .semibold : .regular))
+                .foregroundStyle(selected ? Color.white : (inMonth ? Color.primary : Color.secondary.opacity(0.5)))
+                .frame(width: 28, height: 28)
+                .background {
+                    if selected {
+                        Circle().fill(Color.accentColor)
+                    } else if today {
+                        Circle().stroke(Color.secondary.opacity(0.45), lineWidth: 1)
+                    }
+                }
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(CalendarText.fullDate(for: date))
     }
 }
 
 enum CalendarText {
+    static let weekdaySymbols = ["日", "一", "二", "三", "四", "五", "六"]
+
     static func toolbarDate(for date: Date, timeZone: TimeZone = .current) -> String {
         let components = gregorianComponents(for: date, timeZone: timeZone)
         return "\(components.month ?? 0)月\(components.day ?? 0)日"
@@ -226,9 +295,56 @@ enum CalendarText {
         return "农历 \(components.isLeapMonth == true ? "闰" : "")\(months[month - 1])\(days[day - 1])"
     }
 
+    static func monthTitle(for date: Date, timeZone: TimeZone = .current) -> String {
+        let components = gregorianComponents(for: date, timeZone: timeZone)
+        return "\(components.year ?? 0)年\(components.month ?? 0)月"
+    }
+
+    static func dayNumber(for date: Date, timeZone: TimeZone = .current) -> String {
+        String(gregorianComponents(for: date, timeZone: timeZone).day ?? 0)
+    }
+
+    static func startOfMonth(for date: Date, timeZone: TimeZone = .current) -> Date {
+        let calendar = gregorianCalendar(timeZone: timeZone)
+        let components = calendar.dateComponents([.year, .month], from: date)
+        return calendar.date(from: components) ?? date
+    }
+
+    static func addingMonths(_ count: Int, to date: Date, timeZone: TimeZone = .current) -> Date {
+        gregorianCalendar(timeZone: timeZone).date(byAdding: .month, value: count, to: date) ?? date
+    }
+
+    static func monthGrid(containing date: Date, timeZone: TimeZone = .current) -> [Date] {
+        var calendar = gregorianCalendar(timeZone: timeZone)
+        calendar.firstWeekday = 1
+        let month = startOfMonth(for: date, timeZone: timeZone)
+        let leadingDays = calendar.component(.weekday, from: month) - calendar.firstWeekday
+        guard let first = calendar.date(byAdding: .day, value: -leadingDays, to: month) else { return [] }
+        return (0..<42).compactMap { calendar.date(byAdding: .day, value: $0, to: first) }
+    }
+
+    static func isSameDay(_ lhs: Date, _ rhs: Date, timeZone: TimeZone = .current) -> Bool {
+        gregorianCalendar(timeZone: timeZone).isDate(lhs, inSameDayAs: rhs)
+    }
+
+    static func isSameMonth(_ lhs: Date, _ rhs: Date, timeZone: TimeZone = .current) -> Bool {
+        let calendar = gregorianCalendar(timeZone: timeZone)
+        return calendar.dateComponents([.year, .month], from: lhs)
+            == calendar.dateComponents([.year, .month], from: rhs)
+    }
+
+    static func isToday(_ date: Date, timeZone: TimeZone = .current) -> Bool {
+        gregorianCalendar(timeZone: timeZone).isDateInToday(date)
+    }
+
     private static func gregorianComponents(for date: Date, timeZone: TimeZone) -> DateComponents {
+        let calendar = gregorianCalendar(timeZone: timeZone)
+        return calendar.dateComponents([.year, .month, .day], from: date)
+    }
+
+    private static func gregorianCalendar(timeZone: TimeZone) -> Calendar {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = timeZone
-        return calendar.dateComponents([.year, .month, .day], from: date)
+        return calendar
     }
 }

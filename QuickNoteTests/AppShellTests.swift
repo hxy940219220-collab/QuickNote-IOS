@@ -13,6 +13,11 @@ final class AppShellTests: XCTestCase {
         XCTAssertEqual(CalendarText.fullDate(for: date, timeZone: gregorian.timeZone), "2026年8月6日")
         XCTAssertEqual(CalendarText.weekday(for: date, timeZone: gregorian.timeZone), "星期四")
         XCTAssertEqual(CalendarText.lunarDate(for: date, timeZone: gregorian.timeZone), "农历 六月廿四")
+
+        let grid = CalendarText.monthGrid(containing: date, timeZone: gregorian.timeZone)
+        XCTAssertEqual(grid.count, 42)
+        XCTAssertEqual(CalendarText.fullDate(for: try XCTUnwrap(grid.first), timeZone: gregorian.timeZone), "2026年7月26日")
+        XCTAssertEqual(CalendarText.fullDate(for: try XCTUnwrap(grid.last), timeZone: gregorian.timeZone), "2026年9月5日")
     }
 
     @MainActor
@@ -28,6 +33,23 @@ final class AppShellTests: XCTestCase {
         XCTAssertTrue(CommandEventMonitor.requiresTapRecovery(for: .tapDisabledByTimeout))
         XCTAssertTrue(CommandEventMonitor.requiresTapRecovery(for: .tapDisabledByUserInput))
         XCTAssertFalse(CommandEventMonitor.requiresTapRecovery(for: .flagsChanged))
+    }
+
+    func testCommandShiftSpaceIsSelectionShortcut() {
+        XCTAssertTrue(
+            CommandEventMonitor.isSelectionShortcut(
+                type: .keyDown,
+                keyCode: 49,
+                flags: [.maskCommand, .maskShift]
+            )
+        )
+        XCTAssertFalse(
+            CommandEventMonitor.isSelectionShortcut(
+                type: .keyDown,
+                keyCode: 49,
+                flags: [.maskCommand, .maskShift, .maskAlternate]
+            )
+        )
     }
 
     func testConfiguredDoubleCommandIntervalAllowsAComfortableDoubleTap() {

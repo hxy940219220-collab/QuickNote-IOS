@@ -66,6 +66,18 @@ final class NoteSession: ObservableObject {
         }
     }
 
+    func appendPlainText(_ text: String) throws {
+        let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return }
+        let updated = NSMutableAttributedString(attributedString: document)
+        if !updated.string.isEmpty {
+            updated.append(NSAttributedString(string: updated.string.hasSuffix("\n") ? "\n" : "\n\n"))
+        }
+        updated.append(NSAttributedString(string: text))
+        update(document: updated, cursorLocation: updated.length)
+        try flush()
+    }
+
     func retrySave() {
         if let pendingOperation {
             _ = attempt(pendingOperation)

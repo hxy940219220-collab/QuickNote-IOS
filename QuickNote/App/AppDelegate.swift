@@ -24,6 +24,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var session: NoteSession?
     private var panelCoordinator: PanelCoordinator?
     private var edgeRail: EdgeRailController?
+    private var selectionActions: SelectionActionController?
     private var presentationLifecycle: AppPresentationLifecycle?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -72,11 +73,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let presentationLifecycle = AppPresentationLifecycle {
                 try? coordinator.presentCurrentNote()
             }
+            let selectionActions = SelectionActionController(
+                session: session,
+                presentNote: { try? coordinator.presentCurrentNote() }
+            )
             statusMenu = StatusMenuController(
                 showAction: { _ = presentationLifecycle.applicationShouldHandleReopen() },
                 quitAction: { NSApp.terminate(nil) }
             )
-            let monitorStarted = commandMonitor.start(onDoubleCommand: togglePanel)
+            let monitorStarted = commandMonitor.start(
+                onDoubleCommand: togglePanel,
+                onSelectionShortcut: selectionActions.captureSelection
+            )
             if !monitorStarted {
                 statusMenu?.setShortcutUnavailable()
             }
@@ -86,6 +94,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self.session = session
             panelCoordinator = coordinator
             edgeRail = rail
+            self.selectionActions = selectionActions
             self.presentationLifecycle = presentationLifecycle
             presentationLifecycle.applicationDidLaunch()
         } catch {

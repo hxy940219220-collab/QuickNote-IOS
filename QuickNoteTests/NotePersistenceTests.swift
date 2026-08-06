@@ -83,6 +83,25 @@ final class NotePersistenceTests: XCTestCase {
         XCTAssertEqual(try documents.load(id: note.id).string, "\n  标题  \n正文")
     }
 
+    func testSelectedTextAppendsAndPersistsImmediately() throws {
+        let configuration = ModelConfiguration(isStoredInMemoryOnly: true)
+        let container = try ModelContainer(for: NoteRecord.self, configurations: configuration)
+        let repository = NoteRepository(context: container.mainContext)
+        let documents = NoteDocumentStore(
+            root: FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        )
+        let session = NoteSession(repository: repository, documents: documents)
+        try session.createAndOpen()
+        let note = try XCTUnwrap(session.currentNote)
+        session.update(document: NSAttributedString(string: "已有内容"), cursorLocation: 4)
+
+        try session.appendPlainText("  选中文字  ")
+
+        XCTAssertEqual(session.document.string, "已有内容\n\n选中文字")
+        XCTAssertEqual(note.cursorLocation, session.document.length)
+        XCTAssertEqual(try documents.load(id: note.id).string, "已有内容\n\n选中文字")
+    }
+
     func testSessionDebouncesAutosaveToLatestDocument() async throws {
         let configuration = ModelConfiguration(isStoredInMemoryOnly: true)
         let container = try ModelContainer(for: NoteRecord.self, configurations: configuration)
