@@ -14,6 +14,7 @@ final class EdgeRailController {
     private var notes: [NoteRecord] = []
     private weak var currentScreen: NSScreen?
     private var hoverTask: Task<Void, Never>?
+    private var contentSize = NSSize(width: 18, height: 31)
 
     var onHover: ((NoteRecord) -> Void)?
     var onExit: (() -> Void)?
@@ -55,6 +56,8 @@ final class EdgeRailController {
         hostingView.wantsLayer = true
         hostingView.layer?.backgroundColor = NSColor.clear.cgColor
         window.contentView = hostingView
+        contentSize = hostingView.fittingSize
+        reposition(force: true)
     }
 
     private func scheduleHover(_ note: NoteRecord) {
@@ -73,16 +76,21 @@ final class EdgeRailController {
         localMouseMonitor = nil
     }
 
-    private func reposition() {
+    static func railFrame(in visibleFrame: NSRect, contentSize: NSSize) -> NSRect {
+        NSRect(
+            x: visibleFrame.minX + 4,
+            y: visibleFrame.midY - contentSize.height / 2,
+            width: contentSize.width,
+            height: contentSize.height
+        )
+    }
+
+    private func reposition(force: Bool = false) {
         guard let screen = NSScreen.screens.first(where: {
             NSMouseInRect(NSEvent.mouseLocation, $0.frame, false)
         }) ?? NSScreen.main else { return }
-        guard screen !== currentScreen else { return }
+        guard force || screen !== currentScreen else { return }
         currentScreen = screen
-        let frame = screen.visibleFrame
-        window.setFrame(
-            NSRect(x: frame.minX + 4, y: frame.midY - 150, width: 18, height: 300),
-            display: true
-        )
+        window.setFrame(Self.railFrame(in: screen.visibleFrame, contentSize: contentSize), display: true)
     }
 }

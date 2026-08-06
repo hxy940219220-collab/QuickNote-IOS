@@ -21,6 +21,19 @@ final class NotePanelControllerTests: XCTestCase {
         XCTAssertEqual(collapsedFrame, NSRect(x: 1_924, y: 489, width: 18, height: 18))
     }
 
+    func testRailFrameCentersFittedContentOnPanelAnimationOrigin() {
+        let visibleFrame = NSRect(x: 1_920, y: 48, width: 1_440, height: 900)
+        let railFrame = EdgeRailController.railFrame(
+            in: visibleFrame,
+            contentSize: NSSize(width: 18, height: 31)
+        )
+        let collapsedFrame = NotePanelController.collapsedFrame(in: visibleFrame)
+
+        XCTAssertEqual(railFrame, NSRect(x: 1_924, y: 482.5, width: 18, height: 31))
+        XCTAssertEqual(railFrame.midX, collapsedFrame.midX)
+        XCTAssertEqual(railFrame.midY, collapsedFrame.midY)
+    }
+
     func testWindowStyleSupportsStandardCloseMinimizeAndZoomButtons() {
         let style = NotePanelController.windowStyleMask
 
