@@ -153,6 +153,27 @@ final class NotePersistenceTests: XCTestCase {
         XCTAssertTrue(document.string.contains("表格前"))
     }
 
+    func testDeleteCurrentTableFindsTableWhenCaretIsBelowIt() throws {
+        let controller = RichTextEditorController()
+        var document = NSAttributedString(string: "表格前")
+        let editor = RichTextEditor(
+            document: document,
+            cursorLocation: document.length,
+            controller: controller,
+            onChange: { updated, _ in document = updated },
+            onActivate: {}
+        )
+        let host = NSHostingView(rootView: editor)
+        host.frame = NSRect(x: 0, y: 0, width: 320, height: 240)
+        host.layoutSubtreeIfNeeded()
+        let textView = try XCTUnwrap(host.descendant(ofType: NSTextView.self))
+        controller.insertTable()
+        textView.setSelectedRange(NSRange(location: document.length, length: 0))
+
+        XCTAssertTrue(controller.deleteCurrentTable())
+        XCTAssertEqual(document.tableBlockCount, 0)
+    }
+
     func testTagsPersistAndParticipateInSearch() throws {
         let configuration = ModelConfiguration(isStoredInMemoryOnly: true)
         let container = try ModelContainer(for: NoteRecord.self, configurations: configuration)

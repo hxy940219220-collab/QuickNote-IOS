@@ -146,10 +146,24 @@ final class RichTextEditorController: ObservableObject {
     func deleteCurrentTable() -> Bool {
         guard let textView, let storage = textView.textStorage, storage.length > 0 else { return false }
         let cursor = min(textView.selectedRange().location, storage.length - 1)
-        guard let style = storage.attribute(.paragraphStyle, at: cursor, effectiveRange: nil) as? NSParagraphStyle,
-              let table = style.textBlocks.compactMap({ $0 as? NSTextTableBlock }).first?.table else {
-            return false
+        let style = storage.attribute(.paragraphStyle, at: cursor, effectiveRange: nil) as? NSParagraphStyle
+        var table = style?.textBlocks.compactMap({ $0 as? NSTextTableBlock }).first?.table
+        var nearestDistance = Int.max
+        if table == nil {
+            storage.enumerateAttribute(.paragraphStyle, in: NSRange(location: 0, length: storage.length)) {
+                value, range, _ in
+                guard let candidate = (value as? NSParagraphStyle)?.textBlocks
+                    .compactMap({ $0 as? NSTextTableBlock }).first else { return }
+                let distance = cursor < range.location
+                    ? range.location - cursor
+                    : max(0, cursor - NSMaxRange(range))
+                if distance < nearestDistance {
+                    nearestDistance = distance
+                    table = candidate.table
+                }
+            }
         }
+        guard let table else { return false }
         var tableRange = NSRange(location: NSNotFound, length: 0)
         storage.enumerateAttribute(.paragraphStyle, in: NSRange(location: 0, length: storage.length)) {
             value, range, _ in
