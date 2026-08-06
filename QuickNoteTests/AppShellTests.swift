@@ -2,6 +2,21 @@ import XCTest
 @testable import QuickNote
 
 final class AppShellTests: XCTestCase {
+    @MainActor
+    func testMonitorDoesNotStartWhenInputMonitoringIsDenied() {
+        let monitor = CommandEventMonitor()
+
+        XCTAssertFalse(
+            monitor.start(onDoubleCommand: {}, ensureListenAccess: { false })
+        )
+    }
+
+    func testDisabledEventTapSignalsRequireRecovery() {
+        XCTAssertTrue(CommandEventMonitor.requiresTapRecovery(for: .tapDisabledByTimeout))
+        XCTAssertTrue(CommandEventMonitor.requiresTapRecovery(for: .tapDisabledByUserInput))
+        XCTAssertFalse(CommandEventMonitor.requiresTapRecovery(for: .flagsChanged))
+    }
+
     func testConfiguredDoubleCommandIntervalAllowsAComfortableDoubleTap() {
         XCTAssertEqual(AppConfiguration.doubleCommandInterval, 0.500, accuracy: 0.001)
     }

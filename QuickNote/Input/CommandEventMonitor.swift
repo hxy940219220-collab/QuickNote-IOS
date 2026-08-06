@@ -7,7 +7,17 @@ final class CommandEventMonitor {
     private var detector = DoubleCommandDetector(maxInterval: AppConfiguration.doubleCommandInterval)
     private var action: (() -> Void)?
 
-    func start(onDoubleCommand: @escaping () -> Void) -> Bool {
+    nonisolated static func requiresTapRecovery(for type: CGEventType) -> Bool {
+        type == .tapDisabledByTimeout || type == .tapDisabledByUserInput
+    }
+
+    func start(
+        onDoubleCommand: @escaping () -> Void,
+        ensureListenAccess: () -> Bool = {
+            CGPreflightListenEventAccess() || CGRequestListenEventAccess()
+        }
+    ) -> Bool {
+        guard ensureListenAccess() else { return false }
         action = onDoubleCommand
         let mask = (1 << CGEventType.flagsChanged.rawValue) | (1 << CGEventType.keyDown.rawValue)
         let context = Unmanaged.passUnretained(self).toOpaque()
@@ -19,6 +29,10 @@ final class CommandEventMonitor {
             callback: { _, type, event, context in
                 guard let context else { return Unmanaged.passUnretained(event) }
                 let monitor = Unmanaged<CommandEventMonitor>.fromOpaque(context).takeUnretainedValue()
+                if CommandEventMonitor.requiresTapRecovery(for: type) {
+                    Task { @MainActor in monitor.reenableTap() }
+                    return Unmanaged.passUnretained(event)
+                }
                 Task { @MainActor in monitor.consume(type: type, event: event) }
                 return Unmanaged.passUnretained(event)
             },
@@ -29,6 +43,12 @@ final class CommandEventMonitor {
         CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
         CGEvent.tapEnable(tap: tap, enable: true)
         return true
+    }
+
+    private func reenableTap() {
+        guard let tap else { return }
+        detector = DoubleCommandDetector(maxInterval: AppConfiguration.doubleCommandInterval)
+        CGEvent.tapEnable(tap: tap, enable: true)
     }
 
     private func consume(type: CGEventType, event: CGEvent) {
