@@ -1,6 +1,25 @@
 import AppKit
 import SwiftUI
 
+@MainActor
+private protocol ChecklistClickHandling: AnyObject {
+    func toggleChecklist(at location: Int) -> Bool
+}
+
+private final class ChecklistAttachmentCell: NSTextAttachmentCell {
+    override func trackMouse(
+        with event: NSEvent,
+        in cellFrame: NSRect,
+        of controlView: NSView?,
+        atCharacterIndex charIndex: Int,
+        untilMouseUp flag: Bool
+    ) -> Bool {
+        guard let textView = controlView as? NSTextView,
+              let handler = textView.delegate as? ChecklistClickHandling else { return false }
+        return handler.toggleChecklist(at: charIndex)
+    }
+}
+
 enum EditorTextStyle: String, CaseIterable, Identifiable {
     case title
     case heading
@@ -156,6 +175,23 @@ final class RichTextEditorController: ObservableObject {
             guard let result, let url = result.url,
                   storage.attribute(.link, at: result.range.location, effectiveRange: nil) == nil else { return }
             storage.addAttribute(.link, value: url, range: result.range)
+        }
+    }
+
+    func prepareChecklistAttachments(in textView: NSTextView) {
+        guard let storage = textView.textStorage else { return }
+        let range = NSRange(location: 0, length: storage.length)
+        var items: [(Int, Bool)] = []
+        storage.enumerateAttribute(.attachment, in: range) { value, range, _ in
+            guard value is NSTextAttachment,
+                  let checked = checklistState(at: range.location, in: storage) else { return }
+            items.append((range.location, checked))
+        }
+        for (location, checked) in items.reversed() {
+            storage.replaceCharacters(
+                in: NSRange(location: location, length: 1),
+                with: checklistMarker(checked: checked)
+            )
         }
     }
 
@@ -461,24 +497,22 @@ final class RichTextEditorController: ObservableObject {
         let png = image.tiffRepresentation
             .flatMap(NSBitmapImageRep.init(data:))?
             .representation(using: .png, properties: [:])
-        let attachment = NSTextAttachment(data: png, ofType: "public.png")
-        if let png {
-            attachment.image = NSImage(data: png)
-        }
+        let wrapper = FileWrapper(regularFileWithContents: png ?? Data())
+        wrapper.preferredFilename = "quicknote-checklist-\(checked ? "checked" : "unchecked").png"
+        let attachment = NSTextAttachment(fileWrapper: wrapper)
         attachment.bounds = NSRect(x: 0, y: -2, width: 15, height: 15)
-        attachment.attachmentCell = NSTextAttachmentCell(imageCell: attachment.image)
-        let marker = NSMutableAttributedString(attachment: attachment)
-        marker.addAttribute(
-            .link,
-            value: URL(string: "quicknote-checklist://\(checked ? "checked" : "unchecked")")!,
-            range: NSRange(location: 0, length: marker.length)
-        )
-        return marker
+        attachment.attachmentCell = ChecklistAttachmentCell(imageCell: png.flatMap(NSImage.init(data:)))
+        return NSAttributedString(attachment: attachment)
     }
 
     private func checklistState(at location: Int, in storage: NSTextStorage) -> Bool? {
         guard location >= 0, location < storage.length,
-              let url = storage.attribute(.link, at: location, effectiveRange: nil) as? URL,
+              let attachment = storage.attribute(.attachment, at: location, effectiveRange: nil)
+                as? NSTextAttachment else { return nil }
+        let filename = attachment.fileWrapper?.preferredFilename ?? attachment.fileWrapper?.filename
+        if filename == "quicknote-checklist-checked.png" { return true }
+        if filename == "quicknote-checklist-unchecked.png" { return false }
+        guard let url = storage.attribute(.link, at: location, effectiveRange: nil) as? URL,
               url.scheme == "quicknote-checklist" else { return nil }
         return url.host == "checked"
     }
@@ -547,6 +581,7 @@ struct RichTextEditor: NSViewRepresentable {
         textView.delegate = context.coordinator
         controller.connect(textView)
         textView.textStorage?.setAttributedString(document)
+        controller.prepareChecklistAttachments(in: textView)
         controller.detectLinks(in: textView)
         textView.setSelectedRange(NSRange(location: clampedCursorLocation, length: 0))
         controller.applyDefaultParagraphSpacing(in: textView)
@@ -560,6 +595,7 @@ struct RichTextEditor: NSViewRepresentable {
         controller.connect(textView)
         if !textView.attributedString().isEqual(to: document) {
             textView.textStorage?.setAttributedString(document)
+            controller.prepareChecklistAttachments(in: textView)
             controller.detectLinks(in: textView)
             controller.applyDefaultParagraphSpacing(in: textView)
         }
@@ -573,7 +609,7 @@ struct RichTextEditor: NSViewRepresentable {
     }
 
     @MainActor
-    final class Coordinator: NSObject, NSTextViewDelegate {
+    final class Coordinator: NSObject, NSTextViewDelegate, ChecklistClickHandling {
         var owner: RichTextEditor
 
         init(owner: RichTextEditor) { self.owner = owner }
@@ -592,9 +628,8 @@ struct RichTextEditor: NSViewRepresentable {
             return owner.controller.continueListAfterNewline()
         }
 
-        func textView(_ textView: NSTextView, clickedOnLink link: Any, at charIndex: Int) -> Bool {
-            guard let url = link as? URL, url.scheme == "quicknote-checklist" else { return false }
-            return owner.controller.toggleChecklistItem(at: charIndex)
+        func toggleChecklist(at location: Int) -> Bool {
+            owner.controller.toggleChecklistItem(at: location)
         }
 
     }

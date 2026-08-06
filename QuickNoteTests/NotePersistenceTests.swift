@@ -115,19 +115,43 @@ final class NotePersistenceTests: XCTestCase {
 
         let itemRange = (document.string as NSString).range(of: "\u{FFFC}")
         XCTAssertNotEqual(itemRange.location, NSNotFound)
-        XCTAssertEqual((document.attribute(.link, at: itemRange.location, effectiveRange: nil) as? URL)?.host, "unchecked")
+        XCTAssertNil(document.attribute(.link, at: itemRange.location, effectiveRange: nil))
+        var attachment = try XCTUnwrap(
+            document.attribute(.attachment, at: itemRange.location, effectiveRange: nil) as? NSTextAttachment
+        )
+        XCTAssertEqual(attachment.fileWrapper?.preferredFilename, "quicknote-checklist-unchecked.png")
 
-        let delegate = editor.makeCoordinator() as NSTextViewDelegate
-        let handled = delegate.textView?(
-            host.descendant(ofType: NSTextView.self)!,
-            clickedOnLink: URL(string: "quicknote-checklist://unchecked")!,
-            at: itemRange.location
+        let textView = try XCTUnwrap(host.descendant(ofType: NSTextView.self))
+        let click = try XCTUnwrap(NSEvent.mouseEvent(
+            with: .leftMouseDown,
+            location: .zero,
+            modifierFlags: [],
+            timestamp: 0,
+            windowNumber: 0,
+            context: nil,
+            eventNumber: 0,
+            clickCount: 1,
+            pressure: 1
+        ))
+        let handled = attachment.attachmentCell?.trackMouse(
+            with: click,
+            in: NSRect(x: 0, y: 0, width: 15, height: 15),
+            of: textView,
+            atCharacterIndex: itemRange.location,
+            untilMouseUp: false
         )
         XCTAssertEqual(handled, true)
-        XCTAssertEqual((document.attribute(.link, at: itemRange.location, effectiveRange: nil) as? URL)?.host, "checked")
+        attachment = try XCTUnwrap(
+            document.attribute(.attachment, at: itemRange.location, effectiveRange: nil) as? NSTextAttachment
+        )
+        XCTAssertEqual(attachment.fileWrapper?.preferredFilename, "quicknote-checklist-checked.png")
+        XCTAssertNil(document.attribute(.link, at: itemRange.location, effectiveRange: nil))
 
         XCTAssertTrue(controller.toggleChecklistItem(at: itemRange.location))
-        XCTAssertEqual((document.attribute(.link, at: itemRange.location, effectiveRange: nil) as? URL)?.host, "unchecked")
+        attachment = try XCTUnwrap(
+            document.attribute(.attachment, at: itemRange.location, effectiveRange: nil) as? NSTextAttachment
+        )
+        XCTAssertEqual(attachment.fileWrapper?.preferredFilename, "quicknote-checklist-unchecked.png")
 
         let store = NoteDocumentStore(
             root: FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
@@ -142,7 +166,38 @@ final class NotePersistenceTests: XCTestCase {
             effectiveRange: nil
         ) as? NSTextAttachment
         XCTAssertNotNil((reopenedAttachment?.attachmentCell as? NSTextAttachmentCell)?.image)
-        XCTAssertEqual((reopened.attribute(.link, at: itemRange.location, effectiveRange: nil) as? URL)?.host, "unchecked")
+        XCTAssertEqual(reopenedAttachment?.fileWrapper?.preferredFilename, "quicknote-checklist-unchecked.png")
+        XCTAssertNil(reopened.attribute(.link, at: itemRange.location, effectiveRange: nil))
+    }
+
+    func testLegacyLinkedChecklistIsMigratedToDirectClickMarker() throws {
+        let legacyAttachment = NSTextAttachment()
+        legacyAttachment.image = testImage()
+        let legacyMarker = NSMutableAttributedString(attachment: legacyAttachment)
+        legacyMarker.addAttribute(
+            .link,
+            value: URL(string: "quicknote-checklist://unchecked")!,
+            range: NSRange(location: 0, length: legacyMarker.length)
+        )
+        var document: NSAttributedString = legacyMarker
+        let controller = RichTextEditorController()
+        let editor = RichTextEditor(
+            document: document,
+            cursorLocation: 0,
+            controller: controller,
+            onChange: { updated, _ in document = updated },
+            onActivate: {}
+        )
+        let host = NSHostingView(rootView: editor)
+        host.frame = NSRect(x: 0, y: 0, width: 320, height: 240)
+        host.layoutSubtreeIfNeeded()
+        let textView = try XCTUnwrap(host.descendant(ofType: NSTextView.self))
+
+        XCTAssertNil(textView.textStorage?.attribute(.link, at: 0, effectiveRange: nil))
+        let attachment = try XCTUnwrap(
+            textView.textStorage?.attribute(.attachment, at: 0, effectiveRange: nil) as? NSTextAttachment
+        )
+        XCTAssertEqual(attachment.fileWrapper?.preferredFilename, "quicknote-checklist-unchecked.png")
     }
 
     func testParagraphAlignmentCanBeChanged() throws {
