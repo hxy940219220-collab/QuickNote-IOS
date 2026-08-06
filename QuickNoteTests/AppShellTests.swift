@@ -83,6 +83,17 @@ final class AppShellTests: XCTestCase {
         XCTAssertEqual(long, 390)
     }
 
+    func testSelectionResultFormatterRendersMarkdownWithoutSourceMarkers() {
+        let result = SelectionResultFormatter.plainText(
+            from: "**测试用例**\n\n```swift\nlet passed = true\n```"
+        )
+
+        XCTAssertFalse(result.contains("**"))
+        XCTAssertFalse(result.contains("```"))
+        XCTAssertTrue(result.contains("测试用例"))
+        XCTAssertTrue(result.contains("let passed = true"))
+    }
+
     func testConfiguredDoubleCommandIntervalAllowsAComfortableDoubleTap() {
         XCTAssertEqual(AppConfiguration.doubleCommandInterval, 0.500, accuracy: 0.001)
     }

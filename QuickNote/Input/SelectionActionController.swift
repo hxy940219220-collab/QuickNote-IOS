@@ -64,7 +64,7 @@ final class SelectionActionController {
                 state.result = result.text
                 state.resultProvider = result.providerName
                 state.isLoading = false
-                resize(height: SelectionPanelLayout.resultHeight(for: result.text))
+                resize(height: SelectionPanelLayout.resultHeight(for: SelectionResultFormatter.plainText(from: result.text)))
             } catch is CancellationError {
             } catch {
                 state.isLoading = false
@@ -77,7 +77,7 @@ final class SelectionActionController {
     private func makePanel() -> NSPanel {
         let panel = NSPanel(
             contentRect: NSRect(x: 0, y: 0, width: 520, height: 185),
-            styleMask: [.borderless, .nonactivatingPanel],
+            styleMask: [.borderless, .nonactivatingPanel, .resizable],
             backing: .buffered,
             defer: false
         )
@@ -86,6 +86,7 @@ final class SelectionActionController {
         panel.isOpaque = false
         panel.backgroundColor = .clear
         panel.hasShadow = true
+        panel.contentMinSize = NSSize(width: 500, height: 185)
         panel.isMovable = true
         panel.isMovableByWindowBackground = true
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
@@ -97,7 +98,10 @@ final class SelectionActionController {
                 },
                 perform: { [weak self] action in self?.run(action) },
                 importResult: { [weak self] in
-                    self?.append(self?.state.result ?? "", kind: .result)
+                    self?.append(
+                        SelectionResultFormatter.plainText(from: self?.state.result ?? ""),
+                        kind: .result
+                    )
                 },
                 settings: showSettings,
                 close: { [weak panel] in panel?.orderOut(nil) }
@@ -133,6 +137,18 @@ enum SelectionPanelLayout {
             attributes: [.font: NSFont.systemFont(ofSize: 13)]
         )
         return min(max(230 + ceil(bounds.height), 300), 390)
+    }
+}
+
+enum SelectionResultFormatter {
+    static func attributedText(from text: String) -> AttributedString {
+        var options = AttributedString.MarkdownParsingOptions()
+        options.failurePolicy = .returnPartiallyParsedIfPossible
+        return (try? AttributedString(markdown: text, options: options)) ?? AttributedString(text)
+    }
+
+    static func plainText(from text: String) -> String {
+        String(attributedText(from: text).characters)
     }
 }
 
@@ -186,23 +202,19 @@ private struct SelectionActionView: View {
     }
 
     private var header: some View {
-        HStack(spacing: 6) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("选中内容")
-                    .font(.system(size: 15, weight: .semibold))
-                if !state.source.isEmpty {
-                    Text("\(state.source.count) 个字符")
-                        .font(.system(size: 10))
-                        .foregroundStyle(.tertiary)
-                }
-            }
+        HStack(spacing: 0) {
+            Text("选中内容")
+                .font(.system(size: 15, weight: .semibold))
+                .fixedSize()
+            Spacer(minLength: 8)
             actions
-            Spacer(minLength: 0)
+            Spacer(minLength: 8)
             importButton(imported: state.importedKind == .source, action: importSource)
                 .disabled(state.source.isEmpty || state.isLoading)
                 .opacity(state.source.isEmpty || state.isLoading ? 0.45 : 1)
                 .help("将选中文字导入便签")
             iconButton("关闭", image: "xmark", action: close)
+                .padding(.leading, 8)
         }
     }
 
@@ -243,23 +255,24 @@ private struct SelectionActionView: View {
             }
         } else if !state.result.isEmpty {
             Divider()
-            HStack {
+            HStack(spacing: 0) {
                 Text(state.activeAction?.title ?? "结果")
                     .font(.system(size: 12, weight: .semibold))
                 Text(state.resultProvider)
                     .font(.system(size: 10))
                     .foregroundStyle(.tertiary)
+                    .padding(.leading, 8)
                 Spacer()
                 importButton(imported: state.importedKind == .result, action: importResult)
-                Color.clear.frame(width: 28, height: 1)
+                Color.clear.frame(width: 30, height: 22)
             }
             ScrollView {
-                Text(state.result)
+                Text(SelectionResultFormatter.attributedText(from: state.result))
                     .font(.system(size: 13))
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .frame(maxHeight: 168)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if !state.notice.isEmpty && !state.source.isEmpty {
             Divider()
             HStack(alignment: .firstTextBaseline, spacing: 8) {
@@ -289,16 +302,19 @@ private struct SelectionActionView: View {
 
     private func importButton(imported: Bool, action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            Label(imported ? "已导入便签" : "导入便签", systemImage: imported ? "checkmark" : "square.and.arrow.down")
+            Label("导入便签", systemImage: "square.and.arrow.down")
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(Color(nsColor: .alternateSelectedControlTextColor))
-                .padding(.horizontal, 9)
-                .frame(height: 25)
-                .background(Color.accentColor, in: RoundedRectangle(cornerRadius: 6))
+                .frame(width: 92, height: 28)
+                .background(
+                    Color(nsColor: imported ? .systemGreen : .controlAccentColor),
+                    in: RoundedRectangle(cornerRadius: 6)
+                )
         }
         .buttonStyle(.plain)
-        .fixedSize()
         .layoutPriority(2)
+        .help(imported ? "已导入便签" : "导入便签")
+        .accessibilityLabel(imported ? "已导入便签" : "导入便签")
     }
 }
 
