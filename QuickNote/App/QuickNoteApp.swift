@@ -1,7 +1,7 @@
 import SwiftUI
 
 enum AppConfiguration {
-    static let doubleCommandInterval: TimeInterval = 0.300
+    static let doubleCommandInterval: TimeInterval = 0.500
 }
 
 @main

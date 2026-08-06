@@ -12,6 +12,8 @@ final class PanelCoordinator {
         self.panel = panel
         self.session = session
         self.repository = repository
+        panel.onDismiss = { [weak self] in self?.dismissFromWindow() }
+        panel.onMiniaturize = { [weak self] in self?.miniaturizeFromWindow() }
     }
 
     func toggleFromCommand() throws {
@@ -72,6 +74,18 @@ final class PanelCoordinator {
             machine.send(.pointerExited)
             try? render(note: session.currentNote, activate: false)
         }
+    }
+
+    private func dismissFromWindow() {
+        dismissTask?.cancel()
+        machine.send(.dismiss)
+        try? render(note: session.currentNote, activate: false)
+    }
+
+    private func miniaturizeFromWindow() {
+        dismissTask?.cancel()
+        machine.send(.dismiss)
+        session.retrySave()
     }
 
     private func render(note: NoteRecord?, activate: Bool) throws {

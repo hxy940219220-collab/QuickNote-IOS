@@ -10,6 +10,14 @@ final class DoubleCommandDetectorTests: XCTestCase {
         XCTAssertTrue(detector.observe(.commandChanged(isDown: false, time: 1.24)))
     }
 
+    func testNaturalFourHundredFiftyMillisecondDoubleTapTriggers() {
+        var detector = DoubleCommandDetector(maxInterval: AppConfiguration.doubleCommandInterval)
+        XCTAssertFalse(detector.observe(.commandChanged(isDown: true, time: 1.00)))
+        XCTAssertFalse(detector.observe(.commandChanged(isDown: false, time: 1.04)))
+        XCTAssertFalse(detector.observe(.commandChanged(isDown: true, time: 1.45)))
+        XCTAssertTrue(detector.observe(.commandChanged(isDown: false, time: 1.49)))
+    }
+
     func testOtherKeyCancelsPendingPress() {
         var detector = DoubleCommandDetector(maxInterval: 0.300)
         _ = detector.observe(.commandChanged(isDown: true, time: 1.00))

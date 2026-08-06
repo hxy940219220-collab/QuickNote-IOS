@@ -2,8 +2,8 @@ import XCTest
 @testable import QuickNote
 
 final class AppShellTests: XCTestCase {
-    func testConfiguredDoubleCommandIntervalIsThreeTenthsOfASecond() {
-        XCTAssertEqual(AppConfiguration.doubleCommandInterval, 0.300, accuracy: 0.001)
+    func testConfiguredDoubleCommandIntervalAllowsAComfortableDoubleTap() {
+        XCTAssertEqual(AppConfiguration.doubleCommandInterval, 0.500, accuracy: 0.001)
     }
 
     @MainActor
