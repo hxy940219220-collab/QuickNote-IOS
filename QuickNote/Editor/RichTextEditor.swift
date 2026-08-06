@@ -16,6 +16,8 @@ struct RichTextEditor: NSViewRepresentable {
         textView.importsGraphics = true
         textView.allowsUndo = true
         textView.isAutomaticTextCompletionEnabled = false
+        textView.font = .systemFont(ofSize: 15)
+        textView.textContainerInset = NSSize(width: 12, height: 12)
         textView.delegate = context.coordinator
         textView.textStorage?.setAttributedString(document)
         textView.setSelectedRange(NSRange(location: clampedCursorLocation, length: 0))

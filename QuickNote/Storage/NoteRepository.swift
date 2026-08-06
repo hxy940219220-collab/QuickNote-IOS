@@ -14,14 +14,16 @@ final class NoteRepository {
     }
 
     func allNotes() throws -> [NoteRecord] {
-        try context.fetch(FetchDescriptor<NoteRecord>(sortBy: [SortDescriptor(\.updatedAt, order: .reverse)]))
+        try context.fetch(
+            FetchDescriptor<NoteRecord>(sortBy: [SortDescriptor(\.updatedAt, order: .reverse)])
+        ).sorted {
+            if $0.isPinned != $1.isPinned { return $0.isPinned }
+            return $0.updatedAt > $1.updatedAt
+        }
     }
 
     func recentNotes(limit: Int = 8) throws -> [NoteRecord] {
-        Array(try allNotes().sorted {
-            if $0.isPinned != $1.isPinned { return $0.isPinned }
-            return $0.updatedAt > $1.updatedAt
-        }.prefix(limit))
+        Array(try allNotes().prefix(limit))
     }
 
     func search(_ query: String) throws -> [NoteRecord] {
