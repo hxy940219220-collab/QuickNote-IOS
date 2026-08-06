@@ -117,8 +117,17 @@ final class NotePersistenceTests: XCTestCase {
         XCTAssertNotEqual(itemRange.location, NSNotFound)
         XCTAssertEqual((document.attribute(.link, at: itemRange.location, effectiveRange: nil) as? URL)?.host, "unchecked")
 
-        XCTAssertTrue(controller.toggleChecklistItem(at: itemRange.location))
+        let delegate = editor.makeCoordinator() as NSTextViewDelegate
+        let handled = delegate.textView?(
+            host.descendant(ofType: NSTextView.self)!,
+            clickedOnLink: URL(string: "quicknote-checklist://unchecked")!,
+            at: itemRange.location
+        )
+        XCTAssertEqual(handled, true)
         XCTAssertEqual((document.attribute(.link, at: itemRange.location, effectiveRange: nil) as? URL)?.host, "checked")
+
+        XCTAssertTrue(controller.toggleChecklistItem(at: itemRange.location))
+        XCTAssertEqual((document.attribute(.link, at: itemRange.location, effectiveRange: nil) as? URL)?.host, "unchecked")
 
         let store = NoteDocumentStore(
             root: FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
@@ -133,7 +142,7 @@ final class NotePersistenceTests: XCTestCase {
             effectiveRange: nil
         ) as? NSTextAttachment
         XCTAssertNotNil((reopenedAttachment?.attachmentCell as? NSTextAttachmentCell)?.image)
-        XCTAssertEqual((reopened.attribute(.link, at: itemRange.location, effectiveRange: nil) as? URL)?.host, "checked")
+        XCTAssertEqual((reopened.attribute(.link, at: itemRange.location, effectiveRange: nil) as? URL)?.host, "unchecked")
     }
 
     func testParagraphAlignmentCanBeChanged() throws {
@@ -242,6 +251,37 @@ final class NotePersistenceTests: XCTestCase {
         XCTAssertEqual(document.string, "1. 第一项\n2. ")
     }
 
+    func testContinuedNumberedLinePreservesParagraphFont() throws {
+        let controller = RichTextEditorController()
+        let bodyFont = NSFont.systemFont(ofSize: 15)
+        var document = NSAttributedString(
+            string: "2. 正文内容",
+            attributes: [.font: bodyFont]
+        )
+        let editor = RichTextEditor(
+            document: document,
+            cursorLocation: document.length,
+            controller: controller,
+            onChange: { updated, _ in document = updated },
+            onActivate: {}
+        )
+        let host = NSHostingView(rootView: editor)
+        host.frame = NSRect(x: 0, y: 0, width: 320, height: 240)
+        host.layoutSubtreeIfNeeded()
+        let textView = try XCTUnwrap(host.descendant(ofType: NSTextView.self))
+        textView.typingAttributes[.font] = NSFont.monospacedSystemFont(ofSize: 15, weight: .regular)
+
+        XCTAssertTrue(controller.continueListAfterNewline())
+
+        let continuedFont = document.attribute(
+            .font,
+            at: document.length - 1,
+            effectiveRange: nil
+        ) as? NSFont
+        XCTAssertEqual(continuedFont?.fontName, bodyFont.fontName)
+        XCTAssertEqual((textView.typingAttributes[.font] as? NSFont)?.fontName, bodyFont.fontName)
+    }
+
     func testAlphabeticLineContinuesAfterNewline() throws {
         let controller = RichTextEditorController()
         var document = NSAttributedString(string: "B. 第二项")
@@ -301,6 +341,28 @@ final class NotePersistenceTests: XCTestCase {
 
         controller.applyBackgroundColor(nil)
         XCTAssertNil(document.attribute(.backgroundColor, at: 0, effectiveRange: nil))
+    }
+
+    func testEditorAppliesComfortableDefaultParagraphSpacing() throws {
+        let document = NSAttributedString(string: "第一行\n第二行")
+        let editor = RichTextEditor(
+            document: document,
+            cursorLocation: 0,
+            controller: RichTextEditorController(),
+            onChange: { _, _ in },
+            onActivate: {}
+        )
+        let host = NSHostingView(rootView: editor)
+        host.frame = NSRect(x: 0, y: 0, width: 320, height: 240)
+        host.layoutSubtreeIfNeeded()
+        let textView = try XCTUnwrap(host.descendant(ofType: NSTextView.self))
+        let style = textView.textStorage?.attribute(
+            .paragraphStyle,
+            at: 0,
+            effectiveRange: nil
+        ) as? NSParagraphStyle
+
+        XCTAssertGreaterThan(style?.paragraphSpacing ?? 0, 0)
     }
 
     func testTableInsertionPlacesCaretInVisibleParagraphBelowTable() throws {

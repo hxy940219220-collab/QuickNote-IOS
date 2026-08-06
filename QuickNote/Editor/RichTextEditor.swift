@@ -190,13 +190,39 @@ final class RichTextEditorController: ObservableObject {
                   let following = UnicodeScalar(scalar.value + 1) else { return false }
             next = String(following)
         }
+        var continuationAttributes = storage.attributes(at: paragraph.location, effectiveRange: nil)
+        continuationAttributes.removeValue(forKey: .link)
+        continuationAttributes.removeValue(forKey: .attachment)
         let content = NSAttributedString(
             string: "\n\(indentation)\(next). ",
-            attributes: textView.typingAttributes
+            attributes: continuationAttributes
         )
         storage.replaceCharacters(in: selection, with: content)
         commit(textView, preserving: NSRange(location: selection.location + content.length, length: 0))
+        textView.typingAttributes = continuationAttributes
         return true
+    }
+
+    func applyDefaultParagraphSpacing(in textView: NSTextView) {
+        guard let storage = textView.textStorage else { return }
+        let spacing: CGFloat = 4
+        let fullRange = NSRange(location: 0, length: storage.length)
+        enumerateParagraphs(in: fullRange, text: storage.string) { range in
+            let style = (storage.attribute(.paragraphStyle, at: range.location, effectiveRange: nil)
+                as? NSParagraphStyle)?.mutableCopy() as? NSMutableParagraphStyle ?? NSMutableParagraphStyle()
+            guard style.textBlocks.isEmpty, style.paragraphSpacing == 0 else { return }
+            style.paragraphSpacing = spacing
+            storage.addAttribute(.paragraphStyle, value: style, range: range)
+        }
+        let cursor = textView.selectedRange().location
+        let style = (cursor < storage.length
+            ? storage.attribute(.paragraphStyle, at: cursor, effectiveRange: nil) as? NSParagraphStyle
+            : textView.typingAttributes[.paragraphStyle] as? NSParagraphStyle)?
+            .mutableCopy() as? NSMutableParagraphStyle ?? NSMutableParagraphStyle()
+        if style.textBlocks.isEmpty, style.paragraphSpacing == 0 {
+            style.paragraphSpacing = spacing
+        }
+        textView.typingAttributes[.paragraphStyle] = style
     }
 
     func insertChecklistItem() {
@@ -523,6 +549,7 @@ struct RichTextEditor: NSViewRepresentable {
         textView.textStorage?.setAttributedString(document)
         controller.detectLinks(in: textView)
         textView.setSelectedRange(NSRange(location: clampedCursorLocation, length: 0))
+        controller.applyDefaultParagraphSpacing(in: textView)
         scroll.hasVerticalScroller = true
         return scroll
     }
@@ -534,6 +561,7 @@ struct RichTextEditor: NSViewRepresentable {
         if !textView.attributedString().isEqual(to: document) {
             textView.textStorage?.setAttributedString(document)
             controller.detectLinks(in: textView)
+            controller.applyDefaultParagraphSpacing(in: textView)
         }
         if textView.selectedRange().location != clampedCursorLocation {
             textView.setSelectedRange(NSRange(location: clampedCursorLocation, length: 0))
@@ -564,13 +592,9 @@ struct RichTextEditor: NSViewRepresentable {
             return owner.controller.continueListAfterNewline()
         }
 
-        func textView(
-            _ textView: NSTextView,
-            clickedOn cell: any NSTextAttachmentCellProtocol,
-            in cellFrame: NSRect,
-            at charIndex: Int
-        ) {
-            owner.controller.toggleChecklistItem(at: charIndex)
+        func textView(_ textView: NSTextView, clickedOnLink link: Any, at charIndex: Int) -> Bool {
+            guard let url = link as? URL, url.scheme == "quicknote-checklist" else { return false }
+            return owner.controller.toggleChecklistItem(at: charIndex)
         }
 
     }
