@@ -37,9 +37,11 @@ final class NotePersistenceTests: XCTestCase {
         let session = NoteSession(repository: repository, documents: documents)
         try session.createAndOpen()
         let note = try XCTUnwrap(session.currentNote)
+        let controller = RichTextEditorController()
         let editor = RichTextEditor(
             document: session.document,
             cursorLocation: 0,
+            controller: controller,
             onChange: session.update,
             onActivate: {}
         )
@@ -62,6 +64,56 @@ final class NotePersistenceTests: XCTestCase {
         )
         let imageData = try XCTUnwrap(attachment.fileWrapper?.regularFileContents)
         XCTAssertNotNil(NSImage(data: imageData))
+    }
+
+    func testEditorToolbarFormatsTextAndInsertsTableAndFile() throws {
+        let controller = RichTextEditorController()
+        var document = NSAttributedString(string: "测试")
+        let editor = RichTextEditor(
+            document: document,
+            cursorLocation: 0,
+            controller: controller,
+            onChange: { updated, _ in document = updated },
+            onActivate: {}
+        )
+        let host = NSHostingView(rootView: editor)
+        host.frame = NSRect(x: 0, y: 0, width: 320, height: 240)
+        host.layoutSubtreeIfNeeded()
+        let textView = try XCTUnwrap(host.descendant(ofType: NSTextView.self))
+
+        textView.setSelectedRange(NSRange(location: 0, length: 2))
+        controller.applyTextStyle(.title)
+        XCTAssertEqual((document.attribute(.font, at: 0, effectiveRange: nil) as? NSFont)?.pointSize, 26)
+
+        textView.setSelectedRange(NSRange(location: document.length, length: 0))
+        controller.insertTable()
+        XCTAssertEqual(document.tableBlockCount, 4)
+
+        let file = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString + ".txt")
+        try Data("附件".utf8).write(to: file)
+        textView.setSelectedRange(NSRange(location: document.length, length: 0))
+        try controller.insertFiles([file])
+        XCTAssertEqual(document.attachmentCount, 1)
+    }
+
+    func testTagsPersistAndParticipateInSearch() throws {
+        let configuration = ModelConfiguration(isStoredInMemoryOnly: true)
+        let container = try ModelContainer(for: NoteRecord.self, configurations: configuration)
+        let repository = NoteRepository(context: container.mainContext)
+        let documents = NoteDocumentStore(
+            root: FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        )
+        let session = NoteSession(repository: repository, documents: documents)
+        try session.createAndOpen()
+        let note = try XCTUnwrap(session.currentNote)
+
+        session.setTags(["工作", "工作", " 灵感 "])
+
+        XCTAssertEqual(session.tags, ["工作", "灵感"])
+        XCTAssertEqual(try repository.search("灵感").map(\.id), [note.id])
+        let reopened = NoteSession(repository: repository, documents: documents)
+        try reopened.open(note)
+        XCTAssertEqual(reopened.tags, ["工作", "灵感"])
     }
 
     func testSessionFlushesDocumentMetadataAndCursor() throws {
@@ -282,6 +334,15 @@ private extension NSAttributedString {
         var count = 0
         enumerateAttribute(.attachment, in: NSRange(location: 0, length: length)) { value, _, _ in
             if value is NSTextAttachment { count += 1 }
+        }
+        return count
+    }
+
+    var tableBlockCount: Int {
+        var count = 0
+        enumerateAttribute(.paragraphStyle, in: NSRange(location: 0, length: length)) { value, _, _ in
+            let style = value as? NSParagraphStyle
+            count += style?.textBlocks.compactMap { $0 as? NSTextTableBlock }.count ?? 0
         }
         return count
     }

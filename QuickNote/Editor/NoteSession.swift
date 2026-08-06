@@ -7,6 +7,7 @@ final class NoteSession: ObservableObject {
     @Published private(set) var document = NSAttributedString(string: "")
     @Published private(set) var isDirty = false
     @Published private(set) var saveError: (any Error)?
+    @Published private(set) var tags: [String] = []
 
     private let repository: NoteRepository
     private let documents: NoteDocumentStore
@@ -78,6 +79,22 @@ final class NoteSession: ObservableObject {
         try flush()
     }
 
+    func setTags(_ values: [String]) {
+        guard let note = currentNote else { return }
+        let normalized = values.compactMap { value -> String? in
+            let tag = value.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines.union(.init(charactersIn: "#")))
+            return tag.isEmpty ? nil : String(tag.prefix(24))
+        }
+        var unique: [String] = []
+        for tag in normalized where !unique.contains(where: { $0.caseInsensitiveCompare(tag) == .orderedSame }) {
+            unique.append(tag)
+        }
+        note.tags = unique
+        tags = unique
+        isDirty = true
+        retrySave()
+    }
+
     func retrySave() {
         if let pendingOperation {
             _ = attempt(pendingOperation)
@@ -104,6 +121,7 @@ final class NoteSession: ObservableObject {
                     ?? repository.createNote()
                 currentNote = replacement
                 document = try documents.load(id: replacement.id)
+                tags = replacement.tags
                 isDirty = false
             }
             repository.delete(note)
@@ -174,6 +192,7 @@ final class NoteSession: ObservableObject {
             let loadedDocument = try documents.load(id: note.id)
             currentNote = note
             document = loadedDocument
+            tags = note.tags
         case let .create(pending):
             try persistCurrent(notify: false)
             let note = pending.note ?? repository.createNote()
@@ -182,6 +201,7 @@ final class NoteSession: ObservableObject {
             let loadedDocument = try documents.load(id: note.id)
             currentNote = note
             document = loadedDocument
+            tags = note.tags
         case let .setPinned(note, intendedValue, updatedAt):
             try persistCurrent(notify: false)
             note.isPinned = intendedValue

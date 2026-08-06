@@ -11,6 +11,12 @@ final class NoteRecord {
     var updatedAt: Date
     var isPinned: Bool
     var cursorLocation: Int
+    var tagsText: String = ""
+
+    var tags: [String] {
+        get { tagsText.split(separator: "\n").map(String.init) }
+        set { tagsText = newValue.joined(separator: "\n") }
+    }
 
     init(id: UUID = UUID(), now: Date = .now) {
         self.id = id

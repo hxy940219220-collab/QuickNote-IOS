@@ -33,7 +33,9 @@ final class NoteRepository {
         guard !normalized.isEmpty else { return try allNotes() }
         // ponytail: linear scan is enough for personal-scale P0; add FTS only if measured search exceeds 50ms.
         return try allNotes().filter {
-            $0.title.localizedStandardContains(normalized) || $0.plainText.localizedStandardContains(normalized)
+            $0.title.localizedStandardContains(normalized)
+                || $0.plainText.localizedStandardContains(normalized)
+                || $0.tags.contains { $0.localizedStandardContains(normalized) }
         }
     }
 

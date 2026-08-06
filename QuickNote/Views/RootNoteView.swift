@@ -9,10 +9,13 @@ struct RootNoteView: View {
     let setWindowLocked: (Bool) -> Void
     let showAISettings: () -> Void
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @StateObject private var editorController = RichTextEditorController()
     @State private var drawerOpen = false
     @State private var windowLocked = false
     @State private var calendarPresented = false
     @State private var helpPresented = false
+    @State private var formatPresented = false
+    @State private var tagsPresented = false
     @State private var selectedDate = Date()
     @State private var notes: [NoteRecord] = []
 
@@ -42,6 +45,38 @@ struct RootNoteView: View {
                         CalendarPopoverView(selectedDate: $selectedDate)
                     }
                 }
+
+                HStack(spacing: 2) {
+                    Button {
+                        formatPresented.toggle()
+                    } label: {
+                        Text("格式")
+                            .font(.system(size: 12, weight: .medium))
+                            .frame(height: 26)
+                            .padding(.horizontal, 6)
+                    }
+                    .buttonStyle(.borderless)
+                    .help("格式")
+                    .popover(isPresented: $formatPresented, arrowEdge: .top) {
+                        NoteFormatPopover(controller: editorController)
+                    }
+
+                    toolbarButton("标签", systemImage: "tag") {
+                        tagsPresented.toggle()
+                    }
+                    .popover(isPresented: $tagsPresented, arrowEdge: .top) {
+                        NoteTagsPopover(session: session)
+                    }
+
+                    toolbarButton("插入表格", systemImage: "tablecells") {
+                        editorController.insertTable()
+                    }
+
+                    toolbarButton("插入文件", systemImage: "paperclip", action: chooseFiles)
+                }
+                .padding(.horizontal, 4)
+                .frame(height: 30)
+                .background(Color(nsColor: .controlBackgroundColor), in: Capsule())
 
                 Spacer(minLength: 8)
 
@@ -103,6 +138,7 @@ struct RootNoteView: View {
                     RichTextEditor(
                         document: session.document,
                         cursorLocation: session.currentNote?.cursorLocation ?? 0,
+                        controller: editorController,
                         onChange: session.update,
                         onActivate: activateEditor
                     )
@@ -151,6 +187,19 @@ struct RootNoteView: View {
         setWindowLocked(windowLocked)
     }
 
+    private func chooseFiles() {
+        let panel = NSOpenPanel()
+        panel.allowsMultipleSelection = true
+        panel.canChooseDirectories = false
+        panel.prompt = "插入"
+        guard panel.runModal() == .OK else { return }
+        do {
+            try editorController.insertFiles(panel.urls)
+        } catch {
+            NSAlert(error: error).runModal()
+        }
+    }
+
     private func setDrawerOpen(_ open: Bool) {
         drawerVisibilityChanged(open)
         if reduceMotion {
@@ -173,6 +222,137 @@ struct RootNoteView: View {
         .buttonStyle(.borderless)
         .help(label)
         .accessibilityLabel(label)
+    }
+}
+
+private struct NoteFormatPopover: View {
+    let controller: RichTextEditorController
+    @State private var textColor = Color(nsColor: .labelColor)
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 6) {
+                formatButton("B", help: "粗体", action: controller.toggleBold)
+                    .fontWeight(.bold)
+                formatButton("I", help: "斜体", action: controller.toggleItalic)
+                    .italic()
+                formatButton("U", help: "下划线", action: controller.toggleUnderline)
+                    .underline()
+                formatButton("S", help: "删除线", action: controller.toggleStrikethrough)
+                    .strikethrough()
+                Divider().frame(height: 24)
+                ColorPicker("文字颜色", selection: $textColor, supportsOpacity: false)
+                    .labelsHidden()
+                    .frame(width: 28)
+                    .onChange(of: textColor) { _, color in
+                        controller.applyTextColor(NSColor(color))
+                    }
+            }
+            .padding(.bottom, 10)
+
+            Divider()
+
+            ForEach(EditorTextStyle.allCases) { style in
+                Button {
+                    controller.applyTextStyle(style)
+                } label: {
+                    Text(style.title)
+                        .font(.system(size: min(style.font.pointSize, 18), weight: style == .body ? .regular : .semibold))
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.vertical, 5)
+                }
+                .buttonStyle(.plain)
+            }
+
+            Divider().padding(.vertical, 6)
+
+            formatRow("项目符号列表", image: "list.bullet") { controller.applyList(.disc) }
+            formatRow("短划线列表", image: "list.dash") { controller.applyList(.hyphen) }
+            formatRow("编号列表", image: "list.number") { controller.applyList(.decimal) }
+            formatRow("块引用", image: "text.quote", action: controller.applyBlockQuote)
+        }
+        .padding(12)
+        .frame(width: 230)
+    }
+
+    private func formatButton(_ title: String, help: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title)
+                .font(.system(size: 17))
+                .frame(width: 28, height: 28)
+        }
+        .buttonStyle(.borderless)
+        .help(help)
+        .accessibilityLabel(help)
+    }
+
+    private func formatRow(
+        _ title: String,
+        image: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Label(title, systemImage: image)
+                .font(.system(size: 12))
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.vertical, 5)
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+private struct NoteTagsPopover: View {
+    @ObservedObject var session: NoteSession
+    @State private var input = ""
+
+    private let columns = [GridItem(.adaptive(minimum: 82), spacing: 6)]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("标签")
+                .font(.system(size: 15, weight: .semibold))
+
+            if session.tags.isEmpty {
+                Text("用标签整理并搜索便签。")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+            } else {
+                LazyVGrid(columns: columns, alignment: .leading, spacing: 6) {
+                    ForEach(session.tags, id: \.self) { tag in
+                        HStack(spacing: 4) {
+                            Text("#\(tag)").lineLimit(1)
+                            Button {
+                                session.setTags(session.tags.filter { $0 != tag })
+                            } label: {
+                                Image(systemName: "xmark")
+                                    .font(.system(size: 8, weight: .bold))
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel("移除标签 \(tag)")
+                        }
+                        .font(.system(size: 11, weight: .medium))
+                        .padding(.horizontal, 7)
+                        .frame(height: 24)
+                        .background(Color.accentColor.opacity(0.1), in: Capsule())
+                    }
+                }
+            }
+
+            HStack(spacing: 6) {
+                TextField("添加标签", text: $input)
+                    .textFieldStyle(.roundedBorder)
+                    .onSubmit(addTag)
+                Button("添加", action: addTag)
+                    .disabled(input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        }
+        .padding(14)
+        .frame(width: 260)
+    }
+
+    private func addTag() {
+        session.setTags(session.tags + [input])
+        input = ""
     }
 }
 
