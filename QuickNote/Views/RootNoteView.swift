@@ -16,6 +16,7 @@ struct RootNoteView: View {
     @State private var helpPresented = false
     @State private var formatPresented = false
     @State private var tagsPresented = false
+    @State private var tablePresented = false
     @State private var selectedDate = Date()
     @State private var notes: [NoteRecord] = []
 
@@ -85,24 +86,12 @@ struct RootNoteView: View {
                         NoteTagsPopover(session: session)
                     }
 
-                    Menu {
-                        Button("插入 2 × 2 表格", systemImage: "tablecells") {
-                            editorController.insertTable()
-                        }
-                        Divider()
-                        Button("删除当前表格", systemImage: "trash", role: .destructive) {
-                            if !editorController.deleteCurrentTable() { NSSound.beep() }
-                        }
-                    } label: {
-                        Image(systemName: "tablecells")
-                            .frame(width: 26, height: 26)
-                            .contentShape(Rectangle())
+                    toolbarButton("表格", systemImage: "tablecells") {
+                        tablePresented.toggle()
                     }
-                    .menuStyle(.borderlessButton)
-                    .menuIndicator(.hidden)
-                    .fixedSize()
-                    .help("表格")
-                    .accessibilityLabel("表格")
+                    .popover(isPresented: $tablePresented, arrowEdge: .top) {
+                        TablePickerPopover(controller: editorController)
+                    }
 
                     toolbarButton("插入文件", systemImage: "paperclip", action: chooseFiles)
                 }
@@ -329,6 +318,79 @@ private struct NoteFormatPopover: View {
                 .padding(.vertical, 5)
         }
         .buttonStyle(.plain)
+    }
+}
+
+private struct TablePickerPopover: View {
+    let controller: RichTextEditorController
+    @Environment(\.dismiss) private var dismiss
+    @State private var rows = 2
+    @State private var columns = 2
+
+    private let maximumSize = 8
+    private let gridColumns = Array(repeating: GridItem(.fixed(22), spacing: 4), count: 8)
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text("\(rows) 行 × \(columns) 列")
+                .font(.system(size: 13, weight: .semibold))
+
+            Text("移动鼠标选择表格大小")
+                .font(.system(size: 10))
+                .foregroundStyle(.secondary)
+                .padding(.top, 2)
+                .padding(.bottom, 10)
+
+            LazyVGrid(columns: gridColumns, spacing: 4) {
+                ForEach(0..<(maximumSize * maximumSize), id: \.self) { index in
+                    let row = index / maximumSize + 1
+                    let column = index % maximumSize + 1
+                    tableCell(row: row, column: column)
+                }
+            }
+
+            Divider()
+                .padding(.vertical, 10)
+
+            Button("删除表格", systemImage: "trash", role: .destructive) {
+                if controller.deleteCurrentTable() {
+                    dismiss()
+                } else {
+                    NSSound.beep()
+                }
+            }
+            .buttonStyle(.borderless)
+        }
+        .padding(12)
+        .frame(width: 228)
+    }
+
+    private func tableCell(row: Int, column: Int) -> some View {
+        let selected = row <= rows && column <= columns
+        return Button {
+            controller.insertTable(rows: row, columns: column)
+            dismiss()
+        } label: {
+            RoundedRectangle(cornerRadius: 3, style: .continuous)
+                .fill(selected ? Color.accentColor.opacity(0.18) : Color(nsColor: .controlBackgroundColor))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 3, style: .continuous)
+                        .stroke(
+                            selected ? Color.accentColor.opacity(0.7) : Color(nsColor: .separatorColor),
+                            lineWidth: 1
+                        )
+                }
+                .frame(width: 22, height: 22)
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering in
+            if hovering {
+                rows = row
+                columns = column
+            }
+        }
+        .help("插入 \(row) 行 × \(column) 列表格")
+        .accessibilityLabel("插入 \(row) 行 × \(column) 列表格")
     }
 }
 

@@ -122,6 +122,37 @@ final class NotePersistenceTests: XCTestCase {
         }
     }
 
+    func testTableSupportsCustomDimensionsAndKeepsVerticalMargins() throws {
+        let controller = RichTextEditorController()
+        var document = NSAttributedString(string: "表格前")
+        let editor = RichTextEditor(
+            document: document,
+            cursorLocation: document.length,
+            controller: controller,
+            onChange: { updated, _ in document = updated },
+            onActivate: {}
+        )
+        let host = NSHostingView(rootView: editor)
+        host.frame = NSRect(x: 0, y: 0, width: 320, height: 240)
+        host.layoutSubtreeIfNeeded()
+        _ = try XCTUnwrap(host.descendant(ofType: NSTextView.self))
+
+        controller.insertTable(rows: 3, columns: 4)
+
+        var blocks: [NSTextTableBlock] = []
+        document.enumerateAttribute(.paragraphStyle, in: NSRange(location: 0, length: document.length)) {
+            value, _, _ in
+            blocks += (value as? NSParagraphStyle)?.textBlocks.compactMap { $0 as? NSTextTableBlock } ?? []
+        }
+        XCTAssertEqual(blocks.count, 12)
+        XCTAssertTrue(blocks.filter { $0.startingRow == 0 }.allSatisfy {
+            $0.width(for: .margin, edge: .minY) >= 8
+        })
+        XCTAssertTrue(blocks.filter { $0.startingRow == 2 }.allSatisfy {
+            $0.width(for: .margin, edge: .maxY) >= 8
+        })
+    }
+
     func testDeleteCurrentTableRemovesAllCellsAndPreservesSurroundingText() throws {
         let controller = RichTextEditorController()
         var document = NSAttributedString(string: "表格前")

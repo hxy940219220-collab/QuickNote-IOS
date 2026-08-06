@@ -120,6 +120,12 @@ final class RichTextEditorController: ObservableObject {
                 )
                 block.setWidth(0.5, type: .absoluteValueType, for: .border)
                 block.setWidth(6, type: .absoluteValueType, for: .padding)
+                if row == 0 {
+                    block.setWidth(8, type: .absoluteValueType, for: .margin, edge: .minY)
+                }
+                if row == rows - 1 {
+                    block.setWidth(8, type: .absoluteValueType, for: .margin, edge: .maxY)
+                }
                 block.setBorderColor(.separatorColor)
                 let paragraph = NSMutableParagraphStyle()
                 paragraph.textBlocks = [block]
@@ -130,7 +136,7 @@ final class RichTextEditorController: ObservableObject {
             }
         }
         let bodyParagraph = NSMutableParagraphStyle()
-        bodyParagraph.paragraphSpacingBefore = 6
+        bodyParagraph.paragraphSpacingBefore = 2
         content.append(NSAttributedString(
             string: " \n",
             attributes: [.font: NSFont.systemFont(ofSize: 15), .paragraphStyle: bodyParagraph]
