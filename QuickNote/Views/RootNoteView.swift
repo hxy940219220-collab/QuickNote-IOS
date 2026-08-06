@@ -15,7 +15,6 @@ struct RootNoteView: View {
     @State private var calendarPresented = false
     @State private var helpPresented = false
     @State private var formatPresented = false
-    @State private var tagsPresented = false
     @State private var tablePresented = false
     @State private var selectedDate = Date()
     @State private var notes: [NoteRecord] = []
@@ -79,11 +78,8 @@ struct RootNoteView: View {
                         NoteFormatPopover(controller: editorController)
                     }
 
-                    toolbarButton("标签", systemImage: "tag") {
-                        tagsPresented.toggle()
-                    }
-                    .popover(isPresented: $tagsPresented, arrowEdge: .top) {
-                        NoteTagsPopover(session: session)
+                    toolbarButton("插入待办项", systemImage: "checklist") {
+                        editorController.insertChecklistItem()
                     }
 
                     toolbarButton("表格", systemImage: "tablecells") {
@@ -226,11 +222,8 @@ struct RootNoteView: View {
 
 private struct NoteFormatPopover: View {
     let controller: RichTextEditorController
-    private let textColors: [(name: String, color: NSColor)] = [
-        ("默认", .labelColor), ("红色", .systemRed), ("橙色", .systemOrange),
-        ("黄色", .systemYellow), ("绿色", .systemGreen), ("薄荷色", .systemMint),
-        ("青色", .systemCyan), ("蓝色", .systemBlue), ("紫色", .systemPurple), ("粉色", .systemPink),
-    ]
+    @State private var colorsPresented = false
+    @State private var paragraphPresented = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -243,34 +236,43 @@ private struct NoteFormatPopover: View {
                     .underline()
                 formatButton("S", help: "删除线", action: controller.toggleStrikethrough)
                     .strikethrough()
+                Divider().frame(height: 24)
+                Button {
+                    colorsPresented.toggle()
+                } label: {
+                    Text("A")
+                        .font(.system(size: 17, weight: .medium))
+                        .foregroundStyle(.primary)
+                        .frame(width: 28, height: 28)
+                        .background(Color.yellow.opacity(0.48), in: RoundedRectangle(cornerRadius: 5))
+                }
+                .buttonStyle(.borderless)
+                .help("文字与背景颜色")
+                .accessibilityLabel("文字与背景颜色")
+                .popover(isPresented: $colorsPresented, arrowEdge: .trailing) {
+                    EditorColorPopover(controller: controller)
+                }
+
+                Button {
+                    paragraphPresented.toggle()
+                } label: {
+                    HStack(spacing: 2) {
+                        Image(systemName: "text.alignleft")
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 8, weight: .semibold))
+                    }
+                    .frame(width: 36, height: 28)
+                }
+                .buttonStyle(.borderless)
+                .help("对齐与缩进")
+                .accessibilityLabel("对齐与缩进")
+                .popover(isPresented: $paragraphPresented, arrowEdge: .trailing) {
+                    ParagraphFormatPopover(controller: controller)
+                }
             }
             .padding(.bottom, 10)
 
             Divider()
-
-            Text("文字颜色")
-                .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(.secondary)
-                .padding(.top, 10)
-                .padding(.bottom, 7)
-
-            HStack(spacing: 4) {
-                ForEach(textColors, id: \.name) { item in
-                    Button {
-                        controller.applyTextColor(item.color)
-                    } label: {
-                        Circle()
-                            .fill(Color(nsColor: item.color))
-                            .frame(width: 16, height: 16)
-                            .overlay(Circle().stroke(Color.primary.opacity(0.14), lineWidth: 0.5))
-                    }
-                    .buttonStyle(.plain)
-                    .help(item.name)
-                    .accessibilityLabel("文字颜色：\(item.name)")
-                }
-            }
-
-            Divider().padding(.vertical, 10)
 
             ForEach(EditorTextStyle.allCases) { style in
                 Button {
@@ -292,7 +294,7 @@ private struct NoteFormatPopover: View {
             formatRow("块引用", image: "text.quote", action: controller.applyBlockQuote)
         }
         .padding(12)
-        .frame(width: 230)
+        .frame(width: 240)
     }
 
     private func formatButton(_ title: String, help: String, action: @escaping () -> Void) -> some View {
@@ -318,6 +320,119 @@ private struct NoteFormatPopover: View {
                 .padding(.vertical, 5)
         }
         .buttonStyle(.plain)
+    }
+
+}
+
+private struct ParagraphFormatPopover: View {
+    let controller: RichTextEditorController
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            paragraphRow("左对齐", image: "text.alignleft") { controller.applyAlignment(.left) }
+            paragraphRow("居中对齐", image: "text.aligncenter") { controller.applyAlignment(.center) }
+            paragraphRow("右对齐", image: "text.alignright") { controller.applyAlignment(.right) }
+            Divider().padding(.vertical, 4)
+            paragraphRow("增加缩进", image: "increase.indent") { controller.changeIndent(by: 18) }
+            paragraphRow("减少缩进", image: "decrease.indent") { controller.changeIndent(by: -18) }
+        }
+        .padding(8)
+        .frame(width: 160)
+    }
+
+    private func paragraphRow(
+        _ title: String,
+        image: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Label(title, systemImage: image)
+                .font(.system(size: 12))
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 6)
+                .frame(height: 30)
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+private struct EditorColorPopover: View {
+    let controller: RichTextEditorController
+
+    private let textColors: [(name: String, color: NSColor)] = [
+        ("默认", .labelColor), ("灰色", .systemGray), ("红色", .systemRed),
+        ("橙色", .systemOrange), ("黄色", .systemYellow), ("绿色", .systemGreen),
+        ("青色", .systemCyan), ("蓝色", .systemBlue), ("紫色", .systemPurple), ("粉色", .systemPink),
+    ]
+    private let backgroundColors: [(name: String, color: NSColor)] = [
+        ("灰色", .systemGray), ("红色", .systemRed), ("橙色", .systemOrange),
+        ("黄色", .systemYellow), ("绿色", .systemGreen), ("薄荷色", .systemMint),
+        ("青色", .systemCyan), ("蓝色", .systemBlue), ("紫色", .systemPurple), ("粉色", .systemPink),
+    ]
+    private let columns = Array(repeating: GridItem(.fixed(28), spacing: 6), count: 5)
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("字体颜色")
+                .font(.system(size: 12, weight: .medium))
+
+            LazyVGrid(columns: columns, spacing: 6) {
+                ForEach(textColors, id: \.name) { item in
+                    Button {
+                        controller.applyTextColor(item.color)
+                    } label: {
+                        Text("A")
+                            .font(.system(size: 16, weight: .medium))
+                            .foregroundStyle(Color(nsColor: item.color))
+                            .frame(width: 28, height: 28)
+                            .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 5))
+                    }
+                    .buttonStyle(.plain)
+                    .help(item.name)
+                    .accessibilityLabel("字体颜色：\(item.name)")
+                }
+            }
+
+            Divider()
+
+            Text("背景颜色")
+                .font(.system(size: 12, weight: .medium))
+
+            LazyVGrid(columns: columns, spacing: 6) {
+                Button {
+                    controller.applyBackgroundColor(nil)
+                } label: {
+                    Image(systemName: "nosign")
+                        .foregroundStyle(.secondary)
+                        .frame(width: 28, height: 28)
+                        .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 5))
+                }
+                .buttonStyle(.plain)
+                .help("无背景色")
+                .accessibilityLabel("无背景色")
+
+                ForEach(backgroundColors.prefix(9), id: \.name) { item in
+                    Button {
+                        controller.applyBackgroundColor(item.color.withAlphaComponent(0.28))
+                    } label: {
+                        RoundedRectangle(cornerRadius: 5)
+                            .fill(Color(nsColor: item.color).opacity(0.4))
+                            .frame(width: 28, height: 28)
+                    }
+                    .buttonStyle(.plain)
+                    .help(item.name)
+                    .accessibilityLabel("背景颜色：\(item.name)")
+                }
+            }
+
+            Button("恢复默认") {
+                controller.applyTextColor(.labelColor)
+                controller.applyBackgroundColor(nil)
+            }
+            .frame(maxWidth: .infinity)
+        }
+        .padding(12)
+        .frame(width: 190)
     }
 }
 

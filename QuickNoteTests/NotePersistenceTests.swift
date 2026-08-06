@@ -96,6 +96,114 @@ final class NotePersistenceTests: XCTestCase {
         XCTAssertEqual(document.attachmentCount, 1)
     }
 
+    func testChecklistItemCanBeInsertedAndToggled() throws {
+        let controller = RichTextEditorController()
+        var document = NSAttributedString(string: "完成这件事")
+        let editor = RichTextEditor(
+            document: document,
+            cursorLocation: document.length,
+            controller: controller,
+            onChange: { updated, _ in document = updated },
+            onActivate: {}
+        )
+        let host = NSHostingView(rootView: editor)
+        host.frame = NSRect(x: 0, y: 0, width: 320, height: 240)
+        host.layoutSubtreeIfNeeded()
+        _ = try XCTUnwrap(host.descendant(ofType: NSTextView.self))
+
+        controller.insertChecklistItem()
+
+        let itemRange = (document.string as NSString).range(of: "\u{FFFC}")
+        XCTAssertNotEqual(itemRange.location, NSNotFound)
+        XCTAssertEqual((document.attribute(.link, at: itemRange.location, effectiveRange: nil) as? URL)?.host, "unchecked")
+
+        XCTAssertTrue(controller.toggleChecklistItem(at: itemRange.location))
+        XCTAssertEqual((document.attribute(.link, at: itemRange.location, effectiveRange: nil) as? URL)?.host, "checked")
+
+        let store = NoteDocumentStore(
+            root: FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        )
+        let id = UUID()
+        try store.save(document, id: id)
+        let reopened = try store.load(id: id)
+        XCTAssertEqual(reopened.attachmentCount, 1)
+        let reopenedAttachment = reopened.attribute(
+            .attachment,
+            at: itemRange.location,
+            effectiveRange: nil
+        ) as? NSTextAttachment
+        XCTAssertNotNil((reopenedAttachment?.attachmentCell as? NSTextAttachmentCell)?.image)
+        XCTAssertEqual((reopened.attribute(.link, at: itemRange.location, effectiveRange: nil) as? URL)?.host, "checked")
+    }
+
+    func testParagraphAlignmentCanBeChanged() throws {
+        let controller = RichTextEditorController()
+        var document = NSAttributedString(string: "需要居中的段落")
+        let editor = RichTextEditor(
+            document: document,
+            cursorLocation: 0,
+            controller: controller,
+            onChange: { updated, _ in document = updated },
+            onActivate: {}
+        )
+        let host = NSHostingView(rootView: editor)
+        host.frame = NSRect(x: 0, y: 0, width: 320, height: 240)
+        host.layoutSubtreeIfNeeded()
+        _ = try XCTUnwrap(host.descendant(ofType: NSTextView.self))
+
+        controller.applyAlignment(.center)
+
+        let style = document.attribute(.paragraphStyle, at: 0, effectiveRange: nil) as? NSParagraphStyle
+        XCTAssertEqual(style?.alignment, .center)
+    }
+
+    func testParagraphIndentCanIncreaseAndDecrease() throws {
+        let controller = RichTextEditorController()
+        var document = NSAttributedString(string: "需要缩进的段落")
+        let editor = RichTextEditor(
+            document: document,
+            cursorLocation: 0,
+            controller: controller,
+            onChange: { updated, _ in document = updated },
+            onActivate: {}
+        )
+        let host = NSHostingView(rootView: editor)
+        host.frame = NSRect(x: 0, y: 0, width: 320, height: 240)
+        host.layoutSubtreeIfNeeded()
+        _ = try XCTUnwrap(host.descendant(ofType: NSTextView.self))
+
+        controller.changeIndent(by: 18)
+        var style = document.attribute(.paragraphStyle, at: 0, effectiveRange: nil) as? NSParagraphStyle
+        XCTAssertEqual(style?.headIndent, 18)
+
+        controller.changeIndent(by: -18)
+        style = document.attribute(.paragraphStyle, at: 0, effectiveRange: nil) as? NSParagraphStyle
+        XCTAssertEqual(style?.headIndent, 0)
+    }
+
+    func testTextBackgroundColorCanBeAppliedAndCleared() throws {
+        let controller = RichTextEditorController()
+        var document = NSAttributedString(string: "背景颜色")
+        let editor = RichTextEditor(
+            document: document,
+            cursorLocation: 0,
+            controller: controller,
+            onChange: { updated, _ in document = updated },
+            onActivate: {}
+        )
+        let host = NSHostingView(rootView: editor)
+        host.frame = NSRect(x: 0, y: 0, width: 320, height: 240)
+        host.layoutSubtreeIfNeeded()
+        let textView = try XCTUnwrap(host.descendant(ofType: NSTextView.self))
+        textView.setSelectedRange(NSRange(location: 0, length: document.length))
+
+        controller.applyBackgroundColor(.systemYellow)
+        XCTAssertNotNil(document.attribute(.backgroundColor, at: 0, effectiveRange: nil) as? NSColor)
+
+        controller.applyBackgroundColor(nil)
+        XCTAssertNil(document.attribute(.backgroundColor, at: 0, effectiveRange: nil))
+    }
+
     func testTableInsertionPlacesCaretInVisibleParagraphBelowTable() throws {
         let controller = RichTextEditorController()
         var document = NSAttributedString(string: "提示词")

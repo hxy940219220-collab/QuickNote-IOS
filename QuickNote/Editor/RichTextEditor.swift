@@ -66,6 +66,93 @@ final class RichTextEditorController: ObservableObject {
         }
     }
 
+    func applyBackgroundColor(_ color: NSColor?) {
+        guard let textView else { return }
+        let range = textView.selectedRange()
+        if range.length == 0 {
+            if let color {
+                textView.typingAttributes[.backgroundColor] = color
+            } else {
+                textView.typingAttributes.removeValue(forKey: .backgroundColor)
+            }
+        } else {
+            if let color {
+                textView.textStorage?.addAttribute(.backgroundColor, value: color, range: range)
+            } else {
+                textView.textStorage?.removeAttribute(.backgroundColor, range: range)
+            }
+            commit(textView, preserving: range)
+        }
+    }
+
+    func applyAlignment(_ alignment: NSTextAlignment) {
+        guard let textView, let storage = textView.textStorage else { return }
+        let selection = textView.selectedRange()
+        let target = paragraphRange(in: textView)
+        if target.length == 0 {
+            let style = (textView.typingAttributes[.paragraphStyle] as? NSParagraphStyle)?
+                .mutableCopy() as? NSMutableParagraphStyle ?? NSMutableParagraphStyle()
+            style.alignment = alignment
+            textView.typingAttributes[.paragraphStyle] = style
+            return
+        }
+        enumerateParagraphs(in: target, text: storage.string) { range in
+            let style = (storage.attribute(.paragraphStyle, at: range.location, effectiveRange: nil)
+                as? NSParagraphStyle)?.mutableCopy() as? NSMutableParagraphStyle ?? NSMutableParagraphStyle()
+            style.alignment = alignment
+            storage.addAttribute(.paragraphStyle, value: style, range: range)
+        }
+        commit(textView, preserving: selection)
+    }
+
+    func changeIndent(by amount: CGFloat) {
+        guard let textView, let storage = textView.textStorage else { return }
+        let selection = textView.selectedRange()
+        let target = paragraphRange(in: textView)
+        guard target.length > 0 else { return }
+        enumerateParagraphs(in: target, text: storage.string) { range in
+            let style = (storage.attribute(.paragraphStyle, at: range.location, effectiveRange: nil)
+                as? NSParagraphStyle)?.mutableCopy() as? NSMutableParagraphStyle ?? NSMutableParagraphStyle()
+            let indent = max(0, style.headIndent + amount)
+            let delta = indent - style.headIndent
+            style.headIndent = indent
+            style.firstLineHeadIndent = max(0, style.firstLineHeadIndent + delta)
+            storage.addAttribute(.paragraphStyle, value: style, range: range)
+        }
+        commit(textView, preserving: selection)
+    }
+
+    func insertChecklistItem() {
+        guard let textView, let storage = textView.textStorage else { return }
+        let selection = textView.selectedRange()
+        let paragraph = (storage.string as NSString).paragraphRange(for: selection)
+        if paragraph.location < storage.length,
+           checklistState(at: paragraph.location, in: storage) != nil {
+            return
+        }
+        let marker = checklistMarker(checked: false)
+        let content = NSMutableAttributedString(attributedString: marker)
+        content.append(NSAttributedString(string: " "))
+        storage.insert(content, at: paragraph.location)
+        commit(
+            textView,
+            preserving: NSRange(location: selection.location + content.length, length: selection.length)
+        )
+    }
+
+    @discardableResult
+    func toggleChecklistItem(at location: Int) -> Bool {
+        guard let textView,
+              let storage = textView.textStorage,
+              let checked = checklistState(at: location, in: storage) else { return false }
+        storage.replaceCharacters(
+            in: NSRange(location: location, length: 1),
+            with: checklistMarker(checked: !checked)
+        )
+        commit(textView, preserving: textView.selectedRange())
+        return true
+    }
+
     func applyList(_ marker: NSTextList.MarkerFormat?) {
         guard let textView, let storage = textView.textStorage else { return }
         let selection = textView.selectedRange()
@@ -246,6 +333,53 @@ final class RichTextEditorController: ObservableObject {
             ?? .systemFont(ofSize: 15)
     }
 
+    private func checklistMarker(checked: Bool) -> NSAttributedString {
+        let image = NSImage(size: NSSize(width: 15, height: 15))
+        image.lockFocus()
+        let circle = NSBezierPath(ovalIn: NSRect(x: 1.5, y: 1.5, width: 12, height: 12))
+        if checked {
+            NSColor.controlAccentColor.setFill()
+            circle.fill()
+            let checkmark = NSBezierPath()
+            checkmark.move(to: NSPoint(x: 4.2, y: 7.4))
+            checkmark.line(to: NSPoint(x: 6.5, y: 5.2))
+            checkmark.line(to: NSPoint(x: 10.9, y: 10))
+            checkmark.lineWidth = 1.6
+            checkmark.lineCapStyle = .round
+            checkmark.lineJoinStyle = .round
+            NSColor.white.setStroke()
+            checkmark.stroke()
+        } else {
+            circle.lineWidth = 1.5
+            NSColor.tertiaryLabelColor.setStroke()
+            circle.stroke()
+        }
+        image.unlockFocus()
+        let png = image.tiffRepresentation
+            .flatMap(NSBitmapImageRep.init(data:))?
+            .representation(using: .png, properties: [:])
+        let attachment = NSTextAttachment(data: png, ofType: "public.png")
+        if let png {
+            attachment.image = NSImage(data: png)
+        }
+        attachment.bounds = NSRect(x: 0, y: -2, width: 15, height: 15)
+        attachment.attachmentCell = NSTextAttachmentCell(imageCell: attachment.image)
+        let marker = NSMutableAttributedString(attachment: attachment)
+        marker.addAttribute(
+            .link,
+            value: URL(string: "quicknote-checklist://\(checked ? "checked" : "unchecked")")!,
+            range: NSRange(location: 0, length: marker.length)
+        )
+        return marker
+    }
+
+    private func checklistState(at location: Int, in storage: NSTextStorage) -> Bool? {
+        guard location >= 0, location < storage.length,
+              let url = storage.attribute(.link, at: location, effectiveRange: nil) as? URL,
+              url.scheme == "quicknote-checklist" else { return nil }
+        return url.host == "checked"
+    }
+
     private func attribute(_ key: NSAttributedString.Key, at location: Int, in textView: NSTextView) -> Any? {
         guard let storage = textView.textStorage, storage.length > 0 else {
             return textView.typingAttributes[key]
@@ -344,5 +478,15 @@ struct RichTextEditor: NSViewRepresentable {
             guard let textView = notification.object as? NSTextView else { return }
             owner.onChange(textView.attributedString(), textView.selectedRange().location)
         }
+
+        func textView(
+            _ textView: NSTextView,
+            clickedOn cell: any NSTextAttachmentCellProtocol,
+            in cellFrame: NSRect,
+            at charIndex: Int
+        ) {
+            owner.controller.toggleChecklistItem(at: charIndex)
+        }
+
     }
 }
