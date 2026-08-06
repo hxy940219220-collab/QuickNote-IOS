@@ -15,3 +15,7 @@ xcodebuild build \
   -destination 'platform=macOS,arch=arm64' \
   -derivedDataPath /tmp/QuickNoteDerived \
   CODE_SIGNING_ALLOWED=NO
+
+release_app=/tmp/QuickNoteDerived/Build/Products/Release/QuickNote.app
+codesign --force --deep --sign - "$release_app"
+codesign --verify --deep --strict --verbose=2 "$release_app"
