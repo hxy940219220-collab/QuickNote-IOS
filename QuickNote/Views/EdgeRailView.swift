@@ -21,8 +21,9 @@ struct EdgeRailView: View {
         .frame(width: 18)
         .background(
             .regularMaterial,
-            in: UnevenRoundedRectangle(cornerRadii: .init(bottomTrailing: 11, topTrailing: 11))
+            in: RoundedRectangle(cornerRadius: 9, style: .continuous)
         )
+        .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
         .onHover { inside in
             if !inside { exit() }
         }

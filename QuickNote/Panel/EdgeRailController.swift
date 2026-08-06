@@ -26,7 +26,9 @@ final class EdgeRailController {
     func start(notes: [NoteRecord]) {
         window.level = .floating
         window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-        window.hasShadow = true
+        window.isOpaque = false
+        window.backgroundColor = .clear
+        window.hasShadow = false
         update(notes: notes)
         reposition()
         window.orderFrontRegardless()
@@ -42,7 +44,7 @@ final class EdgeRailController {
 
     func update(notes: [NoteRecord]) {
         self.notes = Array(notes.prefix(8))
-        window.contentView = NSHostingView(rootView: EdgeRailView(
+        let hostingView = NSHostingView(rootView: EdgeRailView(
             notes: self.notes,
             hover: { [weak self] in self?.scheduleHover($0) },
             exit: { [weak self] in
@@ -50,6 +52,9 @@ final class EdgeRailController {
                 self?.onExit?()
             }
         ))
+        hostingView.wantsLayer = true
+        hostingView.layer?.backgroundColor = NSColor.clear.cgColor
+        window.contentView = hostingView
     }
 
     private func scheduleHover(_ note: NoteRecord) {
@@ -76,7 +81,7 @@ final class EdgeRailController {
         currentScreen = screen
         let frame = screen.visibleFrame
         window.setFrame(
-            NSRect(x: frame.minX, y: frame.midY - 150, width: 18, height: 300),
+            NSRect(x: frame.minX + 4, y: frame.midY - 150, width: 18, height: 300),
             display: true
         )
     }

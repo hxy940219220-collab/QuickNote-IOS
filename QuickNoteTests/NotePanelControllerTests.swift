@@ -11,4 +11,12 @@ final class NotePanelControllerTests: XCTestCase {
 
         XCTAssertEqual(frame, NSRect(x: 2_430, y: 238, width: 420, height: 520))
     }
+
+    func testRevealFrameScalesAroundPanelCenter() {
+        let frame = NSRect(x: 100, y: 200, width: 420, height: 520)
+
+        let revealFrame = NotePanelController.revealFrame(from: frame)
+
+        XCTAssertEqual(revealFrame, NSRect(x: 112, y: 215, width: 396, height: 490))
+    }
 }

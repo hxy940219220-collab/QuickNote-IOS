@@ -1,4 +1,5 @@
 import AppKit
+import QuartzCore
 import SwiftUI
 
 @MainActor
@@ -18,11 +19,16 @@ final class NotePanelController {
         panel.isReleasedWhenClosed = false
         panel.level = .floating
         panel.collectionBehavior = [.moveToActiveSpace, .fullScreenAuxiliary]
+        panel.animationBehavior = .none
         panel.contentViewController = NSHostingController(rootView: rootView)
     }
 
     func show(activate: Bool, on screen: NSScreen) {
-        panel.setFrame(Self.panelFrame(in: screen.visibleFrame), display: true)
+        let targetFrame = Self.panelFrame(in: screen.visibleFrame)
+        let shouldAnimate = !panel.isVisible
+            && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        panel.alphaValue = shouldAnimate ? 0 : 1
+        panel.setFrame(shouldAnimate ? Self.revealFrame(from: targetFrame) : targetFrame, display: true)
         if activate {
             previousApp = NSWorkspace.shared.frontmostApplication
             NSApp.activate(ignoringOtherApps: true)
@@ -46,10 +52,22 @@ final class NotePanelController {
         } else {
             panel.orderFrontRegardless()
         }
+        if shouldAnimate {
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 0.2
+                context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+                panel.animator().alphaValue = 1
+                panel.animator().setFrame(targetFrame, display: true)
+            }
+        }
     }
 
     static func panelFrame(in visibleFrame: NSRect) -> NSRect {
         NSRect(x: visibleFrame.midX - 210, y: visibleFrame.midY - 260, width: 420, height: 520)
+    }
+
+    static func revealFrame(from frame: NSRect) -> NSRect {
+        frame.insetBy(dx: 12, dy: 15)
     }
 
     func hideAndRestoreFocus() {
