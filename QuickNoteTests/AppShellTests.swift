@@ -63,6 +63,14 @@ final class AppShellTests: XCTestCase {
         XCTAssertTrue(instruction.contains("10 个英文单词"))
     }
 
+    func testTranslationPronunciationLineFindsTextToSpeak() {
+        let lines = ["Digital Life", "音标： /ˈdɪdʒɪtl laɪf/"]
+
+        XCTAssertEqual(SelectionResultFormatter.pronunciationKind(for: lines[1])?.languageCode, "en-US")
+        XCTAssertEqual(SelectionResultFormatter.pronunciationSource(in: lines, before: 1), "Digital Life")
+        XCTAssertNil(SelectionResultFormatter.pronunciationKind(for: "普通译文"))
+    }
+
     @MainActor
     func testAPIKeysUseOneCanonicalKeychainVault() {
         XCTAssertEqual(AIConfigurationStore.keychainVaultAccount, "profiles.v1")

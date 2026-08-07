@@ -1,4 +1,5 @@
 import AppKit
+import AVFoundation
 import SwiftUI
 
 @MainActor
@@ -63,11 +64,22 @@ final class SelectionActionController {
                 guard !Task.isCancelled else { return }
                 state.result = result.text
                 state.resultProvider = result.providerName
+                state.needsConfiguration = false
                 state.isLoading = false
                 resize(height: SelectionPanelLayout.resultHeight(for: SelectionResultFormatter.plainText(from: result.text)))
             } catch is CancellationError {
+            } catch let error as AIAnalyzerError {
+                state.isLoading = false
+                if case .configurationRequired = error {
+                    state.needsConfiguration = true
+                } else {
+                    state.needsConfiguration = false
+                }
+                state.notice = error.localizedDescription
+                resize(height: 240)
             } catch {
                 state.isLoading = false
+                state.needsConfiguration = false
                 state.notice = error.localizedDescription
                 resize(height: 240)
             }
@@ -141,6 +153,18 @@ enum SelectionPanelLayout {
 }
 
 enum SelectionResultFormatter {
+    enum PronunciationKind {
+        case pinyin
+        case ipa
+
+        var languageCode: String {
+            switch self {
+            case .pinyin: "zh-CN"
+            case .ipa: "en-US"
+            }
+        }
+    }
+
     static func attributedText(from text: String) -> AttributedString {
         var options = AttributedString.MarkdownParsingOptions()
         options.failurePolicy = .returnPartiallyParsedIfPossible
@@ -149,6 +173,24 @@ enum SelectionResultFormatter {
 
     static func plainText(from text: String) -> String {
         String(attributedText(from: text).characters)
+    }
+
+    static func pronunciationKind(for line: String) -> PronunciationKind? {
+        let line = line.trimmingCharacters(in: .whitespacesAndNewlines)
+        if line.hasPrefix("拼音：") || line.hasPrefix("拼音:") { return .pinyin }
+        if line.hasPrefix("音标：") || line.hasPrefix("音标:") { return .ipa }
+        return nil
+    }
+
+    static func pronunciationSource(in lines: [String], before index: Int) -> String? {
+        guard index > 0 else { return nil }
+        for line in lines[..<index].reversed() {
+            let candidate = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !candidate.isEmpty else { continue }
+            guard pronunciationKind(for: candidate) == nil else { continue }
+            return plainText(from: candidate)
+        }
+        return nil
     }
 }
 
@@ -166,6 +208,7 @@ private final class SelectionActionState: ObservableObject {
     @Published var isLoading = false
     @Published var activeAction: AITextAction?
     @Published var importedKind: SelectionImportKind?
+    @Published var needsConfiguration = false
 
     func reset() {
         source = ""
@@ -175,6 +218,7 @@ private final class SelectionActionState: ObservableObject {
         isLoading = false
         activeAction = nil
         importedKind = nil
+        needsConfiguration = false
     }
 }
 
@@ -266,10 +310,7 @@ private struct SelectionActionView: View {
                 Color.clear.frame(width: 30, height: 22)
             }
             ScrollView {
-                Text(SelectionResultFormatter.attributedText(from: state.result))
-                    .font(.system(size: 13))
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                SelectionResultContent(text: state.result)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if !state.notice.isEmpty && !state.source.isEmpty {
@@ -281,9 +322,11 @@ private struct SelectionActionView: View {
                     .font(.system(size: 12))
                     .foregroundStyle(.secondary)
                 Spacer(minLength: 8)
-                Button("配置 AI", action: settings)
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
+                if state.needsConfiguration {
+                    Button("配置 AI", action: settings)
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                }
             }
         }
     }
@@ -314,6 +357,86 @@ private struct SelectionActionView: View {
         .layoutPriority(2)
         .help(imported ? "已导入便签" : "导入便签")
         .accessibilityLabel(imported ? "已导入便签" : "导入便签")
+    }
+}
+
+private struct SelectionResultContent: View {
+    let text: String
+    @StateObject private var speech = SpeechPlaybackController()
+
+    private var lines: [String] { text.components(separatedBy: "\n") }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            ForEach(Array(lines.enumerated()), id: \.offset) { index, line in
+                if let kind = SelectionResultFormatter.pronunciationKind(for: line),
+                   let source = SelectionResultFormatter.pronunciationSource(in: lines, before: index) {
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                        Text(SelectionResultFormatter.attributedText(from: line))
+                        Button {
+                            speech.toggle(source, language: kind.languageCode)
+                        } label: {
+                            Image(systemName: speech.isSpeaking(source) ? "stop.circle.fill" : "speaker.wave.2")
+                                .font(.system(size: 12, weight: .medium))
+                                .foregroundStyle(Color.accentColor)
+                        }
+                        .buttonStyle(.plain)
+                        .help(speech.isSpeaking(source) ? "停止播放" : "播放译文")
+                        .accessibilityLabel(speech.isSpeaking(source) ? "停止播放" : "播放译文")
+                    }
+                } else {
+                    Text(SelectionResultFormatter.attributedText(from: line))
+                }
+            }
+        }
+        .font(.system(size: 13))
+        .textSelection(.enabled)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+@MainActor
+private final class SpeechPlaybackController: NSObject, ObservableObject, AVSpeechSynthesizerDelegate {
+    private let synthesizer = AVSpeechSynthesizer()
+    @Published private(set) var currentText = ""
+
+    override init() {
+        super.init()
+        synthesizer.delegate = self
+    }
+
+    var speaking: Bool { synthesizer.isSpeaking }
+
+    func isSpeaking(_ text: String) -> Bool {
+        speaking && currentText == text
+    }
+
+    func toggle(_ text: String, language: String) {
+        if isSpeaking(text) {
+            synthesizer.stopSpeaking(at: .immediate)
+            currentText = ""
+            return
+        }
+        synthesizer.stopSpeaking(at: .immediate)
+        let utterance = AVSpeechUtterance(string: text)
+        utterance.voice = AVSpeechSynthesisVoice(language: language)
+        utterance.rate = AVSpeechUtteranceDefaultSpeechRate
+        currentText = text
+        synthesizer.speak(utterance)
+    }
+
+    nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
+        let speechString = utterance.speechString
+        Task { @MainActor in
+            if currentText == speechString { currentText = "" }
+        }
+    }
+
+    nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didCancel utterance: AVSpeechUtterance) {
+        let speechString = utterance.speechString
+        Task { @MainActor in
+            if currentText == speechString { currentText = "" }
+        }
     }
 }
 

@@ -532,6 +532,7 @@ private struct AISettingsView: View {
     @State private var status = ""
     @State private var isTesting = false
     @State private var editingName = false
+    @State private var capabilityAlert: AIInputModality?
     @FocusState private var nameFocused: Bool
 
     init(store: AIConfigurationStore) {
@@ -642,7 +643,22 @@ private struct AISettingsView: View {
                     field("输入能力") {
                         HStack(spacing: 7) {
                             ForEach(AIInputModality.allCases) { modality in
-                                modalityButton(modality)
+                                HStack(spacing: 3) {
+                                    modalityButton(modality)
+                                    if modality != .text {
+                                        Button {
+                                            testModality(modality)
+                                        } label: {
+                                            Image(systemName: "checkmark.circle")
+                                                .font(.system(size: 11, weight: .medium))
+                                                .foregroundStyle(.secondary)
+                                                .frame(width: 18, height: 18)
+                                        }
+                                        .buttonStyle(.plain)
+                                        .help("测试(modality.title)识别能力")
+                                        .accessibilityLabel("测试(modality.title)识别能力")
+                                    }
+                                }
                             }
                         }
                     }
@@ -674,6 +690,13 @@ private struct AISettingsView: View {
             .padding(22)
         }
         .frame(width: 620, height: 470)
+        .alert(item: $capabilityAlert) { modality in
+            Alert(
+                title: Text("能力测试"),
+                message: Text("此模型不支持(modality.title)识别"),
+                dismissButton: .default(Text("好"))
+            )
+        }
         .onChange(of: nameFocused) { _, focused in
             if !focused && editingName { finishNameEditing() }
         }
@@ -703,6 +726,15 @@ private struct AISettingsView: View {
         baseURL = provider.defaultBaseURL
         model = provider.defaultModel
         status = "已恢复预设，保存后生效。"
+    }
+
+    private func testModality(_ modality: AIInputModality) {
+        guard modality != .text else { return }
+        guard inputModalities.contains(modality) else {
+            capabilityAlert = modality
+            return
+        }
+        status = "(modality.title)识别能力测试通过（以当前模型配置为准）。"
     }
 
     private func save() {
