@@ -52,6 +52,20 @@ private final class FileAttachmentCell: NSTextAttachmentCell {
     }
 }
 
+private final class ImageAttachmentCell: NSTextAttachmentCell {
+    override func trackMouse(
+        with event: NSEvent,
+        in cellFrame: NSRect,
+        of controlView: NSView?,
+        atCharacterIndex charIndex: Int,
+        untilMouseUp flag: Bool
+    ) -> Bool {
+        guard let textView = controlView as? NSTextView,
+              let handler = textView.delegate as? ChecklistClickHandling else { return false }
+        return handler.openFileAttachment(at: charIndex)
+    }
+}
+
 enum AttachmentPresentation {
     static let audioFilenamePrefix = "quicknote-audio--"
     static let audioFilenameSuffix = ".qnaudio"
@@ -109,6 +123,7 @@ final class RichTextEditorController: ObservableObject {
     private weak var textView: NSTextView?
     private var playingSound: NSSound?
     private var playingAudioLocation: Int?
+    private var preparedAttachmentWidth: CGFloat?
     private static let linkDetector = try? NSDataDetector(
         types: NSTextCheckingResult.CheckingType.link.rawValue
     )
@@ -492,9 +507,11 @@ final class RichTextEditorController: ObservableObject {
         replaceSelection(with: content, in: textView)
     }
 
-    func prepareFileAttachments(in textView: NSTextView) {
+    func prepareFileAttachments(in textView: NSTextView, force: Bool = true) {
         guard let storage = textView.textStorage else { return }
         let maximumWidth = attachmentWidth(in: textView)
+        guard force || abs((preparedAttachmentWidth ?? 0) - maximumWidth) > 1 else { return }
+        preparedAttachmentWidth = maximumWidth
         var attachmentParagraphs: [NSRange] = []
         storage.enumerateAttribute(.attachment, in: NSRange(location: 0, length: storage.length)) {
             value, range, _ in
@@ -512,7 +529,8 @@ final class RichTextEditorController: ObservableObject {
                     fitting: NSSize(width: maximumWidth, height: min(520, maximumWidth * 0.85))
                 )
                 attachment.bounds = NSRect(origin: .zero, size: size)
-                attachment.attachmentCell = NSTextAttachmentCell(imageCell: image)
+                attachment.allowsTextAttachmentView = false
+                attachment.attachmentCell = ImageAttachmentCell(imageCell: image)
             } else {
                 configureFileCard(attachment, maximumWidth: maximumWidth)
             }
@@ -603,7 +621,8 @@ final class RichTextEditorController: ObservableObject {
         wrapper.preferredFilename = "\(baseName).\(format == .jpeg ? "jpg" : "png")"
         let attachment = NSTextAttachment(fileWrapper: wrapper)
         attachment.bounds = NSRect(origin: .zero, size: size)
-        attachment.attachmentCell = NSTextAttachmentCell(imageCell: NSImage(data: data))
+        attachment.allowsTextAttachmentView = false
+        attachment.attachmentCell = ImageAttachmentCell(imageCell: NSImage(data: data))
         return attachment
     }
 
@@ -693,8 +712,12 @@ final class RichTextEditorController: ObservableObject {
     }
 
     private func attachmentWidth(in textView: NSTextView) -> CGFloat {
-        let width = textView.enclosingScrollView?.contentSize.width ?? textView.bounds.width
-        return min(680, max(120, width - 32))
+        let width = max(
+            textView.enclosingScrollView?.contentSize.width ?? 0,
+            textView.bounds.width,
+            textView.visibleRect.width
+        )
+        return min(560, max(120, width > 32 ? width - 32 : 560))
     }
 
     private func toggleFontTrait(_ trait: NSFontTraitMask) {
@@ -862,6 +885,11 @@ struct RichTextEditor: NSViewRepresentable {
         controller.detectLinks(in: textView)
         textView.setSelectedRange(NSRange(location: clampedCursorLocation, length: 0))
         controller.applyDefaultParagraphSpacing(in: textView)
+        context.coordinator.recordAttachmentCount(in: textView)
+        DispatchQueue.main.async { [weak textView] in
+            guard let textView else { return }
+            controller.prepareFileAttachments(in: textView, force: false)
+        }
         scroll.hasVerticalScroller = true
         return scroll
     }
@@ -876,6 +904,9 @@ struct RichTextEditor: NSViewRepresentable {
             controller.prepareFileAttachments(in: textView)
             controller.detectLinks(in: textView)
             controller.applyDefaultParagraphSpacing(in: textView)
+            context.coordinator.recordAttachmentCount(in: textView)
+        } else {
+            controller.prepareFileAttachments(in: textView, force: false)
         }
         if textView.selectedRange().location != clampedCursorLocation {
             textView.setSelectedRange(NSRange(location: clampedCursorLocation, length: 0))
@@ -889,6 +920,7 @@ struct RichTextEditor: NSViewRepresentable {
     @MainActor
     final class Coordinator: NSObject, NSTextViewDelegate, ChecklistClickHandling {
         var owner: RichTextEditor
+        private var attachmentCount = 0
 
         init(owner: RichTextEditor) { self.owner = owner }
 
@@ -898,7 +930,28 @@ struct RichTextEditor: NSViewRepresentable {
 
         func textDidChange(_ notification: Notification) {
             guard let textView = notification.object as? NSTextView else { return }
+            let newCount = countAttachments(in: textView)
+            if newCount != attachmentCount {
+                attachmentCount = newCount
+                owner.controller.prepareFileAttachments(in: textView)
+            }
             owner.onChange(textView.attributedString(), textView.selectedRange().location)
+        }
+
+        func recordAttachmentCount(in textView: NSTextView) {
+            attachmentCount = countAttachments(in: textView)
+        }
+
+        private func countAttachments(in textView: NSTextView) -> Int {
+            guard let storage = textView.textStorage else { return 0 }
+            var count = 0
+            storage.enumerateAttribute(
+                .attachment,
+                in: NSRange(location: 0, length: storage.length)
+            ) { value, _, _ in
+                if value is NSTextAttachment { count += 1 }
+            }
+            return count
         }
 
         func textView(_ textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {

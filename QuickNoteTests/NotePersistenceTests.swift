@@ -143,6 +143,7 @@ final class NotePersistenceTests: XCTestCase {
         let image = try XCTUnwrap(attachments.first)
         XCTAssertLessThanOrEqual(image.bounds.width, 328)
         XCTAssertLessThanOrEqual(image.bounds.height, 278.8)
+        XCTAssertFalse(image.allowsTextAttachmentView)
         XCTAssertLessThan(try XCTUnwrap(image.fileWrapper?.regularFileContents).count, originalImageData.count)
         XCTAssertEqual(attachments[1].bounds.height, 40)
         XCTAssertGreaterThanOrEqual(attachments[1].bounds.width, 320)
@@ -160,6 +161,38 @@ final class NotePersistenceTests: XCTestCase {
         XCTAssertEqual(attachmentParagraph.paragraphSpacingBefore, 8)
         XCTAssertEqual(attachmentParagraph.paragraphSpacing, 12)
         XCTAssertTrue(attachments.allSatisfy { $0.fileWrapper?.regularFileContents != nil })
+    }
+
+    func testPastedImageIsScaledToEditorAndUsesClickableCell() throws {
+        let controller = RichTextEditorController()
+        var document = NSAttributedString(string: "")
+        let editor = RichTextEditor(
+            document: document,
+            cursorLocation: 0,
+            controller: controller,
+            onChange: { updated, _ in document = updated },
+            onActivate: {}
+        )
+        let host = NSHostingView(rootView: editor)
+        host.frame = NSRect(x: 0, y: 0, width: 360, height: 240)
+        host.layoutSubtreeIfNeeded()
+        let textView = try XCTUnwrap(host.descendant(ofType: NSTextView.self))
+        let image = NSImage(size: NSSize(width: 1_008, height: 154))
+        image.lockFocus()
+        NSColor.systemBlue.setFill()
+        NSRect(x: 0, y: 0, width: 1_008, height: 154).fill()
+        image.unlockFocus()
+        let data = try XCTUnwrap(image.tiffRepresentation)
+        let wrapper = FileWrapper(regularFileWithContents: data)
+        wrapper.preferredFilename = "Pasted Graphic.tiff"
+        textView.textStorage?.append(NSAttributedString(attachment: NSTextAttachment(fileWrapper: wrapper)))
+        textView.didChangeText()
+
+        let attachment = try XCTUnwrap(
+            document.attribute(.attachment, at: 0, effectiveRange: nil) as? NSTextAttachment
+        )
+        XCTAssertLessThanOrEqual(attachment.bounds.width, 328)
+        XCTAssertFalse(attachment.allowsTextAttachmentView)
     }
 
     func testChecklistItemCanBeInsertedAndToggled() throws {
