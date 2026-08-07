@@ -655,8 +655,8 @@ private struct AISettingsView: View {
                                                 .frame(width: 18, height: 18)
                                         }
                                         .buttonStyle(.plain)
-                                        .help("测试(modality.title)识别能力")
-                                        .accessibilityLabel("测试(modality.title)识别能力")
+                                        .help("测试\(modality.title)识别能力")
+                                        .accessibilityLabel("测试\(modality.title)识别能力")
                                     }
                                 }
                             }
@@ -693,7 +693,7 @@ private struct AISettingsView: View {
         .alert(item: $capabilityAlert) { modality in
             Alert(
                 title: Text("能力测试"),
-                message: Text("此模型不支持(modality.title)识别"),
+                message: Text("此模型不支持\(modality.title)识别"),
                 dismissButton: .default(Text("好"))
             )
         }
