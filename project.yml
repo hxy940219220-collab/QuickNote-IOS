@@ -12,6 +12,9 @@ targets:
     type: application
     platform: macOS
     sources: [QuickNote]
+    settings:
+      base:
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
     info:
       path: QuickNote/Info.plist
       properties:

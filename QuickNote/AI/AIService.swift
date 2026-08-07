@@ -70,6 +70,42 @@ enum AIProfileSlot: Int, CaseIterable, Identifiable, Sendable {
     }
 }
 
+enum AIInputModality: String, CaseIterable, Identifiable, Sendable {
+    case text
+    case image
+    case audio
+    case video
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .text: "文字"
+        case .image: "图片"
+        case .audio: "音频"
+        case .video: "视频"
+        }
+    }
+
+    var symbolName: String {
+        switch self {
+        case .text: "textformat"
+        case .image: "photo"
+        case .audio: "waveform"
+        case .video: "video.fill"
+        }
+    }
+
+    var color: Color {
+        switch self {
+        case .text: .blue
+        case .image: .green
+        case .audio: .purple
+        case .video: .orange
+        }
+    }
+}
+
 struct AIConfiguration: Sendable {
     let provider: AIProvider
     let baseURL: String
@@ -148,6 +184,19 @@ final class AIConfigurationStore {
 
     func displayName(for slot: AIProfileSlot) -> String {
         normalizedName(defaults.string(forKey: key("name", slot)) ?? "", for: slot)
+    }
+
+    func inputModalities(for slot: AIProfileSlot) -> Set<AIInputModality> {
+        let saved = defaults.stringArray(forKey: key("inputModalities", slot)) ?? []
+        return Set(saved.compactMap(AIInputModality.init(rawValue:))).union([.text])
+    }
+
+    func saveInputModalities(_ modalities: Set<AIInputModality>, for slot: AIProfileSlot) {
+        let selected = Set(modalities).union([.text])
+        defaults.set(
+            AIInputModality.allCases.filter(selected.contains).map(\.rawValue),
+            forKey: key("inputModalities", slot)
+        )
     }
 
     func rename(_ slot: AIProfileSlot, to name: String) {
@@ -458,7 +507,7 @@ final class AISettingsController {
 
     private func makePanel() -> NSPanel {
         let panel = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 620, height: 420),
+            contentRect: NSRect(x: 0, y: 0, width: 620, height: 470),
             styleMask: [.titled, .closable],
             backing: .buffered,
             defer: false
@@ -479,6 +528,7 @@ private struct AISettingsView: View {
     @State private var baseURL: String
     @State private var model: String
     @State private var apiKey: String
+    @State private var inputModalities: Set<AIInputModality>
     @State private var status = ""
     @State private var isTesting = false
     @State private var editingName = false
@@ -495,6 +545,7 @@ private struct AISettingsView: View {
         _baseURL = State(initialValue: draft.baseURL)
         _model = State(initialValue: draft.model)
         _apiKey = State(initialValue: draft.apiKey)
+        _inputModalities = State(initialValue: store.inputModalities(for: slot))
     }
 
     var body: some View {
@@ -512,10 +563,14 @@ private struct AISettingsView: View {
                         VStack(alignment: .leading, spacing: 2) {
                             Text(store.displayName(for: item))
                                 .font(.system(size: 12, weight: .medium))
-                            Text(profileDetail(item))
-                                .font(.system(size: 10))
-                                .foregroundStyle(.secondary)
-                                .lineLimit(1)
+                            HStack(spacing: 5) {
+                                Text(profileDetail(item))
+                                    .font(.system(size: 10))
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                                Spacer(minLength: 2)
+                                modalityBadges(for: item)
+                            }
                         }
                         Spacer()
                     }
@@ -584,6 +639,13 @@ private struct AISettingsView: View {
                         TextField("model-id", text: $model)
                             .textFieldStyle(.roundedBorder)
                     }
+                    field("输入能力") {
+                        HStack(spacing: 7) {
+                            ForEach(AIInputModality.allCases) { modality in
+                                modalityButton(modality)
+                            }
+                        }
+                    }
                     field("API Key") {
                         SecureField("sk-…", text: $apiKey)
                             .textFieldStyle(.roundedBorder)
@@ -611,7 +673,7 @@ private struct AISettingsView: View {
             }
             .padding(22)
         }
-        .frame(width: 620, height: 420)
+        .frame(width: 620, height: 470)
         .onChange(of: nameFocused) { _, focused in
             if !focused && editingName { finishNameEditing() }
         }
@@ -633,6 +695,7 @@ private struct AISettingsView: View {
         baseURL = draft.baseURL
         model = draft.model
         apiKey = draft.apiKey
+        inputModalities = store.inputModalities(for: slot)
         status = ""
     }
 
@@ -645,6 +708,7 @@ private struct AISettingsView: View {
     private func save() {
         do {
             try store.save(draft, to: slot)
+            store.saveInputModalities(inputModalities, for: slot)
             activeSlot = slot
             status = "已保存并切换为当前模型。"
         } catch {
@@ -698,6 +762,50 @@ private struct AISettingsView: View {
     private func profileDetail(_ slot: AIProfileSlot) -> String {
         let draft = store.draft(for: slot)
         return draft.apiKey.isEmpty ? "未配置" : "\(draft.provider.name) · \(draft.model)"
+    }
+
+    private func modalityBadges(for slot: AIProfileSlot) -> some View {
+        let selected = store.inputModalities(for: slot)
+        return HStack(spacing: 2) {
+            ForEach(AIInputModality.allCases.filter(selected.contains)) { modality in
+                Image(systemName: modality.symbolName)
+                    .font(.system(size: 7, weight: .semibold))
+                    .foregroundStyle(modality.color)
+                    .frame(width: 13, height: 13)
+                    .background(modality.color.opacity(0.12), in: RoundedRectangle(cornerRadius: 4))
+                    .help("支持输入\(modality.title)")
+                    .accessibilityLabel("支持输入\(modality.title)")
+            }
+        }
+    }
+
+    private func modalityButton(_ modality: AIInputModality) -> some View {
+        let selected = inputModalities.contains(modality)
+        return Button {
+            guard modality != .text else { return }
+            if selected {
+                inputModalities.remove(modality)
+            } else {
+                inputModalities.insert(modality)
+            }
+        } label: {
+            Label(modality.title, systemImage: modality.symbolName)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(selected ? modality.color : Color.secondary)
+                .padding(.horizontal, 9)
+                .frame(height: 25)
+                .background(
+                    selected ? modality.color.opacity(0.12) : Color(nsColor: .controlBackgroundColor),
+                    in: RoundedRectangle(cornerRadius: 7)
+                )
+                .overlay {
+                    RoundedRectangle(cornerRadius: 7)
+                        .stroke(selected ? modality.color.opacity(0.35) : Color.secondary.opacity(0.15))
+                }
+        }
+        .buttonStyle(.plain)
+        .help(modality == .text ? "文字输入始终支持" : "标记模型是否支持输入\(modality.title)")
+        .accessibilityLabel("\(modality.title)输入，\(selected ? "已支持" : "未支持")")
     }
 
     private func beginNameEditing() {

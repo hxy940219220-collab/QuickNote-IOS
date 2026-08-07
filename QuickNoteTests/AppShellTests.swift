@@ -95,6 +95,19 @@ final class AppShellTests: XCTestCase {
         XCTAssertEqual(store.activeSlot, .third)
     }
 
+    @MainActor
+    func testInputModalitiesPersistIndependentlyForEachModel() throws {
+        let suite = "QuickNoteTests.AIInputModalities.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let store = AIConfigurationStore(defaults: defaults)
+
+        store.saveInputModalities([.image, .video], for: .third)
+
+        XCTAssertEqual(store.inputModalities(for: .third), [.text, .image, .video])
+        XCTAssertEqual(store.inputModalities(for: .first), [.text])
+    }
+
     func testSelectionResultPanelGrowsWithContentAndStopsBeforeClipping() {
         let short = SelectionPanelLayout.resultHeight(for: "简短解释")
         let medium = SelectionPanelLayout.resultHeight(for: String(repeating: "容器化部署说明。", count: 30))
