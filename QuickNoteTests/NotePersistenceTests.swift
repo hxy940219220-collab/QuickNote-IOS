@@ -148,6 +148,7 @@ final class NotePersistenceTests: XCTestCase {
         XCTAssertEqual(attachments[1].bounds.height, 40)
         XCTAssertGreaterThanOrEqual(attachments[1].bounds.width, 320)
         XCTAssertFalse(attachments[1].allowsTextAttachmentView)
+        XCTAssertTrue(attachments[1].attachmentCell?.wantsToTrackMouse() == true)
         XCTAssertTrue(
             try XCTUnwrap(attachments[1].fileWrapper?.preferredFilename)
                 .hasPrefix(AttachmentPresentation.audioFilenamePrefix)
@@ -186,6 +187,7 @@ final class NotePersistenceTests: XCTestCase {
         let wrapper = FileWrapper(regularFileWithContents: data)
         wrapper.preferredFilename = "Pasted Graphic.tiff"
         textView.textStorage?.append(NSAttributedString(attachment: NSTextAttachment(fileWrapper: wrapper)))
+        textView.setSelectedRange(NSRange(location: 1, length: 0))
         textView.didChangeText()
 
         let attachment = try XCTUnwrap(
@@ -195,6 +197,9 @@ final class NotePersistenceTests: XCTestCase {
         XCTAssertFalse(attachment.allowsTextAttachmentView)
         let cellImage = try XCTUnwrap((attachment.attachmentCell as? NSTextAttachmentCell)?.image)
         XCTAssertLessThanOrEqual(cellImage.size.width, 328)
+        XCTAssertTrue(attachment.attachmentCell?.wantsToTrackMouse() == true)
+        XCTAssertEqual(document.string, "\u{FFFC}\n")
+        XCTAssertEqual(textView.selectedRange().location, 2)
     }
 
     func testImagePreviewOpensAtScreenCenter() throws {

@@ -9,7 +9,11 @@ private protocol ChecklistClickHandling: AnyObject {
     func toggleAudioAttachment(at location: Int) -> Bool
 }
 
-private final class AudioAttachmentCell: NSTextAttachmentCell {
+private class InteractiveAttachmentCell: NSTextAttachmentCell {
+    override func wantsToTrackMouse() -> Bool { true }
+}
+
+private final class AudioAttachmentCell: InteractiveAttachmentCell {
     override func trackMouse(
         with event: NSEvent,
         in cellFrame: NSRect,
@@ -23,7 +27,7 @@ private final class AudioAttachmentCell: NSTextAttachmentCell {
     }
 }
 
-private final class ChecklistAttachmentCell: NSTextAttachmentCell {
+private final class ChecklistAttachmentCell: InteractiveAttachmentCell {
     override func trackMouse(
         with event: NSEvent,
         in cellFrame: NSRect,
@@ -37,7 +41,7 @@ private final class ChecklistAttachmentCell: NSTextAttachmentCell {
     }
 }
 
-private final class FileAttachmentCell: NSTextAttachmentCell {
+private final class FileAttachmentCell: InteractiveAttachmentCell {
     override func trackMouse(
         with event: NSEvent,
         in cellFrame: NSRect,
@@ -52,7 +56,7 @@ private final class FileAttachmentCell: NSTextAttachmentCell {
     }
 }
 
-private final class ImageAttachmentCell: NSTextAttachmentCell {
+private final class ImageAttachmentCell: InteractiveAttachmentCell {
     override func trackMouse(
         with event: NSEvent,
         in cellFrame: NSRect,
@@ -988,10 +992,27 @@ struct RichTextEditor: NSViewRepresentable {
             guard let textView = notification.object as? NSTextView else { return }
             let newCount = countAttachments(in: textView)
             if newCount != attachmentCount {
+                let insertedAttachment = newCount > attachmentCount
                 attachmentCount = newCount
                 owner.controller.prepareFileAttachments(in: textView)
+                if insertedAttachment { moveCaretOutsideAttachment(in: textView) }
             }
             owner.onChange(textView.attributedString(), textView.selectedRange().location)
+        }
+
+        private func moveCaretOutsideAttachment(in textView: NSTextView) {
+            guard let storage = textView.textStorage else { return }
+            let selection = textView.selectedRange()
+            guard selection.length == 0, selection.location > 0,
+                  storage.attribute(.attachment, at: selection.location - 1, effectiveRange: nil)
+                    is NSTextAttachment else { return }
+            if selection.location < storage.length,
+               (storage.string as NSString).character(at: selection.location) == 10 {
+                textView.setSelectedRange(NSRange(location: selection.location + 1, length: 0))
+            } else {
+                storage.insert(NSAttributedString(string: "\n"), at: selection.location)
+                textView.setSelectedRange(NSRange(location: selection.location + 1, length: 0))
+            }
         }
 
         func recordAttachmentCount(in textView: NSTextView) {
