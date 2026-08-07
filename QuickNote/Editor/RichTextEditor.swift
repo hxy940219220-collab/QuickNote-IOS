@@ -6,14 +6,11 @@ import UniformTypeIdentifiers
 private protocol ChecklistClickHandling: AnyObject {
     func toggleChecklist(at location: Int) -> Bool
     func openFileAttachment(at location: Int) -> Bool
-    func toggleAudioAttachment(at location: Int) -> Bool
 }
 
 private class InteractiveAttachmentCell: NSTextAttachmentCell {
     override func wantsToTrackMouse() -> Bool { true }
 }
-
-private final class AudioAttachmentCell: InteractiveAttachmentCell {}
 
 private final class ChecklistAttachmentCell: InteractiveAttachmentCell {
     override func trackMouse(
@@ -123,8 +120,6 @@ enum EditorTextStyle: String, CaseIterable, Identifiable {
 @MainActor
 final class RichTextEditorController: ObservableObject {
     private weak var textView: NSTextView?
-    private var playingSound: NSSound?
-    private var playingAudioLocation: Int?
     private var imagePreviewPanel: NSPanel?
     private var preparedAttachmentWidth: CGFloat?
     private static let linkDetector = try? NSDataDetector(
@@ -498,8 +493,10 @@ final class RichTextEditorController: ObservableObject {
             } else {
                 let wrapper = try FileWrapper(url: url, options: .immediate)
                 wrapper.preferredFilename = url.lastPathComponent
-                attachment = NSTextAttachment(fileWrapper: wrapper)
-                configureFileCard(attachment, maximumWidth: maximumWidth)
+                attachment = configuredFileAttachment(
+                    NSTextAttachment(fileWrapper: wrapper),
+                    maximumWidth: maximumWidth
+                )
             }
             let storedFilename = attachment.fileWrapper?.preferredFilename
                 ?? attachment.fileWrapper?.filename
@@ -521,6 +518,7 @@ final class RichTextEditorController: ObservableObject {
         guard force || abs((preparedAttachmentWidth ?? 0) - maximumWidth) > 1 else { return }
         preparedAttachmentWidth = maximumWidth
         var attachmentParagraphs: [(range: NSRange, compact: Bool)] = []
+        var replacements: [(range: NSRange, attachment: NSTextAttachment)] = []
         storage.enumerateAttribute(.attachment, in: NSRange(location: 0, length: storage.length)) {
             value, range, _ in
             guard let attachment = value as? NSTextAttachment,
@@ -547,8 +545,14 @@ final class RichTextEditorController: ObservableObject {
                     imageCell: AttachmentPresentation.scaledImage(image, to: size)
                 )
             } else {
-                configureFileCard(attachment, maximumWidth: maximumWidth)
+                let configured = configuredFileAttachment(attachment, maximumWidth: maximumWidth)
+                if configured !== attachment {
+                    replacements.append((range, configured))
+                }
             }
+        }
+        for replacement in replacements {
+            storage.addAttribute(.attachment, value: replacement.attachment, range: replacement.range)
         }
         for item in attachmentParagraphs {
             let existing = storage.attribute(.paragraphStyle, at: item.range.location, effectiveRange: nil)
@@ -636,25 +640,6 @@ final class RichTextEditorController: ObservableObject {
         NSApp.activate(ignoringOtherApps: true)
     }
 
-    func toggleAudioAttachment(at location: Int) -> Bool {
-        guard let textView, let storage = textView.textStorage,
-              location >= 0, location < storage.length,
-              let attachment = storage.attribute(.attachment, at: location, effectiveRange: nil)
-                as? NSTextAttachment,
-              let data = attachment.fileWrapper?.regularFileContents else { return false }
-        if playingAudioLocation == location, playingSound?.isPlaying == true {
-            playingSound?.stop()
-            playingSound = nil
-            playingAudioLocation = nil
-            return true
-        }
-        playingSound?.stop()
-        guard let sound = NSSound(data: data) else { return false }
-        playingSound = sound
-        playingAudioLocation = location
-        return sound.play()
-    }
-
     private func imageAttachment(from url: URL, fitting maximum: NSSize) throws -> NSTextAttachment {
         guard let source = NSImage(contentsOf: url) else {
             throw CocoaError(.fileReadCorruptFile)
@@ -687,18 +672,27 @@ final class RichTextEditorController: ObservableObject {
         return attachment
     }
 
-    private func configureFileCard(_ attachment: NSTextAttachment, maximumWidth: CGFloat) {
-        guard let wrapper = attachment.fileWrapper else { return }
+    private func configuredFileAttachment(
+        _ attachment: NSTextAttachment,
+        maximumWidth: CGFloat
+    ) -> NSTextAttachment {
+        guard let wrapper = attachment.fileWrapper else { return attachment }
         let filename = wrapper.preferredFilename ?? wrapper.filename ?? "附件"
         let type = UTType(filenameExtension: URL(fileURLWithPath: filename).pathExtension)
-        if let original = AttachmentPresentation.originalAudioFilename(from: filename) {
-            configureAudioControl(attachment, filename: original, maximumWidth: maximumWidth)
-            return
+        if let audio = attachment as? AudioTextAttachment {
+            audio.maximumWidth = min(maximumWidth, 420)
+            audio.bounds = NSRect(x: 0, y: 0, width: audio.maximumWidth, height: 34)
+            return audio
         }
-        if type?.conforms(to: .audio) == true {
-            wrapper.preferredFilename = AttachmentPresentation.storedAudioFilename(for: filename)
-            configureAudioControl(attachment, filename: filename, maximumWidth: maximumWidth)
-            return
+        if AttachmentPresentation.originalAudioFilename(from: filename) != nil
+            || type?.conforms(to: .audio) == true {
+            if AttachmentPresentation.originalAudioFilename(from: filename) == nil {
+                wrapper.preferredFilename = AttachmentPresentation.storedAudioFilename(for: filename)
+            }
+            let audio = AudioTextAttachment(audioFileWrapper: wrapper)
+            audio.maximumWidth = min(maximumWidth, 420)
+            audio.bounds = NSRect(x: 0, y: 0, width: audio.maximumWidth, height: 34)
+            return audio
         }
         let kind: String
         if type?.conforms(to: .movie) == true {
@@ -736,36 +730,7 @@ final class RichTextEditorController: ObservableObject {
         card.unlockFocus()
         attachment.bounds = NSRect(origin: .zero, size: size)
         attachment.attachmentCell = FileAttachmentCell(imageCell: card)
-    }
-
-    private func configureAudioControl(
-        _ attachment: NSTextAttachment,
-        filename: String,
-        maximumWidth: CGFloat
-    ) {
-        let attributes: [NSAttributedString.Key: Any] = [
-            .font: NSFont.systemFont(ofSize: 12, weight: .medium),
-            .foregroundColor: NSColor.labelColor,
-        ]
-        let textWidth = ceil((filename as NSString).size(withAttributes: attributes).width)
-        let size = NSSize(width: min(maximumWidth, textWidth + 42), height: 30)
-        let card = NSImage(size: size)
-        card.lockFocus()
-        NSImage(systemSymbolName: "play.circle.fill", accessibilityDescription: "播放")?.draw(
-            in: NSRect(x: 0, y: 2, width: 26, height: 26)
-        )
-        let paragraph = NSMutableParagraphStyle()
-        paragraph.lineBreakMode = .byTruncatingMiddle
-        var textAttributes = attributes
-        textAttributes[.paragraphStyle] = paragraph
-        (filename as NSString).draw(
-            in: NSRect(x: 34, y: 7, width: size.width - 34, height: 18),
-            withAttributes: textAttributes
-        )
-        card.unlockFocus()
-        attachment.bounds = NSRect(origin: .zero, size: size)
-        attachment.allowsTextAttachmentView = false
-        attachment.attachmentCell = AudioAttachmentCell(imageCell: card)
+        return attachment
     }
 
     private func attachmentWidth(in textView: NSTextView) -> CGFloat {
@@ -1033,26 +998,12 @@ struct RichTextEditor: NSViewRepresentable {
             return owner.controller.continueListAfterNewline()
         }
 
-        func textView(
-            _ textView: NSTextView,
-            clickedOn cell: any NSTextAttachmentCellProtocol,
-            in cellFrame: NSRect,
-            at charIndex: Int
-        ) {
-            guard cell is AudioAttachmentCell else { return }
-            _ = owner.controller.toggleAudioAttachment(at: charIndex)
-        }
-
         func toggleChecklist(at location: Int) -> Bool {
             owner.controller.toggleChecklistItem(at: location)
         }
 
         func openFileAttachment(at location: Int) -> Bool {
             owner.controller.openFileAttachment(at: location)
-        }
-
-        func toggleAudioAttachment(at location: Int) -> Bool {
-            owner.controller.toggleAudioAttachment(at: location)
         }
 
     }
