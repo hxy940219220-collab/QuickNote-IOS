@@ -193,6 +193,37 @@ final class NotePersistenceTests: XCTestCase {
         )
         XCTAssertLessThanOrEqual(attachment.bounds.width, 328)
         XCTAssertFalse(attachment.allowsTextAttachmentView)
+        let cellImage = try XCTUnwrap((attachment.attachmentCell as? NSTextAttachmentCell)?.image)
+        XCTAssertLessThanOrEqual(cellImage.size.width, 328)
+    }
+
+    func testImagePreviewOpensAtScreenCenter() throws {
+        let image = NSImage(size: NSSize(width: 1_008, height: 154))
+        image.lockFocus()
+        NSColor.systemBlue.setFill()
+        NSRect(x: 0, y: 0, width: 1_008, height: 154).fill()
+        image.unlockFocus()
+        let wrapper = FileWrapper(regularFileWithContents: try XCTUnwrap(image.tiffRepresentation))
+        wrapper.preferredFilename = "Preview.tiff"
+        let document = NSAttributedString(attachment: NSTextAttachment(fileWrapper: wrapper))
+        let controller = RichTextEditorController()
+        let host = NSHostingView(rootView: RichTextEditor(
+            document: document,
+            cursorLocation: 0,
+            controller: controller,
+            onChange: { _, _ in },
+            onActivate: {}
+        ))
+        host.frame = NSRect(x: 0, y: 0, width: 360, height: 240)
+        host.layoutSubtreeIfNeeded()
+        _ = try XCTUnwrap(host.descendant(ofType: NSTextView.self))
+
+        XCTAssertTrue(controller.openFileAttachment(at: 0))
+        let panel = try XCTUnwrap(NSApp.windows.first { $0.title == "Preview.tiff" })
+        let screen = try XCTUnwrap(panel.screen ?? NSScreen.main)
+        XCTAssertEqual(panel.frame.midX, screen.visibleFrame.midX, accuracy: 1)
+        XCTAssertEqual(panel.frame.midY, screen.visibleFrame.midY, accuracy: 1)
+        panel.close()
     }
 
     func testChecklistItemCanBeInsertedAndToggled() throws {

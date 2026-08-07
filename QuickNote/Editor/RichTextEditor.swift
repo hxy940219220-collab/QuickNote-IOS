@@ -76,6 +76,16 @@ enum AttachmentPresentation {
         return NSSize(width: floor(original.width * scale), height: floor(original.height * scale))
     }
 
+    static func scaledImage(_ image: NSImage, to size: NSSize) -> NSImage {
+        guard image.size != size else { return image }
+        let rendered = NSImage(size: size)
+        rendered.lockFocus()
+        NSGraphicsContext.current?.imageInterpolation = .high
+        image.draw(in: NSRect(origin: .zero, size: size))
+        rendered.unlockFocus()
+        return rendered
+    }
+
     static func storedAudioFilename(for original: String) -> String {
         audioFilenamePrefix + original + audioFilenameSuffix
     }
@@ -123,6 +133,7 @@ final class RichTextEditorController: ObservableObject {
     private weak var textView: NSTextView?
     private var playingSound: NSSound?
     private var playingAudioLocation: Int?
+    private var imagePreviewPanel: NSPanel?
     private var preparedAttachmentWidth: CGFloat?
     private static let linkDetector = try? NSDataDetector(
         types: NSTextCheckingResult.CheckingType.link.rawValue
@@ -530,7 +541,9 @@ final class RichTextEditorController: ObservableObject {
                 )
                 attachment.bounds = NSRect(origin: .zero, size: size)
                 attachment.allowsTextAttachmentView = false
-                attachment.attachmentCell = ImageAttachmentCell(imageCell: image)
+                attachment.attachmentCell = ImageAttachmentCell(
+                    imageCell: AttachmentPresentation.scaledImage(image, to: size)
+                )
             } else {
                 configureFileCard(attachment, maximumWidth: maximumWidth)
             }
@@ -560,9 +573,14 @@ final class RichTextEditorController: ObservableObject {
                 as? NSTextAttachment,
               let wrapper = attachment.fileWrapper,
               let data = wrapper.regularFileContents else { return false }
+        let filename = URL(fileURLWithPath: wrapper.preferredFilename ?? wrapper.filename ?? "附件")
+            .lastPathComponent
+        let type = UTType(filenameExtension: URL(fileURLWithPath: filename).pathExtension)
+        if type?.conforms(to: .image) == true, let image = NSImage(data: data) {
+            showImagePreview(image, title: filename)
+            return true
+        }
         do {
-            let filename = URL(fileURLWithPath: wrapper.preferredFilename ?? wrapper.filename ?? "附件")
-                .lastPathComponent
             let directory = FileManager.default.temporaryDirectory
                 .appending(path: "QuickNote-Attachments")
                 .appending(path: UUID().uuidString)
@@ -573,6 +591,44 @@ final class RichTextEditorController: ObservableObject {
         } catch {
             return false
         }
+    }
+
+    private func showImagePreview(_ image: NSImage, title: String) {
+        let visibleFrame = (textView?.window?.screen ?? NSScreen.main)?.visibleFrame
+            ?? NSRect(x: 0, y: 0, width: 1_200, height: 800)
+        let imageSize = AttachmentPresentation.scaledSize(
+            for: image.size,
+            fitting: NSSize(
+                width: min(1_000, visibleFrame.width - 120),
+                height: min(720, visibleFrame.height - 160)
+            )
+        )
+        let panel = NSPanel(
+            contentRect: .zero,
+            styleMask: [.titled, .closable, .resizable, .miniaturizable],
+            backing: .buffered,
+            defer: false
+        )
+        panel.title = title
+        panel.setContentSize(NSSize(
+            width: max(420, imageSize.width + 40),
+            height: max(280, imageSize.height + 40)
+        ))
+        panel.minSize = NSSize(width: 320, height: 220)
+        let imageView = NSImageView(frame: panel.contentView?.bounds.insetBy(dx: 20, dy: 20) ?? .zero)
+        imageView.image = image
+        imageView.imageScaling = .scaleProportionallyDown
+        imageView.autoresizingMask = [.width, .height]
+        panel.contentView?.addSubview(imageView)
+        panel.collectionBehavior = [.moveToActiveSpace, .fullScreenAuxiliary]
+        panel.setFrameOrigin(NSPoint(
+            x: visibleFrame.midX - panel.frame.width / 2,
+            y: visibleFrame.midY - panel.frame.height / 2
+        ))
+        imagePreviewPanel?.close()
+        imagePreviewPanel = panel
+        panel.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
     }
 
     func toggleAudioAttachment(at location: Int) -> Bool {
