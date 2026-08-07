@@ -154,6 +154,11 @@ final class NotePersistenceTests: XCTestCase {
         for attachment in attachments.dropFirst(2) {
             XCTAssertEqual(attachment.bounds.height, 58)
         }
+        let attachmentParagraph = try XCTUnwrap(
+            document.attribute(.paragraphStyle, at: 0, effectiveRange: nil) as? NSParagraphStyle
+        )
+        XCTAssertEqual(attachmentParagraph.paragraphSpacingBefore, 8)
+        XCTAssertEqual(attachmentParagraph.paragraphSpacing, 12)
         XCTAssertTrue(attachments.allSatisfy { $0.fileWrapper?.regularFileContents != nil })
     }
 

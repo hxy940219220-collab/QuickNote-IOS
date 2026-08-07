@@ -483,8 +483,11 @@ final class RichTextEditorController: ObservableObject {
                 attachment = NSTextAttachment(fileWrapper: wrapper)
                 configureFileCard(attachment, maximumWidth: maximumWidth)
             }
-            content.append(NSAttributedString(attachment: attachment))
-            content.append(NSAttributedString(string: "\n"))
+            let paragraph = attachmentParagraphStyle()
+            let item = NSMutableAttributedString(attachment: attachment)
+            item.addAttribute(.paragraphStyle, value: paragraph, range: NSRange(location: 0, length: 1))
+            content.append(item)
+            content.append(NSAttributedString(string: "\n", attributes: [.paragraphStyle: paragraph]))
         }
         replaceSelection(with: content, in: textView)
     }
@@ -492,12 +495,14 @@ final class RichTextEditorController: ObservableObject {
     func prepareFileAttachments(in textView: NSTextView) {
         guard let storage = textView.textStorage else { return }
         let maximumWidth = attachmentWidth(in: textView)
+        var attachmentParagraphs: [NSRange] = []
         storage.enumerateAttribute(.attachment, in: NSRange(location: 0, length: storage.length)) {
-            value, _, _ in
+            value, range, _ in
             guard let attachment = value as? NSTextAttachment,
                   let wrapper = attachment.fileWrapper else { return }
             let filename = wrapper.preferredFilename ?? wrapper.filename ?? "附件"
             guard !filename.hasPrefix("quicknote-checklist-") else { return }
+            attachmentParagraphs.append((storage.string as NSString).paragraphRange(for: range))
             let type = UTType(filenameExtension: URL(fileURLWithPath: filename).pathExtension)
             if type?.conforms(to: .image) == true,
                let data = wrapper.regularFileContents,
@@ -512,6 +517,22 @@ final class RichTextEditorController: ObservableObject {
                 configureFileCard(attachment, maximumWidth: maximumWidth)
             }
         }
+        for range in attachmentParagraphs {
+            let existing = storage.attribute(.paragraphStyle, at: range.location, effectiveRange: nil)
+                as? NSParagraphStyle
+            storage.addAttribute(
+                .paragraphStyle,
+                value: attachmentParagraphStyle(from: existing),
+                range: range
+            )
+        }
+    }
+
+    private func attachmentParagraphStyle(from existing: NSParagraphStyle? = nil) -> NSParagraphStyle {
+        let style = existing?.mutableCopy() as? NSMutableParagraphStyle ?? NSMutableParagraphStyle()
+        style.paragraphSpacingBefore = max(style.paragraphSpacingBefore, 8)
+        style.paragraphSpacing = max(style.paragraphSpacing, 12)
+        return style
     }
 
     func openFileAttachment(at location: Int) -> Bool {
