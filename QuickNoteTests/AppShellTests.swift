@@ -55,9 +55,12 @@ final class AppShellTests: XCTestCase {
         }
     }
 
-    func testTranslationRequestsPronunciationForBothTargetLanguages() {
-        XCTAssertTrue(AITextAction.translate.instruction.contains("拼音"))
-        XCTAssertTrue(AITextAction.translate.instruction.contains("IPA"))
+    func testTranslationExcludesURLsAndLimitsPronunciation() {
+        let instruction = AITextAction.translate.instruction
+
+        XCTAssertTrue(instruction.contains("网址原样保留"))
+        XCTAssertTrue(instruction.contains("10 个汉字"))
+        XCTAssertTrue(instruction.contains("10 个英文单词"))
     }
 
     @MainActor
