@@ -144,10 +144,15 @@ final class NotePersistenceTests: XCTestCase {
         XCTAssertLessThanOrEqual(image.bounds.width, 328)
         XCTAssertLessThanOrEqual(image.bounds.height, 278.8)
         XCTAssertLessThan(try XCTUnwrap(image.fileWrapper?.regularFileContents).count, originalImageData.count)
-        for attachment in attachments.dropFirst() {
+        XCTAssertEqual(attachments[1].bounds.height, 44)
+        XCTAssertTrue(
+            try XCTUnwrap(attachments[1].fileWrapper?.preferredFilename)
+                .hasPrefix(AttachmentPresentation.audioFilenamePrefix)
+        )
+        for attachment in attachments.dropFirst(2) {
             XCTAssertEqual(attachment.bounds.height, 58)
-            XCTAssertNotNil(attachment.fileWrapper?.regularFileContents)
         }
+        XCTAssertTrue(attachments.allSatisfy { $0.fileWrapper?.regularFileContents != nil })
     }
 
     func testChecklistItemCanBeInsertedAndToggled() throws {

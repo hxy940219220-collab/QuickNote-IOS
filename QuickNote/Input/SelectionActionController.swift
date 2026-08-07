@@ -62,11 +62,17 @@ final class SelectionActionController {
             do {
                 let result = try await AITextAnalyzer.respond(to: action, text: state.source, store: aiStore)
                 guard !Task.isCancelled else { return }
-                state.result = result.text
+                let displayedResult = action == .translate
+                    ? SelectionResultFormatter.enforcingPronunciationLimit(
+                        in: result.text,
+                        source: state.source
+                    )
+                    : result.text
+                state.result = displayedResult
                 state.resultProvider = result.providerName
                 state.needsConfiguration = false
                 state.isLoading = false
-                resize(height: SelectionPanelLayout.resultHeight(for: SelectionResultFormatter.plainText(from: result.text)))
+                resize(height: SelectionPanelLayout.resultHeight(for: SelectionResultFormatter.plainText(from: displayedResult)))
             } catch is CancellationError {
             } catch let error as AIAnalyzerError {
                 state.isLoading = false
@@ -153,6 +159,11 @@ enum SelectionPanelLayout {
 }
 
 enum SelectionResultFormatter {
+    private static let hanPattern = try? NSRegularExpression(pattern: #"\p{Han}"#)
+    private static let englishWordPattern = try? NSRegularExpression(
+        pattern: #"[A-Za-z]+(?:['’][A-Za-z]+)?"#
+    )
+
     enum PronunciationKind {
         case pinyin
         case ipa
@@ -191,6 +202,27 @@ enum SelectionResultFormatter {
             return plainText(from: candidate)
         }
         return nil
+    }
+
+    static func enforcingPronunciationLimit(in result: String, source: String) -> String {
+        guard !pronunciationIsAllowed(for: source) else { return result }
+        return result
+            .components(separatedBy: .newlines)
+            .filter { pronunciationKind(for: $0) == nil }
+            .joined(separator: "\n")
+    }
+
+    static func pronunciationIsAllowed(for source: String) -> Bool {
+        let source = source.replacingOccurrences(
+            of: #"https?://\S+"#,
+            with: "",
+            options: .regularExpression
+        )
+        let range = NSRange(source.startIndex..<source.endIndex, in: source)
+        let hanCount = hanPattern?.numberOfMatches(in: source, range: range) ?? 0
+        if hanCount > 0 { return hanCount <= 10 }
+        let wordCount = englishWordPattern?.numberOfMatches(in: source, range: range) ?? 0
+        return wordCount <= 10
     }
 }
 

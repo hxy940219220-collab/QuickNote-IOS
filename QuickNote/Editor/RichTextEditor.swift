@@ -6,6 +6,21 @@ import UniformTypeIdentifiers
 private protocol ChecklistClickHandling: AnyObject {
     func toggleChecklist(at location: Int) -> Bool
     func openFileAttachment(at location: Int) -> Bool
+    func toggleAudioAttachment(at location: Int) -> Bool
+}
+
+private final class AudioAttachmentCell: NSTextAttachmentCell {
+    override func trackMouse(
+        with event: NSEvent,
+        in cellFrame: NSRect,
+        of controlView: NSView?,
+        atCharacterIndex charIndex: Int,
+        untilMouseUp flag: Bool
+    ) -> Bool {
+        guard let textView = controlView as? NSTextView,
+              let handler = textView.delegate as? ChecklistClickHandling else { return false }
+        return handler.toggleAudioAttachment(at: charIndex)
+    }
 }
 
 private final class ChecklistAttachmentCell: NSTextAttachmentCell {
@@ -38,10 +53,24 @@ private final class FileAttachmentCell: NSTextAttachmentCell {
 }
 
 enum AttachmentPresentation {
+    static let audioFilenamePrefix = "quicknote-audio--"
+    static let audioFilenameSuffix = ".qnaudio"
+
     static func scaledSize(for original: NSSize, fitting maximum: NSSize) -> NSSize {
         guard original.width > 0, original.height > 0 else { return .zero }
         let scale = min(1, maximum.width / original.width, maximum.height / original.height)
         return NSSize(width: floor(original.width * scale), height: floor(original.height * scale))
+    }
+
+    static func storedAudioFilename(for original: String) -> String {
+        audioFilenamePrefix + original + audioFilenameSuffix
+    }
+
+    static func originalAudioFilename(from stored: String) -> String? {
+        guard stored.hasPrefix(audioFilenamePrefix), stored.hasSuffix(audioFilenameSuffix) else {
+            return nil
+        }
+        return String(stored.dropFirst(audioFilenamePrefix.count).dropLast(audioFilenameSuffix.count))
     }
 }
 
@@ -78,6 +107,8 @@ enum EditorTextStyle: String, CaseIterable, Identifiable {
 @MainActor
 final class RichTextEditorController: ObservableObject {
     private weak var textView: NSTextView?
+    private var playingSound: NSSound?
+    private var playingAudioLocation: Int?
     private static let linkDetector = try? NSDataDetector(
         types: NSTextCheckingResult.CheckingType.link.rawValue
     )
@@ -505,6 +536,25 @@ final class RichTextEditorController: ObservableObject {
         }
     }
 
+    func toggleAudioAttachment(at location: Int) -> Bool {
+        guard let textView, let storage = textView.textStorage,
+              location >= 0, location < storage.length,
+              let attachment = storage.attribute(.attachment, at: location, effectiveRange: nil)
+                as? NSTextAttachment,
+              let data = attachment.fileWrapper?.regularFileContents else { return false }
+        if playingAudioLocation == location, playingSound?.isPlaying == true {
+            playingSound?.stop()
+            playingSound = nil
+            playingAudioLocation = nil
+            return true
+        }
+        playingSound?.stop()
+        guard let sound = NSSound(data: data) else { return false }
+        playingSound = sound
+        playingAudioLocation = location
+        return sound.play()
+    }
+
     private func imageAttachment(from url: URL, fitting maximum: NSSize) throws -> NSTextAttachment {
         guard let source = NSImage(contentsOf: url) else {
             throw CocoaError(.fileReadCorruptFile)
@@ -540,10 +590,17 @@ final class RichTextEditorController: ObservableObject {
         guard let wrapper = attachment.fileWrapper else { return }
         let filename = wrapper.preferredFilename ?? wrapper.filename ?? "附件"
         let type = UTType(filenameExtension: URL(fileURLWithPath: filename).pathExtension)
-        let kind: String
+        if let original = AttachmentPresentation.originalAudioFilename(from: filename) {
+            configureAudioCard(attachment, filename: original, maximumWidth: maximumWidth)
+            return
+        }
         if type?.conforms(to: .audio) == true {
-            kind = "音频"
-        } else if type?.conforms(to: .movie) == true {
+            wrapper.preferredFilename = AttachmentPresentation.storedAudioFilename(for: filename)
+            configureAudioCard(attachment, filename: filename, maximumWidth: maximumWidth)
+            return
+        }
+        let kind: String
+        if type?.conforms(to: .movie) == true {
             kind = "视频"
         } else {
             kind = "文档"
@@ -580,9 +637,46 @@ final class RichTextEditorController: ObservableObject {
         attachment.attachmentCell = FileAttachmentCell(imageCell: card)
     }
 
+    private func configureAudioCard(
+        _ attachment: NSTextAttachment,
+        filename: String,
+        maximumWidth: CGFloat
+    ) {
+        let size = NSSize(width: min(maximumWidth, 340), height: 44)
+        let card = NSImage(size: size)
+        card.lockFocus()
+        let rect = NSRect(origin: .zero, size: size)
+        NSColor.controlBackgroundColor.setFill()
+        NSBezierPath(roundedRect: rect.insetBy(dx: 0.5, dy: 0.5), xRadius: 9, yRadius: 9).fill()
+        NSColor.separatorColor.setStroke()
+        let border = NSBezierPath(roundedRect: rect.insetBy(dx: 0.5, dy: 0.5), xRadius: 9, yRadius: 9)
+        border.lineWidth = 1
+        border.stroke()
+        NSImage(systemSymbolName: "play.circle.fill", accessibilityDescription: "播放")?.draw(
+            in: NSRect(x: 11, y: 9, width: 26, height: 26)
+        )
+        (filename as NSString).draw(
+            in: NSRect(x: 47, y: 17, width: size.width - 58, height: 17),
+            withAttributes: [
+                .font: NSFont.systemFont(ofSize: 12, weight: .medium),
+                .foregroundColor: NSColor.labelColor,
+            ]
+        )
+        ("单击播放 · 再次单击停止" as NSString).draw(
+            in: NSRect(x: 47, y: 4, width: size.width - 58, height: 14),
+            withAttributes: [
+                .font: NSFont.systemFont(ofSize: 9),
+                .foregroundColor: NSColor.secondaryLabelColor,
+            ]
+        )
+        card.unlockFocus()
+        attachment.bounds = NSRect(origin: .zero, size: size)
+        attachment.attachmentCell = AudioAttachmentCell(imageCell: card)
+    }
+
     private func attachmentWidth(in textView: NSTextView) -> CGFloat {
         let width = textView.enclosingScrollView?.contentSize.width ?? textView.bounds.width
-        return min(680, max(240, width - 32))
+        return min(680, max(120, width - 32))
     }
 
     private func toggleFontTrait(_ trait: NSFontTraitMask) {
@@ -800,6 +894,10 @@ struct RichTextEditor: NSViewRepresentable {
 
         func openFileAttachment(at location: Int) -> Bool {
             owner.controller.openFileAttachment(at: location)
+        }
+
+        func toggleAudioAttachment(at location: Int) -> Bool {
+            owner.controller.toggleAudioAttachment(at: location)
         }
 
     }

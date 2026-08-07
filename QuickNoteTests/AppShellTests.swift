@@ -71,6 +71,19 @@ final class AppShellTests: XCTestCase {
         XCTAssertNil(SelectionResultFormatter.pronunciationKind(for: "普通译文"))
     }
 
+    func testTranslationRemovesPronunciationWhenSourceExceedsLimit() {
+        let result = "Space utilization, read-write efficiency, and management complexity\n音标： /test/"
+
+        XCTAssertEqual(
+            SelectionResultFormatter.enforcingPronunciationLimit(
+                in: result,
+                source: "空间利用率、读写效率和管理复杂度"
+            ),
+            "Space utilization, read-write efficiency, and management complexity"
+        )
+        XCTAssertTrue(SelectionResultFormatter.pronunciationIsAllowed(for: "空间利用率"))
+    }
+
     @MainActor
     func testAPIKeysUseOneCanonicalKeychainVault() {
         XCTAssertEqual(AIConfigurationStore.keychainVaultAccount, "profiles.v1")
