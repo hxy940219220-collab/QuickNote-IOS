@@ -145,6 +145,7 @@ final class NotePersistenceTests: XCTestCase {
         XCTAssertLessThanOrEqual(image.bounds.height, 278.8)
         XCTAssertLessThan(try XCTUnwrap(image.fileWrapper?.regularFileContents).count, originalImageData.count)
         XCTAssertEqual(attachments[1].bounds.height, 44)
+        XCTAssertFalse(attachments[1].allowsTextAttachmentView)
         XCTAssertTrue(
             try XCTUnwrap(attachments[1].fileWrapper?.preferredFilename)
                 .hasPrefix(AttachmentPresentation.audioFilenamePrefix)

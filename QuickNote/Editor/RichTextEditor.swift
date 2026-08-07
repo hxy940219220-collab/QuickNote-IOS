@@ -671,6 +671,7 @@ final class RichTextEditorController: ObservableObject {
         )
         card.unlockFocus()
         attachment.bounds = NSRect(origin: .zero, size: size)
+        attachment.allowsTextAttachmentView = false
         attachment.attachmentCell = AudioAttachmentCell(imageCell: card)
     }
 
