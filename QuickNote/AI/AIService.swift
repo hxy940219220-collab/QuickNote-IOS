@@ -457,18 +457,78 @@ enum OpenAICompatibleClient {
         system: String,
         user: String
     ) async throws -> String {
-        guard let url = configuration.chatCompletionsURL else { throw AIConfigurationError.invalidBaseURL }
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.timeoutInterval = 90
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("Bearer \(configuration.apiKey)", forHTTPHeaderField: "Authorization")
-        request.httpBody = try JSONEncoder().encode(
+        let body = try JSONEncoder().encode(
             RequestBody(
                 model: configuration.model,
                 messages: [Message(role: "system", content: system), Message(role: "user", content: user)]
             )
         )
+        return try await perform(configuration: configuration, body: body, timeout: 90)
+    }
+
+    static func testInputModality(
+        configuration: AIConfiguration,
+        modality: AIInputModality
+    ) async throws {
+        guard modality != .text else { return }
+        let fileExtension: String
+        let contentType: String
+        switch modality {
+        case .text: return
+        case .image:
+            fileExtension = "png"
+            contentType = "image/png"
+        case .audio:
+            fileExtension = "wav"
+            contentType = "audio/wav"
+        case .video:
+            fileExtension = "mp4"
+            contentType = "video/mp4"
+        }
+        guard let resource = Bundle.main.url(
+            forResource: "capability-test",
+            withExtension: fileExtension
+        ) else { throw AIAnalyzerError.invalidResponse }
+        let encoded = try Data(contentsOf: resource).base64EncodedString()
+        let media: [String: Any]
+        switch modality {
+        case .text:
+            return
+        case .image:
+            media = ["type": "image_url", "image_url": ["url": "data:\(contentType);base64,\(encoded)"]]
+        case .audio:
+            media = ["type": "input_audio", "input_audio": ["data": encoded, "format": "wav"]]
+        case .video:
+            media = ["type": "video_url", "video_url": ["url": "data:\(contentType);base64,\(encoded)"]]
+        }
+        let payload: [String: Any] = [
+            "model": configuration.model,
+            "messages": [[
+                "role": "user",
+                "content": [
+                    ["type": "text", "text": "识别这个测试文件，只回复 OK。"],
+                    media,
+                ],
+            ]],
+            "stream": false,
+            "max_tokens": 8,
+        ]
+        let body = try JSONSerialization.data(withJSONObject: payload)
+        _ = try await perform(configuration: configuration, body: body, timeout: 30)
+    }
+
+    private static func perform(
+        configuration: AIConfiguration,
+        body: Data,
+        timeout: TimeInterval
+    ) async throws -> String {
+        guard let url = configuration.chatCompletionsURL else { throw AIConfigurationError.invalidBaseURL }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.timeoutInterval = timeout
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("Bearer \(configuration.apiKey)", forHTTPHeaderField: "Authorization")
+        request.httpBody = body
 
         let (data, urlResponse) = try await URLSession.shared.data(for: request)
         guard let http = urlResponse as? HTTPURLResponse else { throw AIAnalyzerError.invalidResponse }
@@ -519,6 +579,11 @@ final class AISettingsController {
     }
 }
 
+private struct AICapabilityAlert: Identifiable {
+    let id = UUID()
+    let message: String
+}
+
 private struct AISettingsView: View {
     let store: AIConfigurationStore
     @State private var slot: AIProfileSlot
@@ -532,7 +597,8 @@ private struct AISettingsView: View {
     @State private var status = ""
     @State private var isTesting = false
     @State private var editingName = false
-    @State private var capabilityAlert: AIInputModality?
+    @State private var capabilityAlert: AICapabilityAlert?
+    @State private var isTestingCapabilities = false
     @FocusState private var nameFocused: Bool
 
     init(store: AIConfigurationStore) {
@@ -643,23 +709,21 @@ private struct AISettingsView: View {
                     field("输入能力") {
                         HStack(spacing: 7) {
                             ForEach(AIInputModality.allCases) { modality in
-                                HStack(spacing: 3) {
-                                    modalityButton(modality)
-                                    if modality != .text {
-                                        Button {
-                                            testModality(modality)
-                                        } label: {
-                                            Image(systemName: "checkmark.circle")
-                                                .font(.system(size: 11, weight: .medium))
-                                                .foregroundStyle(.secondary)
-                                                .frame(width: 18, height: 18)
-                                        }
-                                        .buttonStyle(.plain)
-                                        .help("测试\(modality.title)识别能力")
-                                        .accessibilityLabel("测试\(modality.title)识别能力")
-                                    }
+                                modalityButton(modality)
+                            }
+                            Button(action: testSelectedModalities) {
+                                if isTestingCapabilities {
+                                    ProgressView().controlSize(.mini)
+                                } else {
+                                    Image(systemName: "checkmark.circle")
+                                        .font(.system(size: 12, weight: .medium))
                                 }
                             }
+                            .buttonStyle(.plain)
+                            .frame(width: 22, height: 22)
+                            .disabled(isTestingCapabilities)
+                            .help("测试已勾选的识别能力")
+                            .accessibilityLabel("测试已勾选的识别能力")
                         }
                     }
                     field("API Key") {
@@ -690,10 +754,10 @@ private struct AISettingsView: View {
             .padding(22)
         }
         .frame(width: 620, height: 470)
-        .alert(item: $capabilityAlert) { modality in
+        .alert(item: $capabilityAlert) { alert in
             Alert(
                 title: Text("能力测试"),
-                message: Text("此模型不支持\(modality.title)识别"),
+                message: Text(alert.message),
                 dismissButton: .default(Text("好"))
             )
         }
@@ -728,13 +792,44 @@ private struct AISettingsView: View {
         status = "已恢复预设，保存后生效。"
     }
 
-    private func testModality(_ modality: AIInputModality) {
-        guard modality != .text else { return }
-        guard inputModalities.contains(modality) else {
-            capabilityAlert = modality
+    private func testSelectedModalities() {
+        let selected = AIInputModality.allCases.filter {
+            $0 != .text && inputModalities.contains($0)
+        }
+        guard !selected.isEmpty else {
+            capabilityAlert = AICapabilityAlert(message: "请先勾选图片、音频或视频。")
             return
         }
-        status = "(modality.title)识别能力测试通过（以当前模型配置为准）。"
+        let configuration: AIConfiguration
+        do {
+            configuration = try draft.validated()
+        } catch {
+            status = error.localizedDescription
+            return
+        }
+        isTestingCapabilities = true
+        status = "正在测试已勾选的识别能力…"
+        Task {
+            var unsupported: [AIInputModality] = []
+            for modality in selected {
+                do {
+                    try await OpenAICompatibleClient.testInputModality(
+                        configuration: configuration,
+                        modality: modality
+                    )
+                } catch {
+                    unsupported.append(modality)
+                }
+            }
+            isTestingCapabilities = false
+            if unsupported.isEmpty {
+                status = "\(selected.map { $0.title }.joined(separator: "、"))识别能力测试通过。"
+            } else {
+                capabilityAlert = AICapabilityAlert(
+                    message: "该模型暂不支持\(unsupported.map { $0.title }.joined(separator: "、"))的识别"
+                )
+            }
+        }
     }
 
     private func save() {

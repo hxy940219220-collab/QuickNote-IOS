@@ -96,6 +96,60 @@ final class NotePersistenceTests: XCTestCase {
         XCTAssertEqual(document.attachmentCount, 1)
     }
 
+    func testInsertedImagesScaleDownAndOtherFilesUseCompactCards() throws {
+        let controller = RichTextEditorController()
+        var document = NSAttributedString(string: "")
+        let editor = RichTextEditor(
+            document: document,
+            cursorLocation: 0,
+            controller: controller,
+            onChange: { updated, _ in document = updated },
+            onActivate: {}
+        )
+        let host = NSHostingView(rootView: editor)
+        host.frame = NSRect(x: 0, y: 0, width: 360, height: 300)
+        host.layoutSubtreeIfNeeded()
+        _ = try XCTUnwrap(host.descendant(ofType: NSTextView.self))
+
+        let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let imageURL = root.appending(path: "large.png")
+        let largeImage = NSImage(size: NSSize(width: 1_200, height: 900))
+        largeImage.lockFocus()
+        NSColor.systemBlue.setFill()
+        NSRect(x: 0, y: 0, width: 1_200, height: 900).fill()
+        largeImage.unlockFocus()
+        let originalImageData = try XCTUnwrap(
+            largeImage.tiffRepresentation
+                .flatMap(NSBitmapImageRep.init(data:))?
+                .representation(using: .png, properties: [:])
+        )
+        try originalImageData.write(to: imageURL)
+        let audioURL = root.appending(path: "sample.wav")
+        let videoURL = root.appending(path: "sample.mp4")
+        let documentURL = root.appending(path: "sample.pdf")
+        try Data("audio".utf8).write(to: audioURL)
+        try Data("video".utf8).write(to: videoURL)
+        try Data("document".utf8).write(to: documentURL)
+
+        try controller.insertFiles([imageURL, audioURL, videoURL, documentURL])
+
+        var attachments: [NSTextAttachment] = []
+        document.enumerateAttribute(.attachment, in: NSRange(location: 0, length: document.length)) {
+            value, _, _ in
+            if let attachment = value as? NSTextAttachment { attachments.append(attachment) }
+        }
+        XCTAssertEqual(attachments.count, 4)
+        let image = try XCTUnwrap(attachments.first)
+        XCTAssertLessThanOrEqual(image.bounds.width, 328)
+        XCTAssertLessThanOrEqual(image.bounds.height, 278.8)
+        XCTAssertLessThan(try XCTUnwrap(image.fileWrapper?.regularFileContents).count, originalImageData.count)
+        for attachment in attachments.dropFirst() {
+            XCTAssertEqual(attachment.bounds.height, 58)
+            XCTAssertNotNil(attachment.fileWrapper?.regularFileContents)
+        }
+    }
+
     func testChecklistItemCanBeInsertedAndToggled() throws {
         let controller = RichTextEditorController()
         var document = NSAttributedString(string: "完成这件事")

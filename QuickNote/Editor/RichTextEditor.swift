@@ -1,9 +1,11 @@
 import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 @MainActor
 private protocol ChecklistClickHandling: AnyObject {
     func toggleChecklist(at location: Int) -> Bool
+    func openFileAttachment(at location: Int) -> Bool
 }
 
 private final class ChecklistAttachmentCell: NSTextAttachmentCell {
@@ -17,6 +19,29 @@ private final class ChecklistAttachmentCell: NSTextAttachmentCell {
         guard let textView = controlView as? NSTextView,
               let handler = textView.delegate as? ChecklistClickHandling else { return false }
         return handler.toggleChecklist(at: charIndex)
+    }
+}
+
+private final class FileAttachmentCell: NSTextAttachmentCell {
+    override func trackMouse(
+        with event: NSEvent,
+        in cellFrame: NSRect,
+        of controlView: NSView?,
+        atCharacterIndex charIndex: Int,
+        untilMouseUp flag: Bool
+    ) -> Bool {
+        guard event.clickCount >= 2,
+              let textView = controlView as? NSTextView,
+              let handler = textView.delegate as? ChecklistClickHandling else { return false }
+        return handler.openFileAttachment(at: charIndex)
+    }
+}
+
+enum AttachmentPresentation {
+    static func scaledSize(for original: NSSize, fitting maximum: NSSize) -> NSSize {
+        guard original.width > 0, original.height > 0 else { return .zero }
+        let scale = min(1, maximum.width / original.width, maximum.height / original.height)
+        return NSSize(width: floor(original.width * scale), height: floor(original.height * scale))
     }
 }
 
@@ -412,13 +437,152 @@ final class RichTextEditorController: ObservableObject {
     func insertFiles(_ urls: [URL]) throws {
         guard let textView, !urls.isEmpty else { return }
         let content = NSMutableAttributedString()
+        let maximumWidth = attachmentWidth(in: textView)
         for url in urls {
-            let wrapper = try FileWrapper(url: url, options: .immediate)
-            wrapper.preferredFilename = url.lastPathComponent
-            content.append(NSAttributedString(attachment: NSTextAttachment(fileWrapper: wrapper)))
+            let type = UTType(filenameExtension: url.pathExtension)
+            let attachment: NSTextAttachment
+            if type?.conforms(to: .image) == true {
+                attachment = try imageAttachment(
+                    from: url,
+                    fitting: NSSize(width: maximumWidth, height: min(520, maximumWidth * 0.85))
+                )
+            } else {
+                let wrapper = try FileWrapper(url: url, options: .immediate)
+                wrapper.preferredFilename = url.lastPathComponent
+                attachment = NSTextAttachment(fileWrapper: wrapper)
+                configureFileCard(attachment, maximumWidth: maximumWidth)
+            }
+            content.append(NSAttributedString(attachment: attachment))
             content.append(NSAttributedString(string: "\n"))
         }
         replaceSelection(with: content, in: textView)
+    }
+
+    func prepareFileAttachments(in textView: NSTextView) {
+        guard let storage = textView.textStorage else { return }
+        let maximumWidth = attachmentWidth(in: textView)
+        storage.enumerateAttribute(.attachment, in: NSRange(location: 0, length: storage.length)) {
+            value, _, _ in
+            guard let attachment = value as? NSTextAttachment,
+                  let wrapper = attachment.fileWrapper else { return }
+            let filename = wrapper.preferredFilename ?? wrapper.filename ?? "附件"
+            guard !filename.hasPrefix("quicknote-checklist-") else { return }
+            let type = UTType(filenameExtension: URL(fileURLWithPath: filename).pathExtension)
+            if type?.conforms(to: .image) == true,
+               let data = wrapper.regularFileContents,
+               let image = NSImage(data: data) {
+                let size = AttachmentPresentation.scaledSize(
+                    for: image.size,
+                    fitting: NSSize(width: maximumWidth, height: min(520, maximumWidth * 0.85))
+                )
+                attachment.bounds = NSRect(origin: .zero, size: size)
+                attachment.attachmentCell = NSTextAttachmentCell(imageCell: image)
+            } else {
+                configureFileCard(attachment, maximumWidth: maximumWidth)
+            }
+        }
+    }
+
+    func openFileAttachment(at location: Int) -> Bool {
+        guard let textView, let storage = textView.textStorage,
+              location >= 0, location < storage.length,
+              let attachment = storage.attribute(.attachment, at: location, effectiveRange: nil)
+                as? NSTextAttachment,
+              let wrapper = attachment.fileWrapper,
+              let data = wrapper.regularFileContents else { return false }
+        do {
+            let filename = URL(fileURLWithPath: wrapper.preferredFilename ?? wrapper.filename ?? "附件")
+                .lastPathComponent
+            let directory = FileManager.default.temporaryDirectory
+                .appending(path: "QuickNote-Attachments")
+                .appending(path: UUID().uuidString)
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            let url = directory.appending(path: filename)
+            try data.write(to: url, options: .atomic)
+            return NSWorkspace.shared.open(url)
+        } catch {
+            return false
+        }
+    }
+
+    private func imageAttachment(from url: URL, fitting maximum: NSSize) throws -> NSTextAttachment {
+        guard let source = NSImage(contentsOf: url) else {
+            throw CocoaError(.fileReadCorruptFile)
+        }
+        let size = AttachmentPresentation.scaledSize(for: source.size, fitting: maximum)
+        guard size.width > 0, size.height > 0 else { throw CocoaError(.fileReadCorruptFile) }
+        let rendered = NSImage(size: size)
+        rendered.lockFocus()
+        NSGraphicsContext.current?.imageInterpolation = .high
+        source.draw(in: NSRect(origin: .zero, size: size))
+        rendered.unlockFocus()
+        guard let tiff = rendered.tiffRepresentation,
+              let bitmap = NSBitmapImageRep(data: tiff) else {
+            throw CocoaError(.fileReadCorruptFile)
+        }
+        let format: NSBitmapImageRep.FileType = bitmap.hasAlpha ? .png : .jpeg
+        let properties: [NSBitmapImageRep.PropertyKey: Any] = format == .jpeg
+            ? [.compressionFactor: 0.82]
+            : [:]
+        guard let data = bitmap.representation(using: format, properties: properties) else {
+            throw CocoaError(.fileWriteUnknown)
+        }
+        let wrapper = FileWrapper(regularFileWithContents: data)
+        let baseName = url.deletingPathExtension().lastPathComponent
+        wrapper.preferredFilename = "\(baseName).\(format == .jpeg ? "jpg" : "png")"
+        let attachment = NSTextAttachment(fileWrapper: wrapper)
+        attachment.bounds = NSRect(origin: .zero, size: size)
+        attachment.attachmentCell = NSTextAttachmentCell(imageCell: NSImage(data: data))
+        return attachment
+    }
+
+    private func configureFileCard(_ attachment: NSTextAttachment, maximumWidth: CGFloat) {
+        guard let wrapper = attachment.fileWrapper else { return }
+        let filename = wrapper.preferredFilename ?? wrapper.filename ?? "附件"
+        let type = UTType(filenameExtension: URL(fileURLWithPath: filename).pathExtension)
+        let kind: String
+        if type?.conforms(to: .audio) == true {
+            kind = "音频"
+        } else if type?.conforms(to: .movie) == true {
+            kind = "视频"
+        } else {
+            kind = "文档"
+        }
+        let size = NSSize(width: min(maximumWidth, 420), height: 58)
+        let card = NSImage(size: size)
+        card.lockFocus()
+        let rect = NSRect(origin: .zero, size: size)
+        NSColor.controlBackgroundColor.setFill()
+        NSBezierPath(roundedRect: rect.insetBy(dx: 0.5, dy: 0.5), xRadius: 9, yRadius: 9).fill()
+        NSColor.separatorColor.setStroke()
+        let border = NSBezierPath(roundedRect: rect.insetBy(dx: 0.5, dy: 0.5), xRadius: 9, yRadius: 9)
+        border.lineWidth = 1
+        border.stroke()
+        let icon = NSWorkspace.shared.icon(for: type ?? .data)
+        icon.size = NSSize(width: 32, height: 32)
+        icon.draw(in: NSRect(x: 13, y: 13, width: 32, height: 32))
+        (filename as NSString).draw(
+            in: NSRect(x: 56, y: 29, width: size.width - 68, height: 18),
+            withAttributes: [
+                .font: NSFont.systemFont(ofSize: 12, weight: .medium),
+                .foregroundColor: NSColor.labelColor,
+            ]
+        )
+        ("\(kind) · 双击打开" as NSString).draw(
+            in: NSRect(x: 56, y: 11, width: size.width - 68, height: 16),
+            withAttributes: [
+                .font: NSFont.systemFont(ofSize: 10),
+                .foregroundColor: NSColor.secondaryLabelColor,
+            ]
+        )
+        card.unlockFocus()
+        attachment.bounds = NSRect(origin: .zero, size: size)
+        attachment.attachmentCell = FileAttachmentCell(imageCell: card)
+    }
+
+    private func attachmentWidth(in textView: NSTextView) -> CGFloat {
+        let width = textView.enclosingScrollView?.contentSize.width ?? textView.bounds.width
+        return min(680, max(240, width - 32))
     }
 
     private func toggleFontTrait(_ trait: NSFontTraitMask) {
@@ -582,6 +746,7 @@ struct RichTextEditor: NSViewRepresentable {
         controller.connect(textView)
         textView.textStorage?.setAttributedString(document)
         controller.prepareChecklistAttachments(in: textView)
+        controller.prepareFileAttachments(in: textView)
         controller.detectLinks(in: textView)
         textView.setSelectedRange(NSRange(location: clampedCursorLocation, length: 0))
         controller.applyDefaultParagraphSpacing(in: textView)
@@ -596,6 +761,7 @@ struct RichTextEditor: NSViewRepresentable {
         if !textView.attributedString().isEqual(to: document) {
             textView.textStorage?.setAttributedString(document)
             controller.prepareChecklistAttachments(in: textView)
+            controller.prepareFileAttachments(in: textView)
             controller.detectLinks(in: textView)
             controller.applyDefaultParagraphSpacing(in: textView)
         }
@@ -630,6 +796,10 @@ struct RichTextEditor: NSViewRepresentable {
 
         func toggleChecklist(at location: Int) -> Bool {
             owner.controller.toggleChecklistItem(at: location)
+        }
+
+        func openFileAttachment(at location: Int) -> Bool {
+            owner.controller.openFileAttachment(at: location)
         }
 
     }
