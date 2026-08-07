@@ -13,19 +13,7 @@ private class InteractiveAttachmentCell: NSTextAttachmentCell {
     override func wantsToTrackMouse() -> Bool { true }
 }
 
-private final class AudioAttachmentCell: InteractiveAttachmentCell {
-    override func trackMouse(
-        with event: NSEvent,
-        in cellFrame: NSRect,
-        of controlView: NSView?,
-        atCharacterIndex charIndex: Int,
-        untilMouseUp flag: Bool
-    ) -> Bool {
-        guard let textView = controlView as? NSTextView,
-              let handler = textView.delegate as? ChecklistClickHandling else { return false }
-        return handler.toggleAudioAttachment(at: charIndex)
-    }
-}
+private final class AudioAttachmentCell: InteractiveAttachmentCell {}
 
 private final class ChecklistAttachmentCell: InteractiveAttachmentCell {
     override func trackMouse(
@@ -513,7 +501,12 @@ final class RichTextEditorController: ObservableObject {
                 attachment = NSTextAttachment(fileWrapper: wrapper)
                 configureFileCard(attachment, maximumWidth: maximumWidth)
             }
-            let paragraph = attachmentParagraphStyle()
+            let storedFilename = attachment.fileWrapper?.preferredFilename
+                ?? attachment.fileWrapper?.filename
+                ?? ""
+            let paragraph = attachmentParagraphStyle(
+                compact: AttachmentPresentation.originalAudioFilename(from: storedFilename) != nil
+            )
             let item = NSMutableAttributedString(attachment: attachment)
             item.addAttribute(.paragraphStyle, value: paragraph, range: NSRange(location: 0, length: 1))
             content.append(item)
@@ -527,14 +520,19 @@ final class RichTextEditorController: ObservableObject {
         let maximumWidth = attachmentWidth(in: textView)
         guard force || abs((preparedAttachmentWidth ?? 0) - maximumWidth) > 1 else { return }
         preparedAttachmentWidth = maximumWidth
-        var attachmentParagraphs: [NSRange] = []
+        var attachmentParagraphs: [(range: NSRange, compact: Bool)] = []
         storage.enumerateAttribute(.attachment, in: NSRange(location: 0, length: storage.length)) {
             value, range, _ in
             guard let attachment = value as? NSTextAttachment,
                   let wrapper = attachment.fileWrapper else { return }
             let filename = wrapper.preferredFilename ?? wrapper.filename ?? "附件"
             guard !filename.hasPrefix("quicknote-checklist-") else { return }
-            attachmentParagraphs.append((storage.string as NSString).paragraphRange(for: range))
+            let compact = AttachmentPresentation.originalAudioFilename(from: filename) != nil
+                || UTType(filenameExtension: URL(fileURLWithPath: filename).pathExtension)?
+                    .conforms(to: .audio) == true
+            attachmentParagraphs.append(
+                ((storage.string as NSString).paragraphRange(for: range), compact)
+            )
             let type = UTType(filenameExtension: URL(fileURLWithPath: filename).pathExtension)
             if type?.conforms(to: .image) == true,
                let data = wrapper.regularFileContents,
@@ -552,21 +550,24 @@ final class RichTextEditorController: ObservableObject {
                 configureFileCard(attachment, maximumWidth: maximumWidth)
             }
         }
-        for range in attachmentParagraphs {
-            let existing = storage.attribute(.paragraphStyle, at: range.location, effectiveRange: nil)
+        for item in attachmentParagraphs {
+            let existing = storage.attribute(.paragraphStyle, at: item.range.location, effectiveRange: nil)
                 as? NSParagraphStyle
             storage.addAttribute(
                 .paragraphStyle,
-                value: attachmentParagraphStyle(from: existing),
-                range: range
+                value: attachmentParagraphStyle(from: existing, compact: item.compact),
+                range: item.range
             )
         }
     }
 
-    private func attachmentParagraphStyle(from existing: NSParagraphStyle? = nil) -> NSParagraphStyle {
+    private func attachmentParagraphStyle(
+        from existing: NSParagraphStyle? = nil,
+        compact: Bool = false
+    ) -> NSParagraphStyle {
         let style = existing?.mutableCopy() as? NSMutableParagraphStyle ?? NSMutableParagraphStyle()
-        style.paragraphSpacingBefore = max(style.paragraphSpacingBefore, 8)
-        style.paragraphSpacing = max(style.paragraphSpacing, 12)
+        style.paragraphSpacingBefore = compact ? 3 : max(style.paragraphSpacingBefore, 8)
+        style.paragraphSpacing = compact ? 5 : max(style.paragraphSpacing, 12)
         return style
     }
 
@@ -691,12 +692,12 @@ final class RichTextEditorController: ObservableObject {
         let filename = wrapper.preferredFilename ?? wrapper.filename ?? "附件"
         let type = UTType(filenameExtension: URL(fileURLWithPath: filename).pathExtension)
         if let original = AttachmentPresentation.originalAudioFilename(from: filename) {
-            configureAudioCard(attachment, filename: original, maximumWidth: maximumWidth)
+            configureAudioControl(attachment, filename: original, maximumWidth: maximumWidth)
             return
         }
         if type?.conforms(to: .audio) == true {
             wrapper.preferredFilename = AttachmentPresentation.storedAudioFilename(for: filename)
-            configureAudioCard(attachment, filename: filename, maximumWidth: maximumWidth)
+            configureAudioControl(attachment, filename: filename, maximumWidth: maximumWidth)
             return
         }
         let kind: String
@@ -737,33 +738,29 @@ final class RichTextEditorController: ObservableObject {
         attachment.attachmentCell = FileAttachmentCell(imageCell: card)
     }
 
-    private func configureAudioCard(
+    private func configureAudioControl(
         _ attachment: NSTextAttachment,
         filename: String,
         maximumWidth: CGFloat
     ) {
-        let size = NSSize(width: min(max(maximumWidth, 320), 420), height: 40)
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 12, weight: .medium),
+            .foregroundColor: NSColor.labelColor,
+        ]
+        let textWidth = ceil((filename as NSString).size(withAttributes: attributes).width)
+        let size = NSSize(width: min(maximumWidth, textWidth + 42), height: 30)
         let card = NSImage(size: size)
         card.lockFocus()
-        let rect = NSRect(origin: .zero, size: size)
-        NSColor.controlBackgroundColor.setFill()
-        NSBezierPath(roundedRect: rect.insetBy(dx: 0.5, dy: 0.5), xRadius: 9, yRadius: 9).fill()
-        NSColor.separatorColor.setStroke()
-        let border = NSBezierPath(roundedRect: rect.insetBy(dx: 0.5, dy: 0.5), xRadius: 9, yRadius: 9)
-        border.lineWidth = 1
-        border.stroke()
         NSImage(systemSymbolName: "play.circle.fill", accessibilityDescription: "播放")?.draw(
-            in: NSRect(x: 10, y: 7, width: 26, height: 26)
+            in: NSRect(x: 0, y: 2, width: 26, height: 26)
         )
         let paragraph = NSMutableParagraphStyle()
         paragraph.lineBreakMode = .byTruncatingMiddle
+        var textAttributes = attributes
+        textAttributes[.paragraphStyle] = paragraph
         (filename as NSString).draw(
-            in: NSRect(x: 46, y: 11, width: size.width - 58, height: 18),
-            withAttributes: [
-                .font: NSFont.systemFont(ofSize: 12, weight: .medium),
-                .foregroundColor: NSColor.labelColor,
-                .paragraphStyle: paragraph,
-            ]
+            in: NSRect(x: 34, y: 7, width: size.width - 34, height: 18),
+            withAttributes: textAttributes
         )
         card.unlockFocus()
         attachment.bounds = NSRect(origin: .zero, size: size)
@@ -1034,6 +1031,16 @@ struct RichTextEditor: NSViewRepresentable {
         func textView(_ textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
             guard commandSelector == #selector(NSResponder.insertNewline(_:)) else { return false }
             return owner.controller.continueListAfterNewline()
+        }
+
+        func textView(
+            _ textView: NSTextView,
+            clickedOn cell: any NSTextAttachmentCellProtocol,
+            in cellFrame: NSRect,
+            at charIndex: Int
+        ) {
+            guard cell is AudioAttachmentCell else { return }
+            _ = owner.controller.toggleAudioAttachment(at: charIndex)
         }
 
         func toggleChecklist(at location: Int) -> Bool {

@@ -145,8 +145,8 @@ final class NotePersistenceTests: XCTestCase {
         XCTAssertLessThanOrEqual(image.bounds.height, 278.8)
         XCTAssertFalse(image.allowsTextAttachmentView)
         XCTAssertLessThan(try XCTUnwrap(image.fileWrapper?.regularFileContents).count, originalImageData.count)
-        XCTAssertEqual(attachments[1].bounds.height, 40)
-        XCTAssertGreaterThanOrEqual(attachments[1].bounds.width, 320)
+        XCTAssertEqual(attachments[1].bounds.height, 30)
+        XCTAssertLessThan(attachments[1].bounds.width, 320)
         XCTAssertFalse(attachments[1].allowsTextAttachmentView)
         XCTAssertTrue(attachments[1].attachmentCell?.wantsToTrackMouse() == true)
         XCTAssertTrue(
@@ -162,6 +162,51 @@ final class NotePersistenceTests: XCTestCase {
         XCTAssertEqual(attachmentParagraph.paragraphSpacingBefore, 8)
         XCTAssertEqual(attachmentParagraph.paragraphSpacing, 12)
         XCTAssertTrue(attachments.allSatisfy { $0.fileWrapper?.regularFileContents != nil })
+    }
+
+    func testAudioAttachmentCanStartAndStopPlayback() throws {
+        let controller = RichTextEditorController()
+        var document = NSAttributedString(string: "")
+        let host = NSHostingView(rootView: RichTextEditor(
+            document: document,
+            cursorLocation: 0,
+            controller: controller,
+            onChange: { updated, _ in document = updated },
+            onActivate: {}
+        ))
+        host.frame = NSRect(x: 0, y: 0, width: 360, height: 240)
+        host.layoutSubtreeIfNeeded()
+        let textView = try XCTUnwrap(host.descendant(ofType: NSTextView.self))
+
+        try controller.insertFiles([URL(fileURLWithPath: "/System/Library/Sounds/Glass.aiff")])
+        let attachment = try XCTUnwrap(
+            document.attribute(.attachment, at: 0, effectiveRange: nil) as? NSTextAttachment
+        )
+        let paragraph = try XCTUnwrap(
+            document.attribute(.paragraphStyle, at: 0, effectiveRange: nil) as? NSParagraphStyle
+        )
+        XCTAssertEqual(paragraph.paragraphSpacingBefore, 3)
+        XCTAssertEqual(paragraph.paragraphSpacing, 5)
+        XCTAssertTrue(attachment.attachmentCell?.wantsToTrackMouse() == true)
+        let click = try XCTUnwrap(NSEvent.mouseEvent(
+            with: .leftMouseDown,
+            location: .zero,
+            modifierFlags: [],
+            timestamp: 0,
+            windowNumber: 0,
+            context: nil,
+            eventNumber: 0,
+            clickCount: 1,
+            pressure: 1
+        ))
+        XCTAssertTrue(attachment.attachmentCell?.trackMouse(
+            with: click,
+            in: NSRect(origin: .zero, size: attachment.bounds.size),
+            of: textView,
+            atCharacterIndex: 0,
+            untilMouseUp: false
+        ) == true)
+        XCTAssertTrue(controller.toggleAudioAttachment(at: 0))
     }
 
     func testPastedImageIsScaledToEditorAndUsesClickableCell() throws {
