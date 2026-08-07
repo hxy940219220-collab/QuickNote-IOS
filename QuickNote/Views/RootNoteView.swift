@@ -4,6 +4,11 @@ import SwiftUI
 struct RootNoteView: View {
     @ObservedObject var session: NoteSession
     let allNotes: () throws -> [NoteRecord]
+    let allFolders: () throws -> [NoteFolder]
+    let createFolderAction: (String) throws -> Void
+    let renameFolderAction: (NoteFolder, String) throws -> Void
+    let deleteFolderAction: (NoteFolder) throws -> Void
+    let moveNoteAction: (NoteRecord, NoteFolder?) throws -> Void
     let activateEditor: () -> Void
     let drawerVisibilityChanged: (Bool) -> Void
     let setWindowLocked: (Bool) -> Void
@@ -18,6 +23,7 @@ struct RootNoteView: View {
     @State private var tablePresented = false
     @State private var selectedDate = Date()
     @State private var notes: [NoteRecord] = []
+    @State private var folders: [NoteFolder] = []
 
     var body: some View {
         VStack(spacing: 0) {
@@ -117,13 +123,18 @@ struct RootNoteView: View {
                 if drawerOpen {
                     NoteDrawerView(
                         notes: notes,
+                        folders: folders,
                         selectedID: session.currentNote?.id,
                         select: open,
                         create: create,
+                        createFolder: createFolder,
+                        renameFolder: renameFolder,
+                        deleteFolder: deleteFolder,
+                        move: move,
                         togglePin: togglePin,
                         delete: delete
                     )
-                    .frame(width: 190)
+                    .frame(width: 210)
                     .transition(.move(edge: .leading).combined(with: .opacity))
 
                     Divider()
@@ -153,7 +164,7 @@ struct RootNoteView: View {
     }
 
     private func toggleDrawer() {
-        notes = (try? allNotes()) ?? []
+        if !drawerOpen { reloadLibraryRecovering() }
         setDrawerOpen(!drawerOpen)
     }
 
@@ -167,14 +178,57 @@ struct RootNoteView: View {
 
     private func togglePin(_ note: NoteRecord) {
         if session.togglePinnedRecovering(note) {
-            notes = (try? allNotes()) ?? notes
+            reloadLibraryRecovering()
         }
     }
 
     private func delete(_ note: NoteRecord) {
         if session.deleteRecovering(note) {
-            notes = (try? allNotes()) ?? notes.filter { $0.id != note.id }
+            reloadLibraryRecovering()
         }
+    }
+
+    private func createFolder(_ name: String) throws {
+        try createFolderAction(name)
+        try reloadLibrary()
+    }
+
+    private func renameFolder(_ folder: NoteFolder, to name: String) throws {
+        try renameFolderAction(folder, name)
+        try reloadLibrary()
+    }
+
+    private func deleteFolder(_ folder: NoteFolder) {
+        do {
+            try deleteFolderAction(folder)
+            try reloadLibrary()
+        } catch {
+            NSAlert(error: error).runModal()
+        }
+    }
+
+    private func move(_ note: NoteRecord, to folder: NoteFolder?) {
+        do {
+            try moveNoteAction(note, folder)
+            try reloadLibrary()
+        } catch {
+            NSAlert(error: error).runModal()
+        }
+    }
+
+    private func reloadLibraryRecovering() {
+        do {
+            try reloadLibrary()
+        } catch {
+            NSAlert(error: error).runModal()
+        }
+    }
+
+    private func reloadLibrary() throws {
+        let refreshedNotes = try allNotes()
+        let refreshedFolders = try allFolders()
+        notes = refreshedNotes
+        folders = refreshedFolders
     }
 
     private func toggleWindowLock() {
@@ -583,81 +637,60 @@ private struct NoteTagsPopover: View {
 
 private struct QuickNoteHelpView: View {
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("权限与快捷键")
-                        .font(.system(size: 18, weight: .semibold))
-                    Text("只开启需要的系统权限；完成后重新打开 QuickNote。")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
-                }
+        VStack(alignment: .leading, spacing: 14) {
+            Text("快捷键与权限")
+                .font(.system(size: 18, weight: .semibold))
 
-                permissionSection(
-                    number: "1",
-                    title: "输入监控",
-                    path: "隐私与安全性 → 输入监控",
-                    detail: "用于在 QuickNote 已运行时监听双击 Command，从而呼出或收起便签。若列表中没有 QuickNote，点“+”添加 /Applications/QuickNote.app，再打开开关。",
-                    button: "打开输入监控",
-                    settingsPane: "Privacy_ListenEvent"
-                )
+            shortcutSection(
+                shortcut: "双击 Command",
+                detail: "快速打开或收起 QuickNote",
+                path: "隐私与安全性 → 输入监控",
+                button: "打开输入监控",
+                settingsPane: "Privacy_ListenEvent"
+            )
 
-                Divider()
+            Divider()
 
-                permissionSection(
-                    number: "2",
-                    title: "辅助功能",
-                    path: "隐私与安全性 → 辅助功能",
-                    detail: "用于读取你主动选中的文字。选中文字后按 Option + 空格，即可打开 AI 分析栏。若列表中没有 QuickNote，点“+”添加 App 并打开开关。",
-                    button: "打开辅助功能",
-                    settingsPane: "Privacy_Accessibility"
-                )
+            shortcutSection(
+                shortcut: "Option + 空格",
+                detail: "分析当前选中的文字",
+                path: "隐私与安全性 → 辅助功能",
+                button: "打开辅助功能",
+                settingsPane: "Privacy_Accessibility"
+            )
 
-                Divider()
+            Divider()
 
-                HStack(alignment: .top, spacing: 10) {
-                    Image(systemName: "key.fill")
-                        .foregroundStyle(Color.accentColor)
-                        .frame(width: 22, height: 22)
-                    VStack(alignment: .leading, spacing: 5) {
-                        Text("API Key 与钥匙串")
-                            .font(.system(size: 13, weight: .semibold))
-                        Text("API Key 只保存在这台 Mac 的系统钥匙串中。首次保存或使用时，macOS 会请求授权，请选择“始终允许”（推荐）或“允许”。AI 请求内容只会发送给你当前选择的服务商。")
-                            .font(.system(size: 11))
-                            .foregroundStyle(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                }
-            }
-            .padding(18)
-        }
-        .frame(width: 380, height: 430)
-    }
-
-    private func permissionSection(
-        number: String,
-        title: String,
-        path: String,
-        detail: String,
-        button: String,
-        settingsPane: String
-    ) -> some View {
-        HStack(alignment: .top, spacing: 10) {
-            Text(number)
-                .font(.system(size: 11, weight: .semibold))
-                .frame(width: 22, height: 22)
-                .background(Color.accentColor.opacity(0.12), in: Circle())
-                .foregroundStyle(Color.accentColor)
-
-            VStack(alignment: .leading, spacing: 5) {
-                Text(title)
-                    .font(.system(size: 13, weight: .semibold))
-                Text(path)
-                    .font(.system(size: 11, weight: .medium))
-                Text(detail)
+            HStack(alignment: .top, spacing: 8) {
+                Image(systemName: "key.fill")
+                    .foregroundStyle(Color.accentColor)
+                Text("API Key 仅保存在这台 Mac 的系统钥匙串中；AI 内容只发送给当前服务商。")
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(16)
+        .frame(width: 360)
+    }
+
+    private func shortcutSection(
+        shortcut: String,
+        detail: String,
+        path: String,
+        button: String,
+        settingsPane: String
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text(shortcut)
+                .font(.system(size: 14, weight: .semibold))
+            Text(detail)
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+            HStack(spacing: 8) {
+                Text(path)
+                    .font(.system(size: 11, weight: .medium))
+                Spacer()
                 Button(button) {
                     guard let url = URL(
                         string: "x-apple.systempreferences:com.apple.preference.security?\(settingsPane)"

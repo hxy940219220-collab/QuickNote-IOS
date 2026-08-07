@@ -31,7 +31,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
         do {
-            let container = try ModelContainer(for: NoteRecord.self)
+            let container = try ModelContainer(for: NoteRecord.self, NoteFolder.self)
             let repository = NoteRepository(context: container.mainContext)
             let appSupport = try FileManager.default.url(
                 for: .applicationSupportDirectory,
@@ -55,6 +55,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let root = RootNoteView(
                 session: session,
                 allNotes: repository.allNotes,
+                allFolders: repository.allFolders,
+                createFolderAction: { name in
+                    _ = try repository.createFolder(named: name)
+                    try repository.save()
+                },
+                renameFolderAction: { folder, name in
+                    try repository.rename(folder, to: name)
+                    try repository.save()
+                },
+                deleteFolderAction: { folder in
+                    try repository.delete(folder)
+                    try repository.save()
+                },
+                moveNoteAction: { note, folder in
+                    repository.move(note, to: folder)
+                    try repository.save()
+                },
                 activateEditor: { coordinator.activateEditor() },
                 drawerVisibilityChanged: { panel.setDrawerOpen($0) },
                 setWindowLocked: { panel.setLocked($0) },
