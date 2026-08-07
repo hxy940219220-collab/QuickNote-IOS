@@ -12,6 +12,7 @@ final class NoteRecord {
     var isPinned: Bool
     var cursorLocation: Int
     var tagsText: String = ""
+    var folderID: UUID? = nil
 
     var tags: [String] {
         get { tagsText.split(separator: "\n").map(String.init) }
@@ -27,5 +28,18 @@ final class NoteRecord {
         updatedAt = now
         isPinned = false
         cursorLocation = 0
+    }
+}
+
+@Model
+final class NoteFolder {
+    @Attribute(.unique) var id: UUID
+    var name: String
+    var createdAt: Date
+
+    init(id: UUID = UUID(), name: String, now: Date = .now) {
+        self.id = id
+        self.name = name
+        createdAt = now
     }
 }
