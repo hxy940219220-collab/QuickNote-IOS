@@ -144,7 +144,8 @@ final class NotePersistenceTests: XCTestCase {
         XCTAssertLessThanOrEqual(image.bounds.width, 328)
         XCTAssertLessThanOrEqual(image.bounds.height, 278.8)
         XCTAssertLessThan(try XCTUnwrap(image.fileWrapper?.regularFileContents).count, originalImageData.count)
-        XCTAssertEqual(attachments[1].bounds.height, 44)
+        XCTAssertEqual(attachments[1].bounds.height, 40)
+        XCTAssertGreaterThanOrEqual(attachments[1].bounds.width, 320)
         XCTAssertFalse(attachments[1].allowsTextAttachmentView)
         XCTAssertTrue(
             try XCTUnwrap(attachments[1].fileWrapper?.preferredFilename)

@@ -642,7 +642,7 @@ final class RichTextEditorController: ObservableObject {
         filename: String,
         maximumWidth: CGFloat
     ) {
-        let size = NSSize(width: min(maximumWidth, 340), height: 44)
+        let size = NSSize(width: min(max(maximumWidth, 320), 420), height: 40)
         let card = NSImage(size: size)
         card.lockFocus()
         let rect = NSRect(origin: .zero, size: size)
@@ -653,20 +653,16 @@ final class RichTextEditorController: ObservableObject {
         border.lineWidth = 1
         border.stroke()
         NSImage(systemSymbolName: "play.circle.fill", accessibilityDescription: "播放")?.draw(
-            in: NSRect(x: 11, y: 9, width: 26, height: 26)
+            in: NSRect(x: 10, y: 7, width: 26, height: 26)
         )
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.lineBreakMode = .byTruncatingMiddle
         (filename as NSString).draw(
-            in: NSRect(x: 47, y: 17, width: size.width - 58, height: 17),
+            in: NSRect(x: 46, y: 11, width: size.width - 58, height: 18),
             withAttributes: [
                 .font: NSFont.systemFont(ofSize: 12, weight: .medium),
                 .foregroundColor: NSColor.labelColor,
-            ]
-        )
-        ("单击播放 · 再次单击停止" as NSString).draw(
-            in: NSRect(x: 47, y: 4, width: size.width - 58, height: 14),
-            withAttributes: [
-                .font: NSFont.systemFont(ofSize: 9),
-                .foregroundColor: NSColor.secondaryLabelColor,
+                .paragraphStyle: paragraph,
             ]
         )
         card.unlockFocus()
