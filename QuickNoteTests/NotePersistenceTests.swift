@@ -219,15 +219,25 @@ final class NotePersistenceTests: XCTestCase {
         let view = try XCTUnwrap(provider?.view)
         let button = try XCTUnwrap(view.descendant(ofType: NSButton.self))
         let slider = try XCTUnwrap(view.descendant(ofType: NSSlider.self))
+        view.layoutSubtreeIfNeeded()
 
         XCTAssertTrue(attachment.allowsTextAttachmentView)
         XCTAssertTrue(attachment.usesTextAttachmentView)
         XCTAssertNil(attachment.attachmentCell)
+        XCTAssertGreaterThanOrEqual(button.frame.width, 34)
+        XCTAssertGreaterThanOrEqual(button.frame.height, 34)
+        XCTAssertTrue(slider.isContinuous)
         XCTAssertEqual(button.toolTip, "播放")
         button.performClick(nil)
         XCTAssertEqual(button.toolTip, "暂停")
         RunLoop.current.run(until: Date().addingTimeInterval(0.15))
         XCTAssertGreaterThan(slider.doubleValue, 0)
+        let seekTarget = slider.maxValue * 0.5
+        slider.doubleValue = seekTarget
+        XCTAssertTrue(slider.sendAction(slider.action, to: slider.target))
+        RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+        XCTAssertGreaterThan(slider.doubleValue, seekTarget)
+        XCTAssertLessThan(slider.doubleValue, seekTarget + 0.4)
         button.performClick(nil)
         XCTAssertEqual(button.toolTip, "播放")
     }

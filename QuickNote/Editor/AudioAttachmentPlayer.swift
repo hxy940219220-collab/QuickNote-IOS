@@ -168,7 +168,7 @@ final class AudioAttachmentPlayerView: NSView {
 
         progressSlider.identifier = NSUserInterfaceItemIdentifier("quicknote.audio.progress")
         progressSlider.controlSize = .small
-        progressSlider.isContinuous = false
+        progressSlider.isContinuous = true
         progressSlider.target = self
         progressSlider.action = #selector(seek)
 
@@ -184,8 +184,8 @@ final class AudioAttachmentPlayerView: NSView {
         NSLayoutConstraint.activate([
             playButton.leadingAnchor.constraint(equalTo: leadingAnchor),
             playButton.centerYAnchor.constraint(equalTo: centerYAnchor),
-            playButton.widthAnchor.constraint(equalToConstant: 28),
-            playButton.heightAnchor.constraint(equalToConstant: 28),
+            playButton.widthAnchor.constraint(equalToConstant: 34),
+            playButton.heightAnchor.constraint(equalToConstant: 34),
             filenameLabel.leadingAnchor.constraint(equalTo: playButton.trailingAnchor, constant: 6),
             filenameLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
             filenameLabel.widthAnchor.constraint(lessThanOrEqualToConstant: 130),
@@ -208,9 +208,12 @@ final class AudioAttachmentPlayerView: NSView {
 
     private func update(isPlaying: Bool, currentTime: TimeInterval, duration: TimeInterval) {
         let action = isPlaying ? "暂停" : "播放"
-        playButton.image = NSImage(
+        let image = NSImage(
             systemSymbolName: isPlaying ? "pause.circle.fill" : "play.circle.fill",
             accessibilityDescription: action
+        )
+        playButton.image = image?.withSymbolConfiguration(
+            NSImage.SymbolConfiguration(pointSize: 20, weight: .medium)
         )
         playButton.toolTip = action
         playButton.setAccessibilityLabel(action)
