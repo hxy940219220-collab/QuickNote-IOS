@@ -169,11 +169,11 @@ struct RootNoteView: View {
     }
 
     private func open(_ note: NoteRecord) {
-        if session.openRecovering(note) { setDrawerOpen(false) }
+        session.openRecovering(note)
     }
 
     private func create() {
-        if session.createAndOpenRecovering() { setDrawerOpen(false) }
+        session.createAndOpenRecovering()
     }
 
     private func togglePin(_ note: NoteRecord) {
