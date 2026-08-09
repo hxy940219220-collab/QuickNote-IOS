@@ -130,23 +130,30 @@ struct NoteDrawerView: View {
     private var libraryList: some View {
         List {
             ForEach(folders) { folder in
-                DisclosureGroup(isExpanded: expansionBinding(for: folder)) {
+                folderRow(folder)
+
+                if expandedFolders.contains(folder.id) {
                     ForEach(notes(in: folder)) { note in
                         noteRow(note)
-                            .padding(.leading, 12)
+                            .padding(.leading, 24)
                     }
-                } label: {
-                    folderRow(folder)
                 }
             }
 
+            if !folders.isEmpty && !unfiledNotes.isEmpty {
+                Divider()
+                    .listRowInsets(EdgeInsets())
+                    .listRowSeparator(.hidden)
+            }
+
             if !unfiledNotes.isEmpty {
-                Section {
-                    ForEach(unfiledNotes) { note in
-                        noteRow(note)
-                    }
-                } header: {
-                    Text("未分类")
+                Text("未分类")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .listRowSeparator(.hidden)
+
+                ForEach(unfiledNotes) { note in
+                    noteRow(note)
                 }
             }
         }
@@ -156,15 +163,30 @@ struct NoteDrawerView: View {
 
     private func folderRow(_ folder: NoteFolder) -> some View {
         HStack(spacing: 6) {
-            Image(systemName: "folder")
-                .foregroundStyle(.secondary)
-            Text(folder.name)
-                .fontWeight(.medium)
-                .lineLimit(1)
-            Spacer()
-            Text("\(notes(in: folder).count)")
-                .font(.caption2)
-                .foregroundStyle(.tertiary)
+            Button {
+                toggleFolder(folder)
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: expandedFolders.contains(folder.id) ? "chevron.down" : "chevron.right")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 10)
+                    Image(systemName: "folder")
+                        .foregroundStyle(.secondary)
+                    Text(folder.name)
+                        .fontWeight(.medium)
+                        .lineLimit(1)
+                    Spacer()
+                    Text("\(notes(in: folder).count)")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
+                .frame(maxWidth: .infinity)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("\(expandedFolders.contains(folder.id) ? "收起" : "展开")文件夹 \(folder.name)")
+
             Menu {
                 Button {
                     editingFolder = folder
@@ -189,6 +211,7 @@ struct NoteDrawerView: View {
             .help("编辑文件夹")
             .accessibilityLabel("编辑文件夹 \(folder.name)")
         }
+        .listRowSeparator(.hidden)
     }
 
     private func noteRow(_ note: NoteRecord) -> some View {
@@ -263,6 +286,7 @@ struct NoteDrawerView: View {
         .listRowBackground(
             note.id == selectedID ? Color.accentColor.opacity(0.1) : Color.clear
         )
+        .listRowSeparator(.hidden)
     }
 
     private var isSearching: Bool {
@@ -286,17 +310,12 @@ struct NoteDrawerView: View {
         notes.filter { $0.folderID == folder.id }
     }
 
-    private func expansionBinding(for folder: NoteFolder) -> Binding<Bool> {
-        Binding(
-            get: { expandedFolders.contains(folder.id) },
-            set: { expanded in
-                if expanded {
-                    expandedFolders.insert(folder.id)
-                } else {
-                    expandedFolders.remove(folder.id)
-                }
-            }
-        )
+    private func toggleFolder(_ folder: NoteFolder) {
+        if expandedFolders.contains(folder.id) {
+            expandedFolders.remove(folder.id)
+        } else {
+            expandedFolders.insert(folder.id)
+        }
     }
 
     private func moveNote(_ note: NoteRecord, to folder: NoteFolder?) {
