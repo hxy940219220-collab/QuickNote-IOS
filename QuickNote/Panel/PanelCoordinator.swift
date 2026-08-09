@@ -46,6 +46,12 @@ final class PanelCoordinator {
         try render(note: note, activate: false)
     }
 
+    func select(note: NoteRecord) throws {
+        dismissTask?.cancel()
+        machine.send(.select(noteID: note.id))
+        try render(note: note, activate: true)
+    }
+
     func activateEditor() {
         dismissTask?.cancel()
         machine.send(.editorActivated)

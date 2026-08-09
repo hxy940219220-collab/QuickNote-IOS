@@ -33,4 +33,15 @@ final class PanelStateMachineTests: XCTestCase {
         machine.send(.hover(noteID: UUID()))
         XCTAssertEqual(machine.state, .editing(editingID))
     }
+
+    func testRailSelectionReplacesTheActiveNoteAndStaysEditing() {
+        let firstID = UUID()
+        let secondID = UUID()
+        var machine = PanelStateMachine()
+        machine.send(.toggleCommand(noteID: firstID))
+
+        machine.send(.select(noteID: secondID))
+
+        XCTAssertEqual(machine.state, .editing(secondID))
+    }
 }

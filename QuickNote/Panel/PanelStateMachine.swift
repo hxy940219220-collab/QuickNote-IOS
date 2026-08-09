@@ -9,6 +9,7 @@ struct PanelStateMachine {
 
     enum Event {
         case toggleCommand(noteID: UUID)
+        case select(noteID: UUID)
         case hover(noteID: UUID)
         case editorActivated
         case pointerExited
@@ -19,6 +20,8 @@ struct PanelStateMachine {
 
     mutating func send(_ event: Event) {
         switch (state, event) {
+        case (_, let .select(id)):
+            state = .editing(id)
         case (_, .dismiss), (.transient, .toggleCommand), (.editing, .toggleCommand):
             state = .hidden
         case (.hidden, let .toggleCommand(id)):
