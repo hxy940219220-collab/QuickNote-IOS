@@ -81,8 +81,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             coordinator = PanelCoordinator(panel: panel, session: session, repository: repository)
 
             let rail = EdgeRailController()
-            rail.onHover = { note in try? coordinator.hover(note: note) }
-            rail.onExit = { coordinator.pointerExited() }
+            rail.onSelect = { note in try? coordinator.select(note: note) }
             rail.start(notes: try repository.recentNotes())
             session.onSaved = { [weak rail] in
                 guard let rail else { return }

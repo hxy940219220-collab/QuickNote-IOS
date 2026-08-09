@@ -2,19 +2,24 @@ import SwiftUI
 
 struct EdgeRailView: View {
     let notes: [NoteRecord]
-    let hover: (NoteRecord) -> Void
-    let exit: () -> Void
+    let preview: (NoteRecord?) -> Void
+    let select: (NoteRecord) -> Void
 
     var body: some View {
-        VStack(spacing: 13) {
+        VStack(spacing: 0) {
             ForEach(notes.prefix(8)) { note in
-                Capsule()
-                    .fill(note.isPinned ? Color.primary : Color.secondary.opacity(0.45))
-                    .frame(width: note.isPinned ? 10 : 8, height: 3)
-                    .help("\(note.title) · \(note.updatedAt.formatted())\n\(note.plainText.prefix(50))")
-                    .onHover { inside in
-                        if inside { hover(note) }
-                    }
+                Button {
+                    select(note)
+                } label: {
+                    Capsule()
+                        .fill(note.isPinned ? Color.primary : Color.secondary.opacity(0.45))
+                        .frame(width: note.isPinned ? 10 : 8, height: 3)
+                        .frame(width: 18, height: 16)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(note.title)
+                .onHover { preview($0 ? note : nil) }
             }
         }
         .padding(.vertical, 14)
@@ -24,8 +29,6 @@ struct EdgeRailView: View {
             in: RoundedRectangle(cornerRadius: 9, style: .continuous)
         )
         .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
-        .onHover { inside in
-            if !inside { exit() }
-        }
+        .onHover { if !$0 { preview(nil) } }
     }
 }

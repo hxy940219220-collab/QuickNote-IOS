@@ -67,6 +67,17 @@ final class NotePanelControllerTests: XCTestCase {
         XCTAssertEqual(railFrame.midY, collapsedFrame.midY)
     }
 
+    func testEdgeRailPreviewFrameStaysBesideRailAndInsideScreen() {
+        let frame = EdgeRailController.previewFrame(
+            beside: NSRect(x: 4, y: 420, width: 18, height: 60),
+            pointerY: 899,
+            contentSize: NSSize(width: 120, height: 26),
+            in: NSRect(x: 0, y: 0, width: 1_440, height: 900)
+        )
+
+        XCTAssertEqual(frame, NSRect(x: 30, y: 874, width: 120, height: 26))
+    }
+
     func testWindowStyleSupportsStandardCloseMinimizeAndZoomButtons() {
         let style = NotePanelController.windowStyleMask
 

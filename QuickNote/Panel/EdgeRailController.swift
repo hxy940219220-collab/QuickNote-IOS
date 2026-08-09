@@ -9,15 +9,18 @@ final class EdgeRailController {
         backing: .buffered,
         defer: false
     )
+    private let previewWindow = NSPanel(
+        contentRect: .zero,
+        styleMask: [.borderless, .nonactivatingPanel],
+        backing: .buffered,
+        defer: false
+    )
     private var globalMouseMonitor: Any?
     private var localMouseMonitor: Any?
-    private var notes: [NoteRecord] = []
     private weak var currentScreen: NSScreen?
-    private var hoverTask: Task<Void, Never>?
     private var contentSize = NSSize(width: 18, height: 31)
 
-    var onHover: ((NoteRecord) -> Void)?
-    var onExit: (() -> Void)?
+    var onSelect: ((NoteRecord) -> Void)?
 
     isolated deinit {
         if let globalMouseMonitor { NSEvent.removeMonitor(globalMouseMonitor) }
@@ -30,6 +33,12 @@ final class EdgeRailController {
         window.isOpaque = false
         window.backgroundColor = .clear
         window.hasShadow = false
+        previewWindow.level = .floating
+        previewWindow.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        previewWindow.isOpaque = false
+        previewWindow.backgroundColor = .clear
+        previewWindow.hasShadow = true
+        previewWindow.ignoresMouseEvents = true
         update(notes: notes)
         reposition()
         window.orderFrontRegardless()
@@ -44,13 +53,12 @@ final class EdgeRailController {
     }
 
     func update(notes: [NoteRecord]) {
-        self.notes = Array(notes.prefix(8))
         let hostingView = NSHostingView(rootView: EdgeRailView(
-            notes: self.notes,
-            hover: { [weak self] in self?.scheduleHover($0) },
-            exit: { [weak self] in
-                self?.hoverTask?.cancel()
-                self?.onExit?()
+            notes: Array(notes.prefix(8)),
+            preview: { [weak self] in self?.setPreview($0) },
+            select: { [weak self] note in
+                self?.setPreview(nil)
+                self?.onSelect?(note)
             }
         ))
         hostingView.wantsLayer = true
@@ -58,15 +66,6 @@ final class EdgeRailController {
         window.contentView = hostingView
         contentSize = hostingView.fittingSize
         reposition(force: true)
-    }
-
-    private func scheduleHover(_ note: NoteRecord) {
-        hoverTask?.cancel()
-        hoverTask = Task { @MainActor [weak self] in
-            try? await Task.sleep(for: .milliseconds(150))
-            guard !Task.isCancelled else { return }
-            self?.onHover?(note)
-        }
     }
 
     private func removeMouseMonitors() {
@@ -85,6 +84,45 @@ final class EdgeRailController {
         )
     }
 
+    static func previewFrame(
+        beside railFrame: NSRect,
+        pointerY: CGFloat,
+        contentSize: NSSize,
+        in visibleFrame: NSRect
+    ) -> NSRect {
+        NSRect(
+            x: min(railFrame.maxX + 8, visibleFrame.maxX - contentSize.width),
+            y: min(
+                max(pointerY - contentSize.height / 2, visibleFrame.minY),
+                visibleFrame.maxY - contentSize.height
+            ),
+            width: contentSize.width,
+            height: contentSize.height
+        )
+    }
+
+    private func setPreview(_ note: NoteRecord?) {
+        guard let note else {
+            previewWindow.orderOut(nil)
+            return
+        }
+        let hostingView = NSHostingView(rootView: EdgeRailTitlePreview(title: note.title))
+        hostingView.wantsLayer = true
+        hostingView.layer?.backgroundColor = NSColor.clear.cgColor
+        previewWindow.contentView = hostingView
+        guard let screen = currentScreen ?? NSScreen.main else { return }
+        previewWindow.setFrame(
+            Self.previewFrame(
+                beside: window.frame,
+                pointerY: NSEvent.mouseLocation.y,
+                contentSize: hostingView.fittingSize,
+                in: screen.visibleFrame
+            ),
+            display: true
+        )
+        previewWindow.orderFrontRegardless()
+    }
+
     private func reposition(force: Bool = false) {
         guard let screen = NSScreen.screens.first(where: {
             NSMouseInRect(NSEvent.mouseLocation, $0.frame, false)
@@ -92,5 +130,27 @@ final class EdgeRailController {
         guard force || screen !== currentScreen else { return }
         currentScreen = screen
         window.setFrame(Self.railFrame(in: screen.visibleFrame, contentSize: contentSize), display: true)
+    }
+}
+
+private struct EdgeRailTitlePreview: View {
+    let title: String
+
+    var body: some View {
+        Text(title)
+            .font(.system(size: 12, weight: .medium))
+            .lineLimit(1)
+            .truncationMode(.tail)
+            .frame(maxWidth: 180, alignment: .leading)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 5)
+            .background(
+                Color(nsColor: .controlBackgroundColor),
+                in: RoundedRectangle(cornerRadius: 6, style: .continuous)
+            )
+            .overlay {
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .stroke(Color(nsColor: .separatorColor), lineWidth: 0.5)
+            }
     }
 }
