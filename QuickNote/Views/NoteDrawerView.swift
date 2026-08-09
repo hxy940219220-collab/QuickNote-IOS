@@ -140,12 +140,6 @@ struct NoteDrawerView: View {
                 }
             }
 
-            if !folders.isEmpty && !unfiledNotes.isEmpty {
-                Divider()
-                    .listRowInsets(EdgeInsets())
-                    .listRowSeparator(.hidden)
-            }
-
             if !unfiledNotes.isEmpty {
                 Text("未分类")
                     .font(.system(size: 12, weight: .medium))
@@ -228,6 +222,7 @@ struct NoteDrawerView: View {
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
 
