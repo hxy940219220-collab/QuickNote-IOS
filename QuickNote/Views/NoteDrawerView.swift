@@ -1,5 +1,9 @@
 import SwiftUI
 
+enum NoteDrawerLayout {
+    static let noteLeadingIndent: CGFloat = 32
+}
+
 struct NoteDrawerView: View {
     let notes: [NoteRecord]
     let folders: [NoteFolder]
@@ -12,6 +16,7 @@ struct NoteDrawerView: View {
     let move: (NoteRecord, NoteFolder?) -> Void
     let togglePin: (NoteRecord) -> Void
     let delete: (NoteRecord) -> Void
+    let theme: NoteTheme
 
     @State private var query = ""
     @State private var expandedFolders = Set<UUID>()
@@ -42,7 +47,7 @@ struct NoteDrawerView: View {
             }
         }
         .padding(10)
-        .background(Color(nsColor: .controlBackgroundColor))
+        .background(Color(nsColor: theme.sidebarBackground))
         .onAppear(perform: expandSelectedFolder)
         .onChange(of: selectedID) { _, _ in expandSelectedFolder() }
         .sheet(isPresented: $creatingFolder) {
@@ -134,7 +139,7 @@ struct NoteDrawerView: View {
 
                 if expandedFolders.contains(folder.id) {
                     ForEach(notes(in: folder)) { note in
-                        noteRow(note, leadingIndent: 32)
+                        noteRow(note)
                     }
                 }
             }
@@ -206,7 +211,7 @@ struct NoteDrawerView: View {
         .listRowSeparator(.hidden)
     }
 
-    private func noteRow(_ note: NoteRecord, leadingIndent: CGFloat = 0) -> some View {
+    private func noteRow(_ note: NoteRecord) -> some View {
         HStack(spacing: 6) {
             Button(action: { select(note) }) {
                 HStack(spacing: 4) {
@@ -219,7 +224,7 @@ struct NoteDrawerView: View {
                             .foregroundStyle(Color.accentColor)
                     }
                 }
-                .padding(.leading, leadingIndent)
+                .padding(.leading, NoteDrawerLayout.noteLeadingIndent)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .contentShape(Rectangle())
             }
@@ -279,7 +284,7 @@ struct NoteDrawerView: View {
         .frame(height: 32)
         .listRowInsets(EdgeInsets(top: 0, leading: 8, bottom: 0, trailing: 8))
         .listRowBackground(
-            note.id == selectedID ? Color.accentColor.opacity(0.1) : Color.clear
+            note.id == selectedID ? Color(nsColor: theme.accentColor).opacity(0.12) : Color.clear
         )
         .listRowSeparator(.hidden)
     }

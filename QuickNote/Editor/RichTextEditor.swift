@@ -942,6 +942,9 @@ struct RichTextEditor: NSViewRepresentable {
     let controller: RichTextEditorController
     let onChange: (NSAttributedString, Int) -> Void
     let onActivate: () -> Void
+    var backgroundColor: NSColor = .textBackgroundColor
+    var textColor: NSColor = .textColor
+    var overridesDocumentTextColor = false
 
     func makeCoordinator() -> Coordinator { Coordinator(owner: self) }
 
@@ -963,6 +966,7 @@ struct RichTextEditor: NSViewRepresentable {
         controller.detectLinks(in: textView)
         textView.setSelectedRange(NSRange(location: clampedCursorLocation, length: 0))
         controller.applyDefaultParagraphSpacing(in: textView)
+        applyTheme(to: scroll, textView: textView)
         context.coordinator.recordAttachmentCount(in: textView)
         DispatchQueue.main.async { [weak textView] in
             guard let textView else { return }
@@ -975,6 +979,7 @@ struct RichTextEditor: NSViewRepresentable {
     func updateNSView(_ scroll: NSScrollView, context: Context) {
         context.coordinator.owner = self
         guard let textView = scroll.documentView as? NSTextView else { return }
+        applyTheme(to: scroll, textView: textView)
         controller.connect(textView)
         if !textView.attributedString().isEqual(to: document) {
             textView.textStorage?.setAttributedString(document)
@@ -988,6 +993,20 @@ struct RichTextEditor: NSViewRepresentable {
         }
         if textView.selectedRange().location != clampedCursorLocation {
             textView.setSelectedRange(NSRange(location: clampedCursorLocation, length: 0))
+        }
+    }
+
+    private func applyTheme(to scroll: NSScrollView, textView: NSTextView) {
+        scroll.drawsBackground = true
+        scroll.backgroundColor = backgroundColor
+        textView.drawsBackground = true
+        textView.backgroundColor = backgroundColor
+        textView.insertionPointColor = textColor
+        guard let layoutManager = textView.layoutManager else { return }
+        let range = NSRange(location: 0, length: textView.textStorage?.length ?? 0)
+        layoutManager.removeTemporaryAttribute(.foregroundColor, forCharacterRange: range)
+        if overridesDocumentTextColor, range.length > 0 {
+            layoutManager.addTemporaryAttribute(.foregroundColor, value: textColor, forCharacterRange: range)
         }
     }
 

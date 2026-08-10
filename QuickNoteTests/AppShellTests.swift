@@ -210,6 +210,19 @@ final class AppShellTests: XCTestCase {
         XCTAssertEqual(SelectionPanelLayout.sourcePreviewMaximumHeight, .infinity)
     }
 
+    func testAllSidebarNotesUseTheSameLeadingIndent() {
+        XCTAssertEqual(NoteDrawerLayout.noteLeadingIndent, 32)
+    }
+
+    func testNoteThemesOfferFiveChoicesAndFallBackToSystem() {
+        XCTAssertEqual(NoteTheme.allCases.map(\.rawValue), [
+            "system", "paper", "sage", "lavender", "midnight", "blue",
+        ])
+        XCTAssertEqual(NoteTheme.resolved(from: "missing"), .system)
+        XCTAssertTrue(NoteTheme.midnight.overridesDocumentTextColor)
+        XCTAssertFalse(NoteTheme.blue.overridesDocumentTextColor)
+    }
+
     func testSelectionSourceFormatterRestoresBulletLineBreaks() {
         let source = "它在产品栈里的位置 • Pydantic AI：负责 Agent Loop • AI Gateway：负责模型入口"
 

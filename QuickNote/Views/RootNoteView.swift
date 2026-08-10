@@ -19,11 +19,13 @@ struct RootNoteView: View {
     @State private var windowLocked = false
     @State private var calendarPresented = false
     @State private var helpPresented = false
+    @State private var themePresented = false
     @State private var formatPresented = false
     @State private var tablePresented = false
     @State private var selectedDate = Date()
     @State private var notes: [NoteRecord] = []
     @State private var folders: [NoteFolder] = []
+    @AppStorage("appearance.noteTheme") private var selectedTheme = NoteTheme.system.rawValue
 
     var body: some View {
         VStack(spacing: 0) {
@@ -54,6 +56,13 @@ struct RootNoteView: View {
                     }
 
                     Spacer(minLength: 8)
+
+                    toolbarButton("便签主题", systemImage: "paintpalette") {
+                        themePresented.toggle()
+                    }
+                    .popover(isPresented: $themePresented, arrowEdge: .top) {
+                        NoteThemePicker(selection: $selectedTheme)
+                    }
 
                     toolbarButton("权限与快捷键帮助", systemImage: "questionmark.circle") {
                         helpPresented.toggle()
@@ -105,7 +114,7 @@ struct RootNoteView: View {
                 .background(Color(nsColor: .controlBackgroundColor), in: Capsule())
             }
             .frame(height: 38)
-            .background(Color(nsColor: .windowBackgroundColor))
+            .background(Color(nsColor: theme.toolbarBackground))
 
             if let error = session.saveError {
                 HStack {
@@ -135,7 +144,8 @@ struct RootNoteView: View {
                         deleteFolder: deleteFolder,
                         move: move,
                         togglePin: togglePin,
-                        delete: delete
+                        delete: delete,
+                        theme: theme
                     )
                     .frame(width: 210)
                     .transition(.move(edge: .leading).combined(with: .opacity))
@@ -149,13 +159,16 @@ struct RootNoteView: View {
                         cursorLocation: session.currentNote?.cursorLocation ?? 0,
                         controller: editorController,
                         onChange: session.update,
-                        onActivate: activateEditor
+                        onActivate: activateEditor,
+                        backgroundColor: theme.editorBackground,
+                        textColor: theme.textColor,
+                        overridesDocumentTextColor: theme.overridesDocumentTextColor
                     )
 
                     if session.document.string.isEmpty {
                         Text("开始记录…")
                             .font(.system(size: 15))
-                            .foregroundStyle(.tertiary)
+                            .foregroundStyle(Color(nsColor: theme.textColor).opacity(0.35))
                             .padding(.leading, 17)
                             .padding(.top, 13)
                             .allowsHitTesting(false)
@@ -163,7 +176,14 @@ struct RootNoteView: View {
                 }
             }
         }
+        .background(Color(nsColor: theme.editorBackground))
+        .tint(Color(nsColor: theme.accentColor))
+        .preferredColorScheme(theme.colorScheme)
         .ignoresSafeArea(.container, edges: .top)
+    }
+
+    private var theme: NoteTheme {
+        NoteTheme.resolved(from: selectedTheme)
     }
 
     private func toggleDrawer() {
@@ -285,6 +305,58 @@ struct RootNoteView: View {
         .buttonStyle(.borderless)
         .help(label)
         .accessibilityLabel(label)
+    }
+}
+
+private struct NoteThemePicker: View {
+    @Binding var selection: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("便签主题")
+                .font(.system(size: 13, weight: .semibold))
+                .padding(.horizontal, 8)
+                .padding(.bottom, 4)
+
+            ForEach(NoteTheme.allCases) { theme in
+                Button {
+                    selection = theme.rawValue
+                } label: {
+                    HStack(spacing: 10) {
+                        HStack(spacing: 0) {
+                            Color(nsColor: theme.sidebarBackground)
+                            Color(nsColor: theme.editorBackground)
+                        }
+                        .frame(width: 24, height: 24)
+                        .clipShape(Circle())
+                        .overlay {
+                            Circle().stroke(Color(nsColor: theme.accentColor).opacity(0.75), lineWidth: 1)
+                        }
+
+                        Text(theme.name)
+                            .foregroundStyle(.primary)
+                        Spacer()
+                        Image(systemName: "checkmark")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(Color(nsColor: theme.accentColor))
+                            .opacity(selection == theme.rawValue ? 1 : 0)
+                    }
+                    .padding(.horizontal, 8)
+                    .frame(height: 34)
+                    .background(
+                        selection == theme.rawValue
+                            ? Color(nsColor: theme.accentColor).opacity(0.12)
+                            : Color.clear,
+                        in: RoundedRectangle(cornerRadius: 7)
+                    )
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("切换到\(theme.name)主题")
+            }
+        }
+        .padding(10)
+        .frame(width: 190)
     }
 }
 
