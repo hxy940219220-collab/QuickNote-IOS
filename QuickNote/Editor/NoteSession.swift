@@ -70,11 +70,16 @@ final class NoteSession: ObservableObject {
     func appendPlainText(_ text: String) throws {
         let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
+        try appendAttributedText(NSAttributedString(string: text))
+    }
+
+    func appendAttributedText(_ text: NSAttributedString) throws {
+        guard !text.string.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         let updated = NSMutableAttributedString(attributedString: document)
         if !updated.string.isEmpty {
             updated.append(NSAttributedString(string: updated.string.hasSuffix("\n") ? "\n" : "\n\n"))
         }
-        updated.append(NSAttributedString(string: text))
+        updated.append(text)
         update(document: updated, cursorLocation: updated.length)
         try flush()
     }

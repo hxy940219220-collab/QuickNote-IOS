@@ -1,3 +1,4 @@
+import AppKit
 import Carbon
 import XCTest
 @testable import QuickNote
@@ -151,6 +152,19 @@ final class AppShellTests: XCTestCase {
         XCTAssertFalse(result.contains("```"))
         XCTAssertTrue(result.contains("测试用例"))
         XCTAssertTrue(result.contains("let passed = true"))
+    }
+
+    func testSelectionResultFormatterCreatesRichTextForImport() throws {
+        let result = SelectionResultFormatter.richText(
+            from: "# Agent 框架\n\n**Open Stack（开放栈）**：说明"
+        )
+
+        XCTAssertEqual(result.string, "Agent 框架\n\nOpen Stack（开放栈）：说明")
+        let heading = try XCTUnwrap(result.attribute(.font, at: 0, effectiveRange: nil) as? NSFont)
+        let boldLocation = (result.string as NSString).range(of: "Open Stack").location
+        let bold = try XCTUnwrap(result.attribute(.font, at: boldLocation, effectiveRange: nil) as? NSFont)
+        XCTAssertGreaterThan(heading.pointSize, 15)
+        XCTAssertTrue(bold.fontDescriptor.symbolicTraits.contains(.bold))
     }
 
     func testConfiguredDoubleCommandIntervalAllowsAComfortableDoubleTap() {

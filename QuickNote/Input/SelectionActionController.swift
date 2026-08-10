@@ -38,9 +38,13 @@ final class SelectionActionController {
         panel.makeKeyAndOrderFront(nil)
     }
 
-    private func append(_ text: String, kind: SelectionImportKind) {
+    private func append(_ text: String, kind: SelectionImportKind, formatted: Bool = false) {
         do {
-            try session.appendPlainText(text)
+            if formatted {
+                try session.appendAttributedText(SelectionResultFormatter.richText(from: text))
+            } else {
+                try session.appendPlainText(text)
+            }
             state.importedKind = kind
             state.notice = ""
         } catch {
@@ -117,8 +121,9 @@ final class SelectionActionController {
                 perform: { [weak self] action in self?.run(action) },
                 importResult: { [weak self] in
                     self?.append(
-                        SelectionResultFormatter.plainText(from: self?.state.result ?? ""),
-                        kind: .result
+                        self?.state.result ?? "",
+                        kind: .result,
+                        formatted: true
                     )
                 },
                 settings: showSettings,
@@ -184,6 +189,47 @@ enum SelectionResultFormatter {
 
     static func plainText(from text: String) -> String {
         String(attributedText(from: text).characters)
+    }
+
+    static func richText(from text: String) -> NSAttributedString {
+        let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let result = NSMutableAttributedString()
+        var options = AttributedString.MarkdownParsingOptions(interpretedSyntax: .inlineOnlyPreservingWhitespace)
+        options.failurePolicy = .returnPartiallyParsedIfPossible
+        let lines = text.components(separatedBy: "\n")
+
+        for (index, originalLine) in lines.enumerated() {
+            let (line, baseFont) = richTextLine(originalLine)
+            let parsed = (try? AttributedString(markdown: line, options: options)) ?? AttributedString(line)
+            for run in parsed.runs {
+                let intent = run.inlinePresentationIntent
+                var font = intent?.contains(.code) == true ? EditorTextStyle.monospaced.font : baseFont
+                var traits = font.fontDescriptor.symbolicTraits
+                if intent?.contains(.stronglyEmphasized) == true { traits.insert(.bold) }
+                if intent?.contains(.emphasized) == true { traits.insert(.italic) }
+                font = NSFont(descriptor: font.fontDescriptor.withSymbolicTraits(traits), size: font.pointSize) ?? font
+
+                var attributes: [NSAttributedString.Key: Any] = [.font: font]
+                if intent?.contains(.strikethrough) == true {
+                    attributes[.strikethroughStyle] = NSUnderlineStyle.single.rawValue
+                }
+                if let link = run.link { attributes[.link] = link }
+                result.append(NSAttributedString(string: String(parsed[run.range].characters), attributes: attributes))
+            }
+            if index < lines.count - 1 {
+                result.append(NSAttributedString(string: "\n", attributes: [.font: EditorTextStyle.body.font]))
+            }
+        }
+        return result
+    }
+
+    private static func richTextLine(_ line: String) -> (String, NSFont) {
+        let marks = line.prefix { $0 == "#" }
+        guard (1...6).contains(marks.count), line.dropFirst(marks.count).first == " " else {
+            return (line, EditorTextStyle.body.font)
+        }
+        let font = marks.count == 1 ? EditorTextStyle.heading.font : EditorTextStyle.subheading.font
+        return (String(line.dropFirst(marks.count + 1)), font)
     }
 
     static func pronunciationKind(for line: String) -> PronunciationKind? {
