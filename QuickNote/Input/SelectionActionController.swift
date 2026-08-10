@@ -41,7 +41,10 @@ final class SelectionActionController {
     private func append(_ text: String, kind: SelectionImportKind, formatted: Bool = false) {
         do {
             if formatted {
-                try session.appendAttributedText(SelectionResultFormatter.richText(from: text))
+                try session.appendAttributedText(SelectionResultFormatter.richText(
+                    from: text,
+                    asDocumentStart: session.document.string.isEmpty
+                ))
             } else {
                 try session.appendPlainText(text)
             }
@@ -203,30 +206,50 @@ enum SelectionResultFormatter {
         String(attributedText(from: text).characters)
     }
 
-    static func richText(from text: String) -> NSAttributedString {
+    static func richText(from text: String, asDocumentStart: Bool = true) -> NSAttributedString {
         let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
         let result = NSMutableAttributedString()
         var options = AttributedString.MarkdownParsingOptions(interpretedSyntax: .inlineOnlyPreservingWhitespace)
         options.failurePolicy = .returnPartiallyParsedIfPossible
         let lines = text.components(separatedBy: "\n")
+        let firstContentIndex = lines.firstIndex {
+            !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
 
         for (index, originalLine) in lines.enumerated() {
-            let (line, baseFont) = richTextLine(originalLine)
+            let (line, baseFont, forceBold, bulletLevel, boldPrefixLength) = richTextLine(
+                originalLine,
+                isDocumentTitle: asDocumentStart && index == firstContentIndex
+            )
+            let lineStart = result.length
             let parsed = (try? AttributedString(markdown: line, options: options)) ?? AttributedString(line)
             for run in parsed.runs {
                 let intent = run.inlinePresentationIntent
                 var font = intent?.contains(.code) == true ? EditorTextStyle.monospaced.font : baseFont
                 var traits = font.fontDescriptor.symbolicTraits
-                if intent?.contains(.stronglyEmphasized) == true { traits.insert(.bold) }
+                if forceBold || intent?.contains(.stronglyEmphasized) == true { traits.insert(.bold) }
                 if intent?.contains(.emphasized) == true { traits.insert(.italic) }
                 font = NSFont(descriptor: font.fontDescriptor.withSymbolicTraits(traits), size: font.pointSize) ?? font
 
                 var attributes: [NSAttributedString.Key: Any] = [.font: font]
+                if bulletLevel > 0 {
+                    let style = NSMutableParagraphStyle()
+                    style.firstLineHeadIndent = bulletLevel == 1 ? 0 : 18
+                    style.headIndent = bulletLevel == 1 ? 18 : 36
+                    attributes[.paragraphStyle] = style
+                }
                 if intent?.contains(.strikethrough) == true {
                     attributes[.strikethroughStyle] = NSUnderlineStyle.single.rawValue
                 }
                 if let link = run.link { attributes[.link] = link }
                 result.append(NSAttributedString(string: String(parsed[run.range].characters), attributes: attributes))
+            }
+            if boldPrefixLength > 0 {
+                result.addAttribute(
+                    .font,
+                    value: NSFont.systemFont(ofSize: EditorTextStyle.body.font.pointSize, weight: .bold),
+                    range: NSRange(location: lineStart, length: boldPrefixLength)
+                )
             }
             if index < lines.count - 1 {
                 result.append(NSAttributedString(string: "\n", attributes: [.font: EditorTextStyle.body.font]))
@@ -235,13 +258,54 @@ enum SelectionResultFormatter {
         return result
     }
 
-    private static func richTextLine(_ line: String) -> (String, NSFont) {
-        let marks = line.prefix { $0 == "#" }
-        guard (1...6).contains(marks.count), line.dropFirst(marks.count).first == " " else {
-            return (line, EditorTextStyle.body.font)
+    private static func richTextLine(
+        _ line: String,
+        isDocumentTitle: Bool
+    ) -> (String, NSFont, Bool, Int, Int) {
+        let trimmed = line.trimmingCharacters(in: .whitespaces)
+        let marks = trimmed.prefix { $0 == "#" }
+        let content = (1...6).contains(marks.count) && trimmed.dropFirst(marks.count).first == " "
+            ? String(trimmed.dropFirst(marks.count + 1))
+            : trimmed
+
+        if isDocumentTitle {
+            return (content, EditorTextStyle.title.font, true, 0, 0)
         }
-        let font = marks.count == 1 ? EditorTextStyle.heading.font : EditorTextStyle.subheading.font
-        return (String(line.dropFirst(marks.count + 1)), font)
+        if !marks.isEmpty {
+            return (content, EditorTextStyle.body.font, true, 0, 0)
+        }
+        if numberedSection(content) {
+            return (content, EditorTextStyle.body.font, true, 0, 0)
+        }
+
+        let indentation = line.prefix { $0 == " " || $0 == "\t" }.reduce(0) {
+            $0 + ($1 == "\t" ? 4 : 1)
+        }
+        guard content.hasPrefix("- ") else {
+            return (line, EditorTextStyle.body.font, false, 0, 0)
+        }
+        let item = String(content.dropFirst(2))
+        if indentation == 0, let (label, length) = boldLabel(item) {
+            return (label, EditorTextStyle.body.font, false, 0, length)
+        }
+        let level = indentation >= 4 ? 2 : 1
+        return ("\(level == 1 ? "•" : "◦") \(item)", EditorTextStyle.body.font, false, level, 0)
+    }
+
+    private static func numberedSection(_ line: String) -> Bool {
+        guard let dot = line.firstIndex(of: "."),
+              !line[..<dot].isEmpty,
+              line[..<dot].allSatisfy(\.isNumber) else { return false }
+        return line.index(after: dot) < line.endIndex && line[line.index(after: dot)] == " "
+    }
+
+    private static func boldLabel(_ line: String) -> (String, Int)? {
+        guard let colon = line.firstIndex(where: { $0 == "：" || $0 == ":" }),
+              line.distance(from: line.startIndex, to: colon) <= 12 else { return nil }
+        let end = line.index(after: colon)
+        let label = String(line[..<end])
+        let detail = line[end...].trimmingCharacters(in: .whitespaces)
+        return (label + detail, (label as NSString).length)
     }
 
     static func pronunciationKind(for line: String) -> PronunciationKind? {

@@ -226,17 +226,49 @@ final class AppShellTests: XCTestCase {
         XCTAssertTrue(result.contains("let passed = true"))
     }
 
-    func testSelectionResultFormatterCreatesRichTextForImport() throws {
+    func testSelectionResultFormatterUsesOneBodySizeAfterTheTitle() throws {
         let result = SelectionResultFormatter.richText(
-            from: "# Agent 框架\n\n**Open Stack（开放栈）**：说明"
+            from: "# Agent 框架\n## 背景\n1. Pydantic AI\n**Open Stack（开放栈）**：说明",
+            asDocumentStart: true
         )
 
-        XCTAssertEqual(result.string, "Agent 框架\n\nOpen Stack（开放栈）：说明")
-        let heading = try XCTUnwrap(result.attribute(.font, at: 0, effectiveRange: nil) as? NSFont)
+        XCTAssertEqual(result.string, "Agent 框架\n背景\n1. Pydantic AI\nOpen Stack（开放栈）：说明")
+        let title = try XCTUnwrap(result.attribute(.font, at: 0, effectiveRange: nil) as? NSFont)
+        XCTAssertEqual(title.pointSize, 26)
+        for text in ["背景", "1. Pydantic AI", "Open Stack"] {
+            let location = (result.string as NSString).range(of: text).location
+            let font = try XCTUnwrap(result.attribute(.font, at: location, effectiveRange: nil) as? NSFont)
+            XCTAssertEqual(font.pointSize, 15, text)
+        }
         let boldLocation = (result.string as NSString).range(of: "Open Stack").location
         let bold = try XCTUnwrap(result.attribute(.font, at: boldLocation, effectiveRange: nil) as? NSFont)
-        XCTAssertGreaterThan(heading.pointSize, 15)
         XCTAssertTrue(bold.fontDescriptor.symbolicTraits.contains(.bold))
+    }
+
+    func testSelectionResultFormatterDoesNotAddAnotherLargeTitleMidNote() throws {
+        let result = SelectionResultFormatter.richText(
+            from: "# 补充内容\n正文",
+            asDocumentStart: false
+        )
+
+        for location in [0, (result.string as NSString).range(of: "正文").location] {
+            let font = try XCTUnwrap(result.attribute(.font, at: location, effectiveRange: nil) as? NSFont)
+            XCTAssertEqual(font.pointSize, 15)
+        }
+    }
+
+    func testSelectionResultFormatterReplacesDashHierarchyWithLabelsAndBullets() throws {
+        let result = SelectionResultFormatter.richText(
+            from: "- 含义：用于构建 Agent\n- 关键术语：\n  - Agent Loop：主循环\n    - 子步骤",
+            asDocumentStart: false
+        )
+
+        XCTAssertEqual(
+            result.string,
+            "含义：用于构建 Agent\n关键术语：\n• Agent Loop：主循环\n◦ 子步骤"
+        )
+        let labelFont = try XCTUnwrap(result.attribute(.font, at: 0, effectiveRange: nil) as? NSFont)
+        XCTAssertTrue(labelFont.fontDescriptor.symbolicTraits.contains(.bold))
     }
 
     func testConfiguredDoubleCommandIntervalAllowsAComfortableDoubleTap() {
