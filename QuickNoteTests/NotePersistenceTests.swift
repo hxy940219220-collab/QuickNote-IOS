@@ -611,7 +611,7 @@ final class NotePersistenceTests: XCTestCase {
         XCTAssertNil(document.attribute(.backgroundColor, at: 0, effectiveRange: nil))
     }
 
-    func testEditorAppliesComfortableDefaultParagraphSpacing() throws {
+    func testEditorAppliesComfortableDefaultTextSpacing() throws {
         let document = NSAttributedString(string: "第一行\n第二行")
         let editor = RichTextEditor(
             document: document,
@@ -631,6 +631,7 @@ final class NotePersistenceTests: XCTestCase {
         ) as? NSParagraphStyle
 
         XCTAssertGreaterThan(style?.paragraphSpacing ?? 0, 0)
+        XCTAssertEqual(style?.lineSpacing, 1)
     }
 
     func testTableInsertionPlacesCaretInVisibleParagraphBelowTable() throws {

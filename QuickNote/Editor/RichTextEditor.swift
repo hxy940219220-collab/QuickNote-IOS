@@ -341,13 +341,14 @@ final class RichTextEditorController: ObservableObject {
 
     func applyDefaultParagraphSpacing(in textView: NSTextView) {
         guard let storage = textView.textStorage else { return }
-        let spacing: CGFloat = 4
         let fullRange = NSRange(location: 0, length: storage.length)
         enumerateParagraphs(in: fullRange, text: storage.string) { range in
             let style = (storage.attribute(.paragraphStyle, at: range.location, effectiveRange: nil)
                 as? NSParagraphStyle)?.mutableCopy() as? NSMutableParagraphStyle ?? NSMutableParagraphStyle()
-            guard style.textBlocks.isEmpty, style.paragraphSpacing == 0 else { return }
-            style.paragraphSpacing = spacing
+            guard style.textBlocks.isEmpty,
+                  style.lineSpacing == 0 || style.paragraphSpacing == 0 else { return }
+            if style.lineSpacing == 0 { style.lineSpacing = 1 }
+            if style.paragraphSpacing == 0 { style.paragraphSpacing = 4 }
             storage.addAttribute(.paragraphStyle, value: style, range: range)
         }
         let cursor = textView.selectedRange().location
@@ -355,8 +356,9 @@ final class RichTextEditorController: ObservableObject {
             ? storage.attribute(.paragraphStyle, at: cursor, effectiveRange: nil) as? NSParagraphStyle
             : textView.typingAttributes[.paragraphStyle] as? NSParagraphStyle)?
             .mutableCopy() as? NSMutableParagraphStyle ?? NSMutableParagraphStyle()
-        if style.textBlocks.isEmpty, style.paragraphSpacing == 0 {
-            style.paragraphSpacing = spacing
+        if style.textBlocks.isEmpty {
+            if style.lineSpacing == 0 { style.lineSpacing = 1 }
+            if style.paragraphSpacing == 0 { style.paragraphSpacing = 4 }
         }
         textView.typingAttributes[.paragraphStyle] = style
     }
