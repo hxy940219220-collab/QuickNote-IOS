@@ -206,6 +206,10 @@ final class AppShellTests: XCTestCase {
         XCTAssertEqual(long, 390)
     }
 
+    func testSelectionSourcePreviewRemainsResizableWhenResultIsVisible() {
+        XCTAssertEqual(SelectionPanelLayout.sourcePreviewMaximumHeight, .infinity)
+    }
+
     func testSelectionSourceFormatterRestoresBulletLineBreaks() {
         let source = "它在产品栈里的位置 • Pydantic AI：负责 Agent Loop • AI Gateway：负责模型入口"
 

@@ -156,6 +156,8 @@ final class SelectionActionController {
 }
 
 enum SelectionPanelLayout {
+    static let sourcePreviewMaximumHeight: CGFloat = .infinity
+
     static func resultHeight(for text: String) -> CGFloat {
         let bounds = (text as NSString).boundingRect(
             with: NSSize(width: 470, height: CGFloat.greatestFiniteMagnitude),
@@ -416,7 +418,7 @@ private struct SelectionActionView: View {
     }
 
     private var sourcePreview: some View {
-        ScrollView {
+        ScrollView(.vertical, showsIndicators: true) {
             Text(state.source.isEmpty ? state.notice : state.source)
                 .font(.system(size: 13))
                 .foregroundStyle(state.source.isEmpty ? .secondary : .primary)
@@ -425,10 +427,11 @@ private struct SelectionActionView: View {
                 .padding(.horizontal, 11)
                 .padding(.vertical, 9)
         }
+        .scrollIndicators(.visible)
         .frame(
             maxWidth: .infinity,
             minHeight: 48,
-            maxHeight: state.result.isEmpty && !state.isLoading ? .infinity : 82,
+            maxHeight: SelectionPanelLayout.sourcePreviewMaximumHeight,
             alignment: .topLeading
         )
         .layoutPriority(state.result.isEmpty && !state.isLoading ? 1 : 0)
