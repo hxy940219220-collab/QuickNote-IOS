@@ -134,7 +134,7 @@ struct NoteDrawerView: View {
 
                 if expandedFolders.contains(folder.id) {
                     ForEach(notes(in: folder)) { note in
-                        noteRow(note)
+                        noteRow(note, leadingIndent: 32)
                     }
                 }
             }
@@ -161,10 +161,6 @@ struct NoteDrawerView: View {
                 toggleFolder(folder)
             } label: {
                 HStack(spacing: 6) {
-                    Image(systemName: expandedFolders.contains(folder.id) ? "chevron.down" : "chevron.right")
-                        .font(.caption2.weight(.semibold))
-                        .foregroundStyle(.secondary)
-                        .frame(width: 10)
                     Image(systemName: "folder")
                         .foregroundStyle(.secondary)
                     Text(folder.name)
@@ -206,11 +202,11 @@ struct NoteDrawerView: View {
             .accessibilityLabel("编辑文件夹 \(folder.name)")
         }
         .frame(height: 40)
-        .listRowInsets(EdgeInsets(top: 0, leading: 8, bottom: 0, trailing: 8))
+        .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 8))
         .listRowSeparator(.hidden)
     }
 
-    private func noteRow(_ note: NoteRecord) -> some View {
+    private func noteRow(_ note: NoteRecord, leadingIndent: CGFloat = 0) -> some View {
         HStack(spacing: 6) {
             Button(action: { select(note) }) {
                 HStack(spacing: 4) {
@@ -223,6 +219,7 @@ struct NoteDrawerView: View {
                             .foregroundStyle(Color.accentColor)
                     }
                 }
+                .padding(.leading, leadingIndent)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .contentShape(Rectangle())
             }
@@ -279,7 +276,7 @@ struct NoteDrawerView: View {
             .help("编辑便签")
             .accessibilityLabel("编辑便签")
         }
-        .frame(height: 40)
+        .frame(height: 32)
         .listRowInsets(EdgeInsets(top: 0, leading: 8, bottom: 0, trailing: 8))
         .listRowBackground(
             note.id == selectedID ? Color.accentColor.opacity(0.1) : Color.clear
