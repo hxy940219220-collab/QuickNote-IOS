@@ -96,6 +96,36 @@ final class NotePersistenceTests: XCTestCase {
         XCTAssertEqual(document.attachmentCount, 1)
     }
 
+    func testNewNoteStartsWithTitleAndReturnContinuesInBodyStyle() throws {
+        let controller = RichTextEditorController()
+        var document = NSAttributedString(string: "")
+        let host = NSHostingView(rootView: RichTextEditor(
+            document: document,
+            cursorLocation: 0,
+            controller: controller,
+            onChange: { updated, _ in document = updated },
+            onActivate: {}
+        ))
+        host.frame = NSRect(x: 0, y: 0, width: 320, height: 240)
+        host.layoutSubtreeIfNeeded()
+        let textView = try XCTUnwrap(host.descendant(ofType: NSTextView.self))
+
+        XCTAssertEqual((textView.typingAttributes[.font] as? NSFont)?.pointSize, 26)
+        textView.insertText("标题", replacementRange: textView.selectedRange())
+        textView.doCommand(by: #selector(NSResponder.insertNewline(_:)))
+        textView.insertText("正文", replacementRange: textView.selectedRange())
+
+        let titleFont = try XCTUnwrap(document.attribute(.font, at: 0, effectiveRange: nil) as? NSFont)
+        let bodyLocation = (document.string as NSString).range(of: "正文").location
+        let bodyFont = try XCTUnwrap(
+            document.attribute(.font, at: bodyLocation, effectiveRange: nil) as? NSFont
+        )
+        XCTAssertEqual(titleFont.pointSize, 26)
+        XCTAssertTrue(NSFontManager.shared.traits(of: titleFont).contains(.boldFontMask))
+        XCTAssertEqual(bodyFont.pointSize, 13)
+        XCTAssertFalse(NSFontManager.shared.traits(of: bodyFont).contains(.boldFontMask))
+    }
+
     func testInsertedImagesScaleDownAndOtherFilesUseCompactCards() throws {
         let controller = RichTextEditorController()
         var document = NSAttributedString(string: "")
@@ -210,11 +240,13 @@ final class NotePersistenceTests: XCTestCase {
         let attachment = try XCTUnwrap(
             document.attribute(.attachment, at: 0, effectiveRange: nil) as? NSTextAttachment
         )
-        let layoutManager = try XCTUnwrap(textView.textLayoutManager)
+        let contentStorage = NSTextContentStorage()
+        let layoutManager = NSTextLayoutManager()
+        contentStorage.addTextLayoutManager(layoutManager)
         let provider = attachment.viewProvider(
             for: textView,
-            location: layoutManager.documentRange.location,
-            textContainer: textView.textContainer
+            location: contentStorage.documentRange.location,
+            textContainer: nil
         )
         let view = try XCTUnwrap(provider?.view)
         let button = try XCTUnwrap(view.descendant(ofType: NSButton.self))
@@ -240,6 +272,36 @@ final class NotePersistenceTests: XCTestCase {
         XCTAssertLessThan(slider.doubleValue, seekTarget + 0.4)
         button.performClick(nil)
         XCTAssertEqual(button.toolTip, "播放")
+    }
+
+    func testDeletingPlayingAudioAttachmentStopsPlayback() throws {
+        let controller = RichTextEditorController()
+        var document = NSAttributedString(string: "")
+        let host = NSHostingView(rootView: RichTextEditor(
+            document: document,
+            cursorLocation: 0,
+            controller: controller,
+            onChange: { updated, _ in document = updated },
+            onActivate: {}
+        ))
+        host.frame = NSRect(x: 0, y: 0, width: 360, height: 240)
+        host.layoutSubtreeIfNeeded()
+        let textView = try XCTUnwrap(host.descendant(ofType: NSTextView.self))
+
+        try controller.insertFiles([URL(fileURLWithPath: "/System/Library/Sounds/Glass.aiff")])
+        let attachment = try XCTUnwrap(
+            document.attribute(.attachment, at: 0, effectiveRange: nil) as? AudioTextAttachment
+        )
+        var isPlaying = false
+        attachment.playback.onUpdate = { playing, _, _ in isPlaying = playing }
+
+        attachment.playback.toggle()
+        XCTAssertTrue(isPlaying)
+        textView.setSelectedRange(NSRange(location: 0, length: 1))
+        textView.deleteBackward(nil)
+
+        XCTAssertEqual(document.attachmentCount, 0)
+        XCTAssertFalse(isPlaying)
     }
 
     func testPastedImageIsScaledToEditorAndUsesClickableCell() throws {

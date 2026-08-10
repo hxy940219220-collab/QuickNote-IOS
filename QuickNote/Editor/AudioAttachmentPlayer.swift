@@ -109,6 +109,13 @@ final class AudioPlaybackController: NSObject, AVAudioPlayerDelegate, @unchecked
         emitUpdate()
     }
 
+    func stop() {
+        player?.stop()
+        player?.currentTime = 0
+        stopProgressTimer()
+        emitUpdate()
+    }
+
     func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
         player.currentTime = 0
         stopProgressTimer()

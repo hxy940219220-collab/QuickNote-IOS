@@ -167,6 +167,38 @@ final class RichTextEditorController: ObservableObject {
         }
     }
 
+    func prepareTitleForEmptyDocument(in textView: NSTextView) {
+        guard textView.textStorage?.length == 0 else { return }
+        textView.typingAttributes[.font] = EditorTextStyle.title.font
+    }
+
+    @discardableResult
+    func insertBodyParagraphAfterTitle() -> Bool {
+        guard let textView, let storage = textView.textStorage else { return false }
+        let selection = textView.selectedRange()
+        guard selection.length == 0,
+              (storage.string as NSString).paragraphRange(for: selection).location == 0 else {
+            return false
+        }
+        registerUndoSnapshot(in: textView)
+        storage.replaceCharacters(
+            in: selection,
+            with: NSAttributedString(string: "\n", attributes: textView.typingAttributes)
+        )
+        commit(textView, preserving: NSRange(location: selection.location + 1, length: 0))
+        textView.typingAttributes[.font] = EditorTextStyle.body.font
+        return true
+    }
+
+    func stopAudioAttachments(in textView: NSTextView, range: NSRange? = nil) {
+        guard let storage = textView.textStorage else { return }
+        let target = range ?? NSRange(location: 0, length: storage.length)
+        guard target.length > 0 else { return }
+        storage.enumerateAttribute(.attachment, in: target) { value, _, _ in
+            (value as? AudioTextAttachment)?.playback.stop()
+        }
+    }
+
     func applyTextColor(_ color: NSColor) {
         guard let textView else { return }
         let range = textView.selectedRange()
@@ -929,6 +961,7 @@ final class RichTextEditorController: ObservableObject {
         textView.undoManager?.registerUndo(withTarget: self) { [weak textView] controller in
             guard let textView else { return }
             controller.registerUndoSnapshot(in: textView)
+            controller.stopAudioAttachments(in: textView)
             textView.textStorage?.setAttributedString(document)
             controller.commit(textView, preserving: selection)
             textView.typingAttributes = typingAttributes
@@ -969,6 +1002,7 @@ struct RichTextEditor: NSViewRepresentable {
         textView.setSelectedRange(NSRange(location: clampedCursorLocation, length: 0))
         controller.applyDefaultParagraphSpacing(in: textView)
         applyTheme(to: scroll, textView: textView)
+        controller.prepareTitleForEmptyDocument(in: textView)
         context.coordinator.recordAttachmentCount(in: textView)
         DispatchQueue.main.async { [weak textView] in
             guard let textView else { return }
@@ -984,14 +1018,17 @@ struct RichTextEditor: NSViewRepresentable {
         applyTheme(to: scroll, textView: textView)
         controller.connect(textView)
         if !textView.attributedString().isEqual(to: document) {
+            controller.stopAudioAttachments(in: textView)
             textView.textStorage?.setAttributedString(document)
             controller.prepareChecklistAttachments(in: textView)
             controller.prepareFileAttachments(in: textView)
             controller.detectLinks(in: textView)
             controller.applyDefaultParagraphSpacing(in: textView)
+            controller.prepareTitleForEmptyDocument(in: textView)
             context.coordinator.recordAttachmentCount(in: textView)
         } else {
             controller.prepareFileAttachments(in: textView, force: false)
+            controller.prepareTitleForEmptyDocument(in: textView)
         }
         if textView.selectedRange().location != clampedCursorLocation {
             textView.setSelectedRange(NSRange(location: clampedCursorLocation, length: 0))
@@ -1036,8 +1073,18 @@ struct RichTextEditor: NSViewRepresentable {
                 owner.controller.prepareFileAttachments(in: textView)
                 if insertedAttachment { moveCaretOutsideAttachment(in: textView) }
             }
+            owner.controller.prepareTitleForEmptyDocument(in: textView)
             owner.controller.refreshUndoAvailability()
             owner.onChange(textView.attributedString(), textView.selectedRange().location)
+        }
+
+        func textView(
+            _ textView: NSTextView,
+            shouldChangeTextIn affectedCharRange: NSRange,
+            replacementString: String?
+        ) -> Bool {
+            owner.controller.stopAudioAttachments(in: textView, range: affectedCharRange)
+            return true
         }
 
         private func moveCaretOutsideAttachment(in textView: NSTextView) {
@@ -1074,6 +1121,7 @@ struct RichTextEditor: NSViewRepresentable {
         func textView(_ textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
             guard commandSelector == #selector(NSResponder.insertNewline(_:)) else { return false }
             return owner.controller.continueListAfterNewline()
+                || owner.controller.insertBodyParagraphAfterTitle()
         }
 
         func toggleChecklist(at location: Int) -> Bool {
