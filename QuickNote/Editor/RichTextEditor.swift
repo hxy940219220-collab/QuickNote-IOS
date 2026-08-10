@@ -111,8 +111,8 @@ enum EditorTextStyle: String, CaseIterable, Identifiable {
         case .title: .systemFont(ofSize: 26, weight: .bold)
         case .heading: .systemFont(ofSize: 20, weight: .bold)
         case .subheading: .systemFont(ofSize: 17, weight: .semibold)
-        case .body: .systemFont(ofSize: 15)
-        case .monospaced: .monospacedSystemFont(ofSize: 15, weight: .regular)
+        case .body: .systemFont(ofSize: 13)
+        case .monospaced: .monospacedSystemFont(ofSize: 13, weight: .regular)
         }
     }
 }
@@ -461,7 +461,7 @@ final class RichTextEditorController: ObservableObject {
                 paragraph.textBlocks = [block]
                 content.append(NSAttributedString(
                     string: " \n",
-                    attributes: [.font: NSFont.systemFont(ofSize: 15), .paragraphStyle: paragraph]
+                    attributes: [.font: EditorTextStyle.body.font, .paragraphStyle: paragraph]
                 ))
             }
         }
@@ -469,7 +469,7 @@ final class RichTextEditorController: ObservableObject {
         bodyParagraph.paragraphSpacingBefore = 2
         content.append(NSAttributedString(
             string: " \n",
-            attributes: [.font: NSFont.systemFont(ofSize: 15), .paragraphStyle: bodyParagraph]
+            attributes: [.font: EditorTextStyle.body.font, .paragraphStyle: bodyParagraph]
         ))
         replaceSelection(
             with: content,
@@ -793,7 +793,7 @@ final class RichTextEditorController: ObservableObject {
         }
         var runs: [(NSFont, NSRange)] = []
         storage.enumerateAttribute(.font, in: range) { value, run, _ in
-            runs.append((value as? NSFont ?? textView.font ?? .systemFont(ofSize: 15), run))
+            runs.append((value as? NSFont ?? textView.font ?? EditorTextStyle.body.font, run))
         }
         registerUndoSnapshot(in: textView)
         for (font, run) in runs {
@@ -830,7 +830,7 @@ final class RichTextEditorController: ObservableObject {
         attribute(.font, at: location, in: textView) as? NSFont
             ?? textView.typingAttributes[.font] as? NSFont
             ?? textView.font
-            ?? .systemFont(ofSize: 15)
+            ?? EditorTextStyle.body.font
     }
 
     private func checklistMarker(checked: Bool) -> NSAttributedString {
@@ -956,7 +956,7 @@ struct RichTextEditor: NSViewRepresentable {
         textView.allowsUndo = true
         textView.isAutomaticTextCompletionEnabled = false
         textView.isAutomaticLinkDetectionEnabled = true
-        textView.font = .systemFont(ofSize: 15)
+        textView.font = EditorTextStyle.body.font
         textView.textContainerInset = NSSize(width: 12, height: 12)
         textView.delegate = context.coordinator
         controller.connect(textView)

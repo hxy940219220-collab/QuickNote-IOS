@@ -256,7 +256,7 @@ final class AppShellTests: XCTestCase {
         for text in ["背景", "1. Pydantic AI", "Open Stack"] {
             let location = (result.string as NSString).range(of: text).location
             let font = try XCTUnwrap(result.attribute(.font, at: location, effectiveRange: nil) as? NSFont)
-            XCTAssertEqual(font.pointSize, 15, text)
+            XCTAssertEqual(font.pointSize, 13, text)
         }
         let boldLocation = (result.string as NSString).range(of: "Open Stack").location
         let bold = try XCTUnwrap(result.attribute(.font, at: boldLocation, effectiveRange: nil) as? NSFont)
@@ -271,8 +271,39 @@ final class AppShellTests: XCTestCase {
 
         for location in [0, (result.string as NSString).range(of: "正文").location] {
             let font = try XCTUnwrap(result.attribute(.font, at: location, effectiveRange: nil) as? NSFont)
-            XCTAssertEqual(font.pointSize, 15)
+            XCTAssertEqual(font.pointSize, 13)
         }
+    }
+
+    func testLegacyBodyFontsNormalizeToThirteenPointsWithoutFlatteningTitleOrBold() throws {
+        let document = NSMutableAttributedString(
+            string: "标题\n",
+            attributes: [.font: NSFont.systemFont(ofSize: 26, weight: .bold)]
+        )
+        document.append(NSAttributedString(
+            string: "正文",
+            attributes: [.font: NSFont.systemFont(ofSize: 15)]
+        ))
+        document.append(NSAttributedString(
+            string: "重点",
+            attributes: [.font: NSFont.systemFont(ofSize: 15, weight: .bold)]
+        ))
+        document.append(NSAttributedString(
+            string: "异体",
+            attributes: [.font: NSFont(name: "Times New Roman", size: 13)!]
+        ))
+
+        let result = NoteFontNormalizer.normalized(document)
+        let title = try XCTUnwrap(result.attribute(.font, at: 0, effectiveRange: nil) as? NSFont)
+        let body = try XCTUnwrap(result.attribute(.font, at: 3, effectiveRange: nil) as? NSFont)
+        let bold = try XCTUnwrap(result.attribute(.font, at: 5, effectiveRange: nil) as? NSFont)
+        let alternate = try XCTUnwrap(result.attribute(.font, at: 7, effectiveRange: nil) as? NSFont)
+
+        XCTAssertEqual(title.pointSize, 26)
+        XCTAssertEqual(body.pointSize, 13)
+        XCTAssertEqual(body.fontName, EditorTextStyle.body.font.fontName)
+        XCTAssertTrue(bold.fontDescriptor.symbolicTraits.contains(.bold))
+        XCTAssertEqual(alternate.fontName, EditorTextStyle.body.font.fontName)
     }
 
     func testSelectionResultFormatterReplacesDashHierarchyWithLabelsAndBullets() throws {
