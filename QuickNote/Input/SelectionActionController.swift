@@ -32,7 +32,7 @@ final class SelectionActionController {
         } catch {
             state.notice = error.localizedDescription
         }
-        resize(height: state.source.isEmpty ? 200 : 185)
+        resize(height: state.source.isEmpty ? 200 : SelectionPanelLayout.resultHeight(for: state.source))
         positionNearPointer()
         NSApp.activate(ignoringOtherApps: true)
         panel.makeKeyAndOrderFront(nil)
@@ -160,6 +160,18 @@ enum SelectionPanelLayout {
             attributes: [.font: NSFont.systemFont(ofSize: 13)]
         )
         return min(max(230 + ceil(bounds.height), 300), 390)
+    }
+}
+
+enum SelectionSourceFormatter {
+    static func normalized(_ text: String) -> String {
+        // ponytail: AX returns plain text; extend this only when another surviving structural marker is observed.
+        text.trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(
+                of: #"(?<!\n)[\t ]+(?=[•◦▪][\t ])"#,
+                with: "\n",
+                options: .regularExpression
+            )
     }
 }
 
@@ -340,14 +352,23 @@ private struct SelectionActionView: View {
     }
 
     private var sourcePreview: some View {
-        Text(state.source.isEmpty ? state.notice : state.source)
-            .font(.system(size: 13))
-            .foregroundStyle(state.source.isEmpty ? .secondary : .primary)
-            .lineLimit(3)
-            .frame(maxWidth: .infinity, minHeight: 48, alignment: .topLeading)
-            .padding(.horizontal, 11)
-            .padding(.vertical, 9)
-            .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
+        ScrollView {
+            Text(state.source.isEmpty ? state.notice : state.source)
+                .font(.system(size: 13))
+                .foregroundStyle(state.source.isEmpty ? .secondary : .primary)
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .topLeading)
+                .padding(.horizontal, 11)
+                .padding(.vertical, 9)
+        }
+        .frame(
+            maxWidth: .infinity,
+            minHeight: 48,
+            maxHeight: state.result.isEmpty && !state.isLoading ? .infinity : 82,
+            alignment: .topLeading
+        )
+        .layoutPriority(state.result.isEmpty && !state.isLoading ? 1 : 0)
+        .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
     }
 
     private var actions: some View {
@@ -544,7 +565,7 @@ private enum SelectedTextReader {
               !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw SelectionCaptureError.noSelection
         }
-        return text.trimmingCharacters(in: .whitespacesAndNewlines)
+        return SelectionSourceFormatter.normalized(text)
     }
 }
 

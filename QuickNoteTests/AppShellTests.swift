@@ -143,6 +143,15 @@ final class AppShellTests: XCTestCase {
         XCTAssertEqual(long, 390)
     }
 
+    func testSelectionSourceFormatterRestoresBulletLineBreaks() {
+        let source = "它在产品栈里的位置 • Pydantic AI：负责 Agent Loop • AI Gateway：负责模型入口"
+
+        XCTAssertEqual(
+            SelectionSourceFormatter.normalized(source),
+            "它在产品栈里的位置\n• Pydantic AI：负责 Agent Loop\n• AI Gateway：负责模型入口"
+        )
+    }
+
     func testSelectionResultFormatterRendersMarkdownWithoutSourceMarkers() {
         let result = SelectionResultFormatter.plainText(
             from: "**测试用例**\n\n```swift\nlet passed = true\n```"
