@@ -3,7 +3,70 @@ import Carbon
 import XCTest
 @testable import QuickNote
 
+private final class UndoableTestTextView: NSTextView {
+    private let testUndoManager = UndoManager()
+
+    override var undoManager: UndoManager? { testUndoManager }
+}
+
 final class AppShellTests: XCTestCase {
+    @MainActor
+    func testEditorUndoRestoresLatestTextEdit() throws {
+        let controller = RichTextEditorController()
+        let textView = UndoableTestTextView()
+        textView.allowsUndo = true
+        controller.connect(textView)
+
+        textView.insertText("内容", replacementRange: textView.selectedRange())
+        controller.refreshUndoAvailability()
+        XCTAssertTrue(controller.canUndo)
+        controller.undo()
+
+        XCTAssertEqual(textView.string, "")
+    }
+
+    @MainActor
+    func testEditorUndoRestoresLatestFormattingEditAndSelection() throws {
+        let controller = RichTextEditorController()
+        let textView = UndoableTestTextView()
+        textView.allowsUndo = true
+        textView.textStorage?.setAttributedString(NSAttributedString(
+            string: "标题",
+            attributes: [.font: NSFont.systemFont(ofSize: 15)]
+        ))
+        textView.undoManager?.removeAllActions()
+        textView.setSelectedRange(NSRange(location: 0, length: 2))
+        controller.connect(textView)
+
+        controller.toggleBold()
+        XCTAssertTrue(controller.canUndo)
+        controller.undo()
+
+        let font = try XCTUnwrap(textView.textStorage?.attribute(.font, at: 0, effectiveRange: nil) as? NSFont)
+        XCTAssertFalse(NSFontManager.shared.traits(of: font).contains(.boldFontMask))
+        XCTAssertEqual(textView.selectedRange(), NSRange(location: 0, length: 2))
+    }
+
+    @MainActor
+    func testEditorUndoRestoresTypingFormatWithoutSelection() throws {
+        let controller = RichTextEditorController()
+        let textView = UndoableTestTextView()
+        textView.allowsUndo = true
+        textView.typingAttributes[.font] = NSFont.systemFont(ofSize: 15)
+        textView.setSelectedRange(NSRange(location: 0, length: 0))
+        controller.connect(textView)
+
+        controller.toggleBold()
+        XCTAssertTrue(controller.canUndo)
+        let boldFont = try XCTUnwrap(textView.typingAttributes[.font] as? NSFont)
+        XCTAssertTrue(NSFontManager.shared.traits(of: boldFont).contains(.boldFontMask))
+
+        controller.undo()
+
+        let restoredFont = try XCTUnwrap(textView.typingAttributes[.font] as? NSFont)
+        XCTAssertFalse(NSFontManager.shared.traits(of: restoredFont).contains(.boldFontMask))
+    }
+
     func testChineseCalendarDetailsForKnownDate() throws {
         var gregorian = Calendar(identifier: .gregorian)
         gregorian.timeZone = try XCTUnwrap(TimeZone(identifier: "Asia/Shanghai"))

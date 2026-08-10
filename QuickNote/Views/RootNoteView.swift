@@ -77,6 +77,9 @@ struct RootNoteView: View {
                 .padding(.trailing, 10)
 
                 HStack(spacing: 2) {
+                    toolbarButton("撤回", systemImage: "arrow.uturn.backward", action: editorController.undo)
+                        .disabled(!editorController.canUndo)
+
                     toolbarButton("格式", systemImage: "textformat") {
                         formatPresented.toggle()
                     }
@@ -169,11 +172,18 @@ struct RootNoteView: View {
     }
 
     private func open(_ note: NoteRecord) {
-        session.openRecovering(note)
+        let previousNoteID = session.currentNote?.id
+        if session.openRecovering(note) {
+            if session.currentNote?.id != previousNoteID {
+                editorController.clearUndoHistory()
+            }
+        }
     }
 
     private func create() {
-        session.createAndOpenRecovering()
+        if session.createAndOpenRecovering() {
+            editorController.clearUndoHistory()
+        }
     }
 
     private func togglePin(_ note: NoteRecord) {
@@ -183,7 +193,11 @@ struct RootNoteView: View {
     }
 
     private func delete(_ note: NoteRecord) {
+        let deletingCurrentNote = session.currentNote?.id == note.id
         if session.deleteRecovering(note) {
+            if deletingCurrentNote {
+                editorController.clearUndoHistory()
+            }
             reloadLibraryRecovering()
         }
     }

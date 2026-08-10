@@ -120,6 +120,7 @@ enum EditorTextStyle: String, CaseIterable, Identifiable {
 @MainActor
 final class RichTextEditorController: ObservableObject {
     private weak var textView: NSTextView?
+    @Published private(set) var canUndo = false
     private var imagePreviewPanel: NSPanel?
     private var preparedAttachmentWidth: CGFloat?
     private static let linkDetector = try? NSDataDetector(
@@ -131,6 +132,21 @@ final class RichTextEditorController: ObservableObject {
 
     func connect(_ textView: NSTextView) {
         self.textView = textView
+        refreshUndoAvailability()
+    }
+
+    func undo() {
+        textView?.undoManager?.undo()
+        refreshUndoAvailability()
+    }
+
+    func clearUndoHistory() {
+        textView?.undoManager?.removeAllActions()
+        refreshUndoAvailability()
+    }
+
+    func refreshUndoAvailability() {
+        canUndo = textView?.undoManager?.canUndo == true
     }
 
     func toggleBold() { toggleFontTrait(.boldFontMask) }
@@ -142,8 +158,10 @@ final class RichTextEditorController: ObservableObject {
         guard let textView else { return }
         let range = paragraphRange(in: textView)
         if range.length == 0 {
+            registerUndoSnapshot(in: textView)
             textView.typingAttributes[.font] = style.font
         } else {
+            registerUndoSnapshot(in: textView)
             textView.textStorage?.addAttribute(.font, value: style.font, range: range)
             commit(textView, preserving: textView.selectedRange())
         }
@@ -153,8 +171,10 @@ final class RichTextEditorController: ObservableObject {
         guard let textView else { return }
         let range = textView.selectedRange()
         if range.length == 0 {
+            registerUndoSnapshot(in: textView)
             textView.typingAttributes[.foregroundColor] = color
         } else {
+            registerUndoSnapshot(in: textView)
             textView.textStorage?.addAttribute(.foregroundColor, value: color, range: range)
             commit(textView, preserving: range)
         }
@@ -165,11 +185,15 @@ final class RichTextEditorController: ObservableObject {
         let range = textView.selectedRange()
         if range.length == 0 {
             if let color {
+                registerUndoSnapshot(in: textView)
                 textView.typingAttributes[.backgroundColor] = color
             } else {
+                guard textView.typingAttributes[.backgroundColor] != nil else { return }
+                registerUndoSnapshot(in: textView)
                 textView.typingAttributes.removeValue(forKey: .backgroundColor)
             }
         } else {
+            registerUndoSnapshot(in: textView)
             if let color {
                 textView.textStorage?.addAttribute(.backgroundColor, value: color, range: range)
             } else {
@@ -187,9 +211,11 @@ final class RichTextEditorController: ObservableObject {
             let style = (textView.typingAttributes[.paragraphStyle] as? NSParagraphStyle)?
                 .mutableCopy() as? NSMutableParagraphStyle ?? NSMutableParagraphStyle()
             style.alignment = alignment
+            registerUndoSnapshot(in: textView)
             textView.typingAttributes[.paragraphStyle] = style
             return
         }
+        registerUndoSnapshot(in: textView)
         enumerateParagraphs(in: target, text: storage.string) { range in
             let style = (storage.attribute(.paragraphStyle, at: range.location, effectiveRange: nil)
                 as? NSParagraphStyle)?.mutableCopy() as? NSMutableParagraphStyle ?? NSMutableParagraphStyle()
@@ -204,6 +230,7 @@ final class RichTextEditorController: ObservableObject {
         let selection = textView.selectedRange()
         let target = paragraphRange(in: textView)
         guard target.length > 0 else { return }
+        registerUndoSnapshot(in: textView)
         enumerateParagraphs(in: target, text: storage.string) { range in
             let style = (storage.attribute(.paragraphStyle, at: range.location, effectiveRange: nil)
                 as? NSParagraphStyle)?.mutableCopy() as? NSMutableParagraphStyle ?? NSMutableParagraphStyle()
@@ -225,9 +252,11 @@ final class RichTextEditorController: ObservableObject {
             let style = (textView.typingAttributes[.paragraphStyle] as? NSParagraphStyle)?
                 .mutableCopy() as? NSMutableParagraphStyle ?? NSMutableParagraphStyle()
             style.lineHeightMultiple = value
+            registerUndoSnapshot(in: textView)
             textView.typingAttributes[.paragraphStyle] = style
             return
         }
+        registerUndoSnapshot(in: textView)
         enumerateParagraphs(in: target, text: storage.string) { range in
             let style = (storage.attribute(.paragraphStyle, at: range.location, effectiveRange: nil)
                 as? NSParagraphStyle)?.mutableCopy() as? NSMutableParagraphStyle ?? NSMutableParagraphStyle()
@@ -278,6 +307,7 @@ final class RichTextEditorController: ObservableObject {
         let lineRange = NSRange(location: 0, length: (line as NSString).length)
         guard let match = Self.listPrefix?.firstMatch(in: line, range: lineRange) else { return false }
         if match.range.length == lineRange.length {
+            registerUndoSnapshot(in: textView)
             storage.deleteCharacters(in: beforeCursor)
             commit(textView, preserving: NSRange(location: paragraph.location, length: 0))
             return true
@@ -302,6 +332,7 @@ final class RichTextEditorController: ObservableObject {
             string: "\n\(indentation)\(next). ",
             attributes: continuationAttributes
         )
+        registerUndoSnapshot(in: textView)
         storage.replaceCharacters(in: selection, with: content)
         commit(textView, preserving: NSRange(location: selection.location + content.length, length: 0))
         textView.typingAttributes = continuationAttributes
@@ -338,6 +369,7 @@ final class RichTextEditorController: ObservableObject {
            checklistState(at: paragraph.location, in: storage) != nil {
             return
         }
+        registerUndoSnapshot(in: textView)
         let marker = checklistMarker(checked: false)
         let content = NSMutableAttributedString(attributedString: marker)
         content.append(NSAttributedString(string: " "))
@@ -353,6 +385,7 @@ final class RichTextEditorController: ObservableObject {
         guard let textView,
               let storage = textView.textStorage,
               let checked = checklistState(at: location, in: storage) else { return false }
+        registerUndoSnapshot(in: textView)
         storage.replaceCharacters(
             in: NSRange(location: location, length: 1),
             with: checklistMarker(checked: !checked)
@@ -366,6 +399,7 @@ final class RichTextEditorController: ObservableObject {
         let selection = textView.selectedRange()
         let target = paragraphRange(in: textView)
         guard target.length > 0 else { return }
+        registerUndoSnapshot(in: textView)
         enumerateParagraphs(in: target, text: storage.string) { range in
             let existing = (storage.attribute(.paragraphStyle, at: range.location, effectiveRange: nil)
                 as? NSParagraphStyle)?.mutableCopy() as? NSMutableParagraphStyle ?? NSMutableParagraphStyle()
@@ -382,6 +416,7 @@ final class RichTextEditorController: ObservableObject {
         let selection = textView.selectedRange()
         let target = paragraphRange(in: textView)
         guard target.length > 0 else { return }
+        registerUndoSnapshot(in: textView)
         enumerateParagraphs(in: target, text: storage.string) { range in
             let existing = (storage.attribute(.paragraphStyle, at: range.location, effectiveRange: nil)
                 as? NSParagraphStyle)?.mutableCopy() as? NSMutableParagraphStyle ?? NSMutableParagraphStyle()
@@ -473,6 +508,7 @@ final class RichTextEditorController: ObservableObject {
             tableRange = tableRange.location == NSNotFound ? range : NSUnionRange(tableRange, range)
         }
         guard tableRange.location != NSNotFound else { return false }
+        registerUndoSnapshot(in: textView)
         storage.deleteCharacters(in: tableRange)
         commit(textView, preserving: NSRange(location: min(tableRange.location, storage.length), length: 0))
         return true
@@ -749,6 +785,7 @@ final class RichTextEditorController: ObservableObject {
         let reference = font(at: range.location, in: textView)
         let removing = manager.traits(of: reference).contains(trait)
         if range.length == 0 {
+            registerUndoSnapshot(in: textView)
             textView.typingAttributes[.font] = removing
                 ? manager.convert(reference, toNotHaveTrait: trait)
                 : manager.convert(reference, toHaveTrait: trait)
@@ -758,6 +795,7 @@ final class RichTextEditorController: ObservableObject {
         storage.enumerateAttribute(.font, in: range) { value, run, _ in
             runs.append((value as? NSFont ?? textView.font ?? .systemFont(ofSize: 15), run))
         }
+        registerUndoSnapshot(in: textView)
         for (font, run) in runs {
             storage.addAttribute(
                 .font,
@@ -775,8 +813,10 @@ final class RichTextEditorController: ObservableObject {
         let range = textView.selectedRange()
         let active = ((attribute(key, at: range.location, in: textView) as? NSNumber)?.intValue ?? 0) != 0
         if range.length == 0 {
+            registerUndoSnapshot(in: textView)
             textView.typingAttributes[key] = active ? 0 : NSUnderlineStyle.single.rawValue
         } else {
+            registerUndoSnapshot(in: textView)
             if active {
                 storage.removeAttribute(key, range: range)
             } else {
@@ -866,6 +906,7 @@ final class RichTextEditorController: ObservableObject {
         selecting relativeSelection: NSRange? = nil
     ) {
         let range = textView.selectedRange()
+        registerUndoSnapshot(in: textView)
         textView.textStorage?.replaceCharacters(in: range, with: content)
         let selection = relativeSelection.map {
             NSRange(location: range.location + $0.location, length: $0.length)
@@ -877,6 +918,21 @@ final class RichTextEditorController: ObservableObject {
         textView.setSelectedRange(selection)
         textView.didChangeText()
         textView.window?.makeFirstResponder(textView)
+    }
+
+    private func registerUndoSnapshot(in textView: NSTextView) {
+        let document = NSAttributedString(attributedString: textView.attributedString())
+        let selection = textView.selectedRange()
+        let typingAttributes = textView.typingAttributes
+        textView.undoManager?.registerUndo(withTarget: self) { [weak textView] controller in
+            guard let textView else { return }
+            controller.registerUndoSnapshot(in: textView)
+            textView.textStorage?.setAttributedString(document)
+            controller.commit(textView, preserving: selection)
+            textView.typingAttributes = typingAttributes
+        }
+        textView.undoManager?.setActionName("编辑")
+        refreshUndoAvailability()
     }
 }
 
@@ -959,6 +1015,7 @@ struct RichTextEditor: NSViewRepresentable {
                 owner.controller.prepareFileAttachments(in: textView)
                 if insertedAttachment { moveCaretOutsideAttachment(in: textView) }
             }
+            owner.controller.refreshUndoAvailability()
             owner.onChange(textView.attributedString(), textView.selectedRange().location)
         }
 
