@@ -211,7 +211,7 @@ final class AppShellTests: XCTestCase {
     }
 
     func testAllSidebarNotesUseTheSameLeadingIndent() {
-        XCTAssertEqual(NoteDrawerLayout.noteLeadingIndent, 32)
+        XCTAssertEqual(NoteDrawerLayout.noteLeadingIndent, 20)
     }
 
     func testNoteThemesOfferFiveChoicesAndFallBackToSystem() {
@@ -219,6 +219,7 @@ final class AppShellTests: XCTestCase {
             "system", "paper", "sage", "lavender", "midnight", "blue",
         ])
         XCTAssertEqual(NoteTheme.resolved(from: "missing"), .system)
+        XCTAssertEqual(NoteTheme.system.accentColor, .secondaryLabelColor)
         XCTAssertTrue(NoteTheme.midnight.overridesDocumentTextColor)
         XCTAssertFalse(NoteTheme.blue.overridesDocumentTextColor)
     }

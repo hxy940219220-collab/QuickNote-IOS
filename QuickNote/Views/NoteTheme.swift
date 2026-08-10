@@ -72,7 +72,7 @@ enum NoteTheme: String, CaseIterable, Identifiable {
 
     var accentColor: NSColor {
         switch self {
-        case .system: .controlAccentColor
+        case .system: .secondaryLabelColor
         case .paper: Self.color(0xB8664A)
         case .sage: Self.color(0x5F7967)
         case .lavender: Self.color(0x756A91)

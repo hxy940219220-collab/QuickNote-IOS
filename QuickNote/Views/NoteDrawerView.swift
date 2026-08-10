@@ -1,7 +1,7 @@
 import SwiftUI
 
 enum NoteDrawerLayout {
-    static let noteLeadingIndent: CGFloat = 32
+    static let noteLeadingIndent: CGFloat = 20
 }
 
 struct NoteDrawerView: View {
@@ -172,9 +172,6 @@ struct NoteDrawerView: View {
                         .font(.system(size: 14, weight: .medium))
                         .lineLimit(1)
                     Spacer()
-                    Text("\(notes(in: folder).count)")
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
                 }
                 .frame(maxWidth: .infinity)
                 .contentShape(Rectangle())
