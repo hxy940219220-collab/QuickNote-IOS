@@ -998,25 +998,25 @@ private struct QuickNoteSettingsDetailView: View {
     private var shortcutsDetail: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
-                shortcutRow(keys: ["⌘", "⌘"], title: "双击 Command", detail: "打开或收起 QuickNote")
+                shortcutRow(icon: "macwindow", keys: ["⌘", "⌘"], detail: "打开或收起 QuickNote")
                 shortcutDivider
-                shortcutRow(keys: ["⌥", "Space"], title: "Option + 空格", detail: "分析当前选中的文字")
+                shortcutRow(icon: "sparkles", keys: ["⌥", "Space"], detail: "分析当前选中的文字")
                 shortcutDivider
-                shortcutRow(keys: ["⌘", "+ / −"], title: "Command + / −", detail: "放大或缩小便签内容")
+                shortcutRow(icon: "plus.magnifyingglass", keys: ["⌘", "+ / −"], detail: "放大或缩小便签内容")
                 shortcutDivider
-                shortcutRow(keys: ["⌘", "B"], title: "Command + B", detail: "展开或收起侧边栏")
+                shortcutRow(icon: "sidebar.left", keys: ["⌘", "B"], detail: "展开或收起侧边栏")
                 shortcutDivider
-                shortcutRow(keys: ["⌘", "N"], title: "Command + N", detail: "新建便签")
+                shortcutRow(icon: "square.and.pencil", keys: ["⌘", "N"], detail: "新建便签")
                 shortcutDivider
-                shortcutRow(keys: ["⌘", "K"], title: "Command + K", detail: "为选中文字插入链接")
+                shortcutRow(icon: "link", keys: ["⌘", "K"], detail: "为选中文字插入链接")
                 shortcutDivider
-                shortcutRow(keys: ["⌘", "Z"], title: "Command + Z", detail: "撤销最近一次文字或格式操作")
+                shortcutRow(icon: "arrow.uturn.backward", keys: ["⌘", "Z"], detail: "撤销最近一次编辑")
             }
         }
     }
 
     private var shortcutDivider: some View {
-        Divider().padding(.leading, 104)
+        Divider().padding(.horizontal, 22)
     }
 
     private var helpDetail: some View {
@@ -1079,8 +1079,15 @@ private struct QuickNoteSettingsDetailView: View {
         .help("在访达中显示")
     }
 
-    private func shortcutRow(keys: [String], title: String, detail: String) -> some View {
-        HStack(spacing: 12) {
+    private func shortcutRow(icon: String, keys: [String], detail: String) -> some View {
+        HStack(spacing: 0) {
+            Image(systemName: icon)
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(.secondary)
+                .frame(width: 22)
+
+            Color.clear.frame(width: 16)
+
             HStack(spacing: 5) {
                 ForEach(Array(keys.enumerated()), id: \.offset) { _, key in
                     Text(key)
@@ -1093,14 +1100,17 @@ private struct QuickNoteSettingsDetailView: View {
                         }
                 }
             }
-            .frame(width: 92, alignment: .trailing)
-            VStack(alignment: .leading, spacing: 1) {
-                Text(title).font(.system(size: 13, weight: .semibold))
-                Text(detail).font(.system(size: 11)).foregroundStyle(.secondary)
-            }
-            Spacer()
+            .frame(width: 92)
+
+            Color.clear.frame(width: 18)
+
+            Text(detail)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(.primary)
+                .lineLimit(1)
+                .frame(width: 190, alignment: .leading)
         }
-        .frame(height: 42)
+        .frame(maxWidth: .infinity, minHeight: 42, alignment: .center)
     }
 
     private func permissionRow(
