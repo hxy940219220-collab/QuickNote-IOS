@@ -18,7 +18,7 @@ struct RootNoteView: View {
     @State private var drawerOpen = false
     @State private var windowLocked = false
     @State private var calendarPresented = false
-    @State private var helpPresented = false
+    @State private var settingsPresented = false
     @State private var themePresented = false
     @State private var formatPresented = false
     @State private var tablePresented = false
@@ -64,13 +64,6 @@ struct RootNoteView: View {
                         NoteThemePicker(selection: $selectedTheme)
                     }
 
-                    toolbarButton("权限与快捷键帮助", systemImage: "questionmark.circle") {
-                        helpPresented.toggle()
-                    }
-                    .popover(isPresented: $helpPresented, arrowEdge: .top) {
-                        QuickNoteHelpView()
-                    }
-
                     toolbarButton("AI 模型", systemImage: "sparkles", action: showAISettings)
 
                     toolbarButton(
@@ -79,8 +72,12 @@ struct RootNoteView: View {
                         action: toggleWindowLock
                     )
 
-                    toolbarButton("新建便签", systemImage: "square.and.pencil", action: create)
-                        .keyboardShortcut("n", modifiers: .command)
+                    toolbarButton("设置", systemImage: "gearshape") {
+                        settingsPresented.toggle()
+                    }
+                    .popover(isPresented: $settingsPresented, arrowEdge: .top) {
+                        QuickNoteSettingsView(currentNoteURL: session.currentDocumentURL)
+                    }
                 }
                 .padding(.leading, 74)
                 .padding(.trailing, 10)
@@ -718,70 +715,116 @@ private struct NoteTagsPopover: View {
     }
 }
 
-private struct QuickNoteHelpView: View {
+private struct QuickNoteSettingsView: View {
+    let currentNoteURL: URL?
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text("快捷键与权限")
-                .font(.system(size: 18, weight: .semibold))
+        VStack(alignment: .leading, spacing: 0) {
+            Text("设置")
+                .font(.system(size: 15, weight: .semibold))
+                .padding(.bottom, 10)
 
-            shortcutSection(
-                shortcut: "双击 Command",
-                detail: "快速打开或收起 QuickNote",
-                path: "隐私与安全性 → 输入监控",
-                button: "打开输入监控",
-                settingsPane: "Privacy_ListenEvent"
-            )
+            DisclosureGroup {
+                if let currentNoteURL {
+                    Button {
+                        NSWorkspace.shared.activateFileViewerSelecting([currentNoteURL])
+                    } label: {
+                        Text(currentNoteURL.path)
+                            .font(.system(size: 11))
+                            .foregroundStyle(Color(nsColor: .linkColor))
+                            .underline()
+                            .multilineTextAlignment(.leading)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .buttonStyle(.plain)
+                    .help("在访达中显示当前便签")
+                    .accessibilityLabel("在访达中显示当前便签")
+                    .padding(.top, 8)
+                } else {
+                    Text("当前没有打开的便签")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                        .padding(.top, 8)
+                }
+            } label: {
+                settingsLabel("本地存储", systemImage: "folder")
+            }
 
             Divider()
+                .padding(.vertical, 10)
 
-            shortcutSection(
-                shortcut: "Option + 空格",
-                detail: "分析当前选中的文字",
-                path: "隐私与安全性 → 辅助功能",
-                button: "打开辅助功能",
-                settingsPane: "Privacy_Accessibility"
-            )
+            DisclosureGroup {
+                VStack(alignment: .leading, spacing: 10) {
+                    shortcutRow("双击 Command", detail: "打开或收起 QuickNote")
+                    shortcutRow("Option + 空格", detail: "分析当前选中的文字")
+                }
+                .padding(.top, 8)
+            } label: {
+                settingsLabel("快捷键", systemImage: "keyboard")
+            }
 
             Divider()
+                .padding(.vertical, 10)
 
-            HStack(alignment: .top, spacing: 8) {
-                Image(systemName: "key.fill")
-                    .foregroundStyle(Color.accentColor)
-                Text("API Key 仅保存在这台 Mac 的系统钥匙串中；AI 内容只发送给当前服务商。")
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
+            DisclosureGroup {
+                VStack(alignment: .leading, spacing: 10) {
+                    permissionRow(
+                        path: "隐私与安全性 → 输入监控",
+                        button: "打开输入监控",
+                        settingsPane: "Privacy_ListenEvent"
+                    )
+                    permissionRow(
+                        path: "隐私与安全性 → 辅助功能",
+                        button: "打开辅助功能",
+                        settingsPane: "Privacy_Accessibility"
+                    )
+                    Text("API Key 仅保存在这台 Mac 的系统钥匙串中；AI 内容只发送给当前服务商。")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(.top, 8)
+            } label: {
+                settingsLabel("帮助与权限", systemImage: "questionmark.circle")
             }
         }
-        .padding(16)
-        .frame(width: 360)
+        .padding(14)
+        .frame(width: 330)
     }
 
-    private func shortcutSection(
-        shortcut: String,
-        detail: String,
+    private func settingsLabel(_ title: String, systemImage: String) -> some View {
+        Label(title, systemImage: systemImage)
+            .font(.system(size: 13, weight: .medium))
+    }
+
+    private func shortcutRow(_ shortcut: String, detail: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 10) {
+            Text(shortcut)
+                .font(.system(size: 12, weight: .semibold))
+                .frame(width: 108, alignment: .leading)
+            Text(detail)
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private func permissionRow(
         path: String,
         button: String,
         settingsPane: String
     ) -> some View {
-        VStack(alignment: .leading, spacing: 5) {
-            Text(shortcut)
-                .font(.system(size: 14, weight: .semibold))
-            Text(detail)
+        HStack(spacing: 8) {
+            Text(path)
                 .font(.system(size: 11))
                 .foregroundStyle(.secondary)
-            HStack(spacing: 8) {
-                Text(path)
-                    .font(.system(size: 11, weight: .medium))
-                Spacer()
-                Button(button) {
-                    guard let url = URL(
-                        string: "x-apple.systempreferences:com.apple.preference.security?\(settingsPane)"
-                    ) else { return }
-                    NSWorkspace.shared.open(url)
-                }
-                .controlSize(.small)
+            Spacer()
+            Button(button) {
+                guard let url = URL(
+                    string: "x-apple.systempreferences:com.apple.preference.security?\(settingsPane)"
+                ) else { return }
+                NSWorkspace.shared.open(url)
             }
+            .controlSize(.small)
         }
     }
 }

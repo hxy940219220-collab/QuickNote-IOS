@@ -18,6 +18,10 @@ final class NoteSession: ObservableObject {
 
     var onSaved: (() -> Void)?
 
+    var currentDocumentURL: URL? {
+        currentNote.map { documents.root.appending(path: $0.documentPath) }
+    }
+
     init(
         repository: NoteRepository,
         documents: NoteDocumentStore,
