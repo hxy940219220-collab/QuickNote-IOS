@@ -77,9 +77,6 @@ struct RootNoteView: View {
                     toolbarButton("设置", systemImage: "gearshape") {
                         settingsPresented.toggle()
                     }
-                    .popover(isPresented: $settingsPresented, arrowEdge: .top) {
-                        QuickNoteSettingsView(open: showSettings)
-                    }
                 }
                 .padding(.leading, 74)
                 .padding(.trailing, 10)
@@ -176,6 +173,25 @@ struct RootNoteView: View {
         .tint(Color(nsColor: theme.accentColor))
         .preferredColorScheme(theme.colorScheme)
         .ignoresSafeArea(.container, edges: .top)
+        .overlay(alignment: .topTrailing) {
+            if settingsPresented {
+                ZStack(alignment: .topTrailing) {
+                    Color.clear
+                        .contentShape(Rectangle())
+                        .onTapGesture { settingsPresented = false }
+
+                    QuickNoteSettingsView(open: showSettings)
+                        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 12)
+                                .stroke(Color.secondary.opacity(0.2), lineWidth: 1)
+                        }
+                        .shadow(color: .black.opacity(0.16), radius: 12, y: 5)
+                        .padding(.top, 42)
+                        .padding(.trailing, 8)
+                }
+            }
+        }
         .sheet(item: $settingsDestination) { destination in
             QuickNoteSettingsDetailView(
                 destination: destination,
