@@ -2,7 +2,31 @@
 
 QuickNote 是一款本地优先的 macOS 便签工具。双击 Command 即刻唤起，记录完成后回到原来的工作流；选中文字后按 Option + Space，可以直接解释、分析、翻译或拓展，并保留排版导入便签。
 
-![QuickNote 界面](docs/quicknote-ui.png)
+## 功能演示
+
+### 1. 基础编辑
+
+顶部工具栏集中提供格式、清单、表格与附件四项常用操作。格式面板支持标题层级、粗体、斜体、下划线、删除线、颜色、对齐与列表样式。
+
+![QuickNote 基础编辑](docs/feature-editing.webp)
+
+### 2. 双击 Command
+
+无需切换应用或寻找窗口。连续按两次 Command，QuickNote 立即出现；再次双击即可收起，回到刚才的工作。
+
+![QuickNote 双击 Command 唤起](docs/feature-command.webp)
+
+### 3. 划词 AI
+
+在任意支持文字选择的 App 中选中文字，按 Option + Space 调用解释、分析、翻译或拓展。结果可保留结构，一键导入便签。
+
+![QuickNote 划词 AI](docs/feature-ai.webp)
+
+### 4. 主题切换
+
+除系统默认外，还提供暖纸、鼠尾草、暮光紫、午夜墨与雾蓝五套主题。主题只改变阅读环境，不改变笔记内容。
+
+![QuickNote 主题切换](docs/feature-themes.webp)
 
 ## 功能
 
