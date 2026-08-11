@@ -31,7 +31,7 @@ struct NoteDrawerView: View {
         VStack(spacing: 10) {
             header
 
-            TextField("搜索全部便签", text: $query)
+            TextField("搜索便签标题", text: $query)
                 .textFieldStyle(.roundedBorder)
 
             if isSearching {
@@ -293,10 +293,7 @@ struct NoteDrawerView: View {
     private var filtered: [NoteRecord] {
         let normalized = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !normalized.isEmpty else { return notes }
-        return notes.filter {
-            $0.title.localizedStandardContains(normalized)
-                || $0.plainText.localizedStandardContains(normalized)
-        }
+        return notes.filter { $0.title.localizedStandardContains(normalized) }
     }
 
     private var unfiledNotes: [NoteRecord] {
