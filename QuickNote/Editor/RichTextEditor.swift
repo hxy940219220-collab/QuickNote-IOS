@@ -117,6 +117,19 @@ enum EditorTextStyle: String, CaseIterable, Identifiable {
     }
 }
 
+enum EditorLink {
+    static func url(from input: String) -> URL? {
+        let value = input.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty else { return nil }
+        let candidate = value.contains("://") ? value : "https://\(value)"
+        guard let components = URLComponents(string: candidate),
+              let scheme = components.scheme?.lowercased(),
+              ["http", "https"].contains(scheme),
+              components.host?.isEmpty == false else { return nil }
+        return components.url
+    }
+}
+
 @MainActor
 final class RichTextEditorController: ObservableObject {
     private weak var textView: NSTextView?
@@ -163,6 +176,44 @@ final class RichTextEditorController: ObservableObject {
 
     func refreshUndoAvailability() {
         canUndo = textView?.undoManager?.canUndo == true
+    }
+
+    var selectedLinkSuggestion: String {
+        guard let textView else { return "" }
+        let range = textView.selectedRange()
+        guard range.length > 0 else { return "" }
+        let value = (textView.string as NSString).substring(with: range)
+        return EditorLink.url(from: value) == nil ? "" : value
+    }
+
+    @discardableResult
+    func applyLink(_ input: String) -> Bool {
+        guard let textView, let url = EditorLink.url(from: input) else { return false }
+        let range = textView.selectedRange()
+        if range.length > 0 {
+            registerUndoSnapshot(in: textView)
+            textView.textStorage?.addAttribute(.link, value: url, range: range)
+            commit(textView, preserving: range)
+        } else {
+            var attributes = textView.typingAttributes
+            attributes[.link] = url
+            replaceSelection(
+                with: NSAttributedString(string: url.absoluteString, attributes: attributes),
+                in: textView
+            )
+            textView.typingAttributes.removeValue(forKey: .link)
+        }
+        return true
+    }
+
+    func zoom(by amount: CGFloat) {
+        guard let scroll = textView?.enclosingScrollView else { return }
+        let magnification = min(max(scroll.magnification + amount, scroll.minMagnification), scroll.maxMagnification)
+        let visible = scroll.documentVisibleRect
+        scroll.setMagnification(
+            magnification,
+            centeredAt: NSPoint(x: visible.midX, y: visible.midY)
+        )
     }
 
     func toggleBold() { toggleFontTrait(.boldFontMask) }
@@ -1081,6 +1132,9 @@ struct RichTextEditor: NSViewRepresentable {
     func makeNSView(context: Context) -> NSScrollView {
         let scroll = NSTextView.scrollableTextView()
         let textView = scroll.documentView as! NSTextView
+        scroll.allowsMagnification = true
+        scroll.minMagnification = 0.7
+        scroll.maxMagnification = 2
         textView.isRichText = true
         textView.importsGraphics = true
         textView.allowsUndo = true

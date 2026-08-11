@@ -1,6 +1,59 @@
 import AppKit
 import SwiftUI
 
+enum QuickNoteShortcut: Equatable {
+    case zoomIn
+    case zoomOut
+    case toggleSidebar
+    case newNote
+    case insertLink
+
+    static func resolve(
+        characters: String?,
+        modifiers: NSEvent.ModifierFlags
+    ) -> QuickNoteShortcut? {
+        let modifiers = modifiers.intersection(.deviceIndependentFlagsMask)
+        guard modifiers.contains(.command),
+              !modifiers.contains(.control),
+              !modifiers.contains(.option) else { return nil }
+        let value = characters?.lowercased()
+        if value == "+" || value == "=" { return .zoomIn }
+        guard modifiers == .command else { return nil }
+        return switch value {
+        case "-": .zoomOut
+        case "b": .toggleSidebar
+        case "n": .newNote
+        case "k": .insertLink
+        default: nil
+        }
+    }
+}
+
+@MainActor
+private final class QuickNoteShortcutMonitor: ObservableObject {
+    private var monitor: Any?
+    private var action: ((QuickNoteShortcut) -> Void)?
+
+    func start(action: @escaping (QuickNoteShortcut) -> Void) {
+        self.action = action
+        guard monitor == nil else { return }
+        monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard let shortcut = QuickNoteShortcut.resolve(
+                characters: event.charactersIgnoringModifiers,
+                modifiers: event.modifierFlags
+            ), !event.isARepeat || shortcut == .zoomIn || shortcut == .zoomOut else { return event }
+            self?.action?(shortcut)
+            return nil
+        }
+    }
+
+    func stop() {
+        if let monitor { NSEvent.removeMonitor(monitor) }
+        monitor = nil
+        action = nil
+    }
+}
+
 struct RootNoteView: View {
     @ObservedObject var session: NoteSession
     let allNotes: () throws -> [NoteRecord]
@@ -15,6 +68,7 @@ struct RootNoteView: View {
     let showAISettings: () -> Void
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @StateObject private var editorController = RichTextEditorController()
+    @StateObject private var shortcutMonitor = QuickNoteShortcutMonitor()
     @State private var drawerOpen = false
     @State private var windowLocked = false
     @State private var calendarPresented = false
@@ -39,7 +93,6 @@ struct RootNoteView: View {
                         action: toggleDrawer
                     )
                     .offset(y: -1)
-                    .keyboardShortcut("k", modifiers: .command)
 
                     TimelineView(.periodic(from: .now, by: 60)) { context in
                         Button {
@@ -187,7 +240,7 @@ struct RootNoteView: View {
                                 .stroke(Color.secondary.opacity(0.2), lineWidth: 1)
                         }
                         .shadow(color: .black.opacity(0.16), radius: 12, y: 5)
-                        .padding(.top, 42)
+                        .padding(.top, 4)
                         .padding(.trailing, 8)
                 }
             }
@@ -198,6 +251,8 @@ struct RootNoteView: View {
                 locations: noteStorageLocations
             )
         }
+        .onAppear { shortcutMonitor.start(action: performShortcut) }
+        .onDisappear { shortcutMonitor.stop() }
     }
 
     private var theme: NoteTheme {
@@ -318,6 +373,41 @@ struct RootNoteView: View {
             try editorController.insertFiles(panel.urls)
         } catch {
             NSAlert(error: error).runModal()
+        }
+    }
+
+    private func performShortcut(_ shortcut: QuickNoteShortcut) {
+        switch shortcut {
+        case .zoomIn:
+            editorController.zoom(by: 0.1)
+        case .zoomOut:
+            editorController.zoom(by: -0.1)
+        case .toggleSidebar:
+            toggleDrawer()
+        case .newNote:
+            create()
+        case .insertLink:
+            promptForLink()
+        }
+    }
+
+    private func promptForLink() {
+        let field = NSTextField(string: editorController.selectedLinkSuggestion)
+        field.placeholderString = "https://example.com"
+        field.frame = NSRect(x: 0, y: 0, width: 300, height: 24)
+
+        let alert = NSAlert()
+        alert.messageText = "插入链接"
+        alert.informativeText = "输入网址；未选择文字时会插入网址本身。"
+        alert.accessoryView = field
+        alert.addButton(withTitle: "插入")
+        alert.addButton(withTitle: "取消")
+        alert.window.initialFirstResponder = field
+
+        while alert.runModal() == .alertFirstButtonReturn {
+            if editorController.applyLink(field.stringValue) { return }
+            alert.informativeText = "请输入有效的 http 或 https 地址。"
+            NSSound.beep()
         }
     }
 
@@ -843,15 +933,23 @@ private struct QuickNoteSettingsDetailView: View {
                 Button("完成") { dismiss() }
                     .keyboardShortcut(.defaultAction)
             }
-            .padding(.bottom, 16)
+            .padding(.bottom, 12)
 
             Divider()
 
             detail
-                .padding(.top, 16)
+                .padding(.top, 12)
         }
-        .padding(20)
-        .frame(width: 560, height: 420)
+        .padding(16)
+        .frame(width: detailSize.width, height: detailSize.height)
+    }
+
+    private var detailSize: CGSize {
+        switch destination {
+        case .localStorage: CGSize(width: 560, height: 420)
+        case .shortcuts: CGSize(width: 430, height: 390)
+        case .help: CGSize(width: 500, height: 320)
+        }
     }
 
     @ViewBuilder
@@ -898,12 +996,27 @@ private struct QuickNoteSettingsDetailView: View {
     }
 
     private var shortcutsDetail: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            shortcutRow(keys: ["⌘", "⌘"], title: "双击 Command", detail: "打开或收起 QuickNote")
-            Divider().padding(.leading, 58)
-            shortcutRow(keys: ["⌥", "Space"], title: "Option + 空格", detail: "分析当前选中的文字")
-            Spacer()
+        ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+                shortcutRow(keys: ["⌘", "⌘"], title: "双击 Command", detail: "打开或收起 QuickNote")
+                shortcutDivider
+                shortcutRow(keys: ["⌥", "Space"], title: "Option + 空格", detail: "分析当前选中的文字")
+                shortcutDivider
+                shortcutRow(keys: ["⌘", "+ / −"], title: "Command + / −", detail: "放大或缩小便签内容")
+                shortcutDivider
+                shortcutRow(keys: ["⌘", "B"], title: "Command + B", detail: "展开或收起侧边栏")
+                shortcutDivider
+                shortcutRow(keys: ["⌘", "N"], title: "Command + N", detail: "新建便签")
+                shortcutDivider
+                shortcutRow(keys: ["⌘", "K"], title: "Command + K", detail: "为选中文字插入链接")
+                shortcutDivider
+                shortcutRow(keys: ["⌘", "Z"], title: "Command + Z", detail: "撤销最近一次文字或格式操作")
+            }
         }
+    }
+
+    private var shortcutDivider: some View {
+        Divider().padding(.leading, 104)
     }
 
     private var helpDetail: some View {
@@ -967,26 +1080,27 @@ private struct QuickNoteSettingsDetailView: View {
     }
 
     private func shortcutRow(keys: [String], title: String, detail: String) -> some View {
-        HStack(spacing: 16) {
+        HStack(spacing: 12) {
             HStack(spacing: 5) {
                 ForEach(Array(keys.enumerated()), id: \.offset) { _, key in
                     Text(key)
-                        .font(.system(size: key == "Space" ? 10 : 15, weight: .medium))
-                        .frame(minWidth: key == "Space" ? 48 : 28, minHeight: 28)
-                        .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 6))
+                        .font(.system(size: key == "Space" ? 9 : 13, weight: .medium))
+                        .frame(minWidth: key == "Space" || key == "+ / −" ? 44 : 24, minHeight: 24)
+                        .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 5))
                         .overlay {
-                            RoundedRectangle(cornerRadius: 6)
+                            RoundedRectangle(cornerRadius: 5)
                                 .stroke(Color.secondary.opacity(0.25), lineWidth: 1)
                         }
                 }
             }
-            VStack(alignment: .leading, spacing: 4) {
+            .frame(width: 92, alignment: .trailing)
+            VStack(alignment: .leading, spacing: 1) {
                 Text(title).font(.system(size: 13, weight: .semibold))
-                Text(detail).font(.system(size: 12)).foregroundStyle(.secondary)
+                Text(detail).font(.system(size: 11)).foregroundStyle(.secondary)
             }
             Spacer()
         }
-        .frame(height: 72)
+        .frame(height: 42)
     }
 
     private func permissionRow(

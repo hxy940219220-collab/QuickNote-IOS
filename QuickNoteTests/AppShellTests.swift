@@ -10,6 +10,36 @@ private final class UndoableTestTextView: NSTextView {
 }
 
 final class AppShellTests: XCTestCase {
+    func testLocalShortcutMappingUsesTheRequestedCommands() {
+        XCTAssertEqual(QuickNoteShortcut.resolve(characters: "=", modifiers: .command), .zoomIn)
+        XCTAssertEqual(QuickNoteShortcut.resolve(characters: "+", modifiers: [.command, .shift]), .zoomIn)
+        XCTAssertEqual(QuickNoteShortcut.resolve(characters: "-", modifiers: .command), .zoomOut)
+        XCTAssertEqual(QuickNoteShortcut.resolve(characters: "b", modifiers: .command), .toggleSidebar)
+        XCTAssertEqual(QuickNoteShortcut.resolve(characters: "n", modifiers: .command), .newNote)
+        XCTAssertEqual(QuickNoteShortcut.resolve(characters: "k", modifiers: .command), .insertLink)
+        XCTAssertNil(QuickNoteShortcut.resolve(characters: "b", modifiers: [.command, .option]))
+    }
+
+    @MainActor
+    func testEditorAppliesAndUndoesValidatedLink() throws {
+        let controller = RichTextEditorController()
+        let textView = UndoableTestTextView()
+        textView.allowsUndo = true
+        textView.string = "OpenAI"
+        textView.undoManager?.removeAllActions()
+        textView.setSelectedRange(NSRange(location: 0, length: 6))
+        controller.connect(textView)
+
+        XCTAssertTrue(controller.applyLink("openai.com"))
+        XCTAssertEqual(
+            textView.textStorage?.attribute(.link, at: 0, effectiveRange: nil) as? URL,
+            URL(string: "https://openai.com")
+        )
+        controller.undo()
+        XCTAssertNil(textView.textStorage?.attribute(.link, at: 0, effectiveRange: nil))
+        XCTAssertFalse(controller.applyLink("javascript:alert(1)"))
+    }
+
     @MainActor
     func testEditorUndoRestoresLatestTextEdit() throws {
         let controller = RichTextEditorController()
