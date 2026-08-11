@@ -19,6 +19,8 @@ struct RootNoteView: View {
     @State private var windowLocked = false
     @State private var calendarPresented = false
     @State private var settingsPresented = false
+    @State private var settingsDestination: QuickNoteSettingsDestination?
+    @State private var noteStorageLocations: [NoteStorageLocation] = []
     @State private var themePresented = false
     @State private var formatPresented = false
     @State private var tablePresented = false
@@ -76,7 +78,7 @@ struct RootNoteView: View {
                         settingsPresented.toggle()
                     }
                     .popover(isPresented: $settingsPresented, arrowEdge: .top) {
-                        QuickNoteSettingsView(currentNoteURL: session.currentDocumentURL)
+                        QuickNoteSettingsView(open: showSettings)
                     }
                 }
                 .padding(.leading, 74)
@@ -174,6 +176,12 @@ struct RootNoteView: View {
         .tint(Color(nsColor: theme.accentColor))
         .preferredColorScheme(theme.colorScheme)
         .ignoresSafeArea(.container, edges: .top)
+        .sheet(item: $settingsDestination) { destination in
+            QuickNoteSettingsDetailView(
+                destination: destination,
+                locations: noteStorageLocations
+            )
+        }
     }
 
     private var theme: NoteTheme {
@@ -262,6 +270,26 @@ struct RootNoteView: View {
     private func toggleWindowLock() {
         windowLocked.toggle()
         setWindowLocked(windowLocked)
+    }
+
+    private func showSettings(_ destination: QuickNoteSettingsDestination) {
+        if destination == .localStorage {
+            do {
+                noteStorageLocations = try allNotes().map { note in
+                    NoteStorageLocation(
+                        id: note.id,
+                        title: note.title,
+                        url: session.documentURL(for: note),
+                        isCurrent: note.id == session.currentNote?.id
+                    )
+                }
+            } catch {
+                NSAlert(error: error).runModal()
+                return
+            }
+        }
+        settingsPresented = false
+        DispatchQueue.main.async { settingsDestination = destination }
     }
 
     private func chooseFiles() {
@@ -715,116 +743,268 @@ private struct NoteTagsPopover: View {
     }
 }
 
+private enum QuickNoteSettingsDestination: String, Identifiable {
+    case localStorage
+    case shortcuts
+    case help
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .localStorage: "本地存储"
+        case .shortcuts: "快捷键"
+        case .help: "帮助与权限"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .localStorage: "folder"
+        case .shortcuts: "keyboard"
+        case .help: "questionmark.circle"
+        }
+    }
+}
+
+private struct NoteStorageLocation: Identifiable {
+    let id: UUID
+    let title: String
+    let url: URL
+    let isCurrent: Bool
+}
+
 private struct QuickNoteSettingsView: View {
-    let currentNoteURL: URL?
+    let open: (QuickNoteSettingsDestination) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("设置")
+                .font(.system(size: 15, weight: .semibold))
+                .padding(.horizontal, 8)
+                .padding(.bottom, 4)
+
+            settingsButton(.localStorage)
+            settingsButton(.shortcuts)
+            settingsButton(.help)
+        }
+        .padding(10)
+        .frame(width: 248)
+    }
+
+    private func settingsButton(_ destination: QuickNoteSettingsDestination) -> some View {
+        Button { open(destination) } label: {
+            HStack(spacing: 10) {
+                Image(systemName: destination.systemImage)
+                    .frame(width: 18)
+                Text(destination.title)
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(.tertiary)
+            }
+            .font(.system(size: 13, weight: .medium))
+            .padding(.horizontal, 8)
+            .frame(maxWidth: .infinity, minHeight: 38, alignment: .leading)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityHint("打开详细页面")
+    }
+}
+
+private struct QuickNoteSettingsDetailView: View {
+    @Environment(\.dismiss) private var dismiss
+    let destination: QuickNoteSettingsDestination
+    let locations: [NoteStorageLocation]
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text("设置")
-                .font(.system(size: 15, weight: .semibold))
-                .padding(.bottom, 10)
+            HStack(spacing: 10) {
+                Label(destination.title, systemImage: destination.systemImage)
+                    .font(.system(size: 18, weight: .semibold))
+                Spacer()
+                Button("完成") { dismiss() }
+                    .keyboardShortcut(.defaultAction)
+            }
+            .padding(.bottom, 16)
 
-            DisclosureGroup {
-                if let currentNoteURL {
-                    Button {
-                        NSWorkspace.shared.activateFileViewerSelecting([currentNoteURL])
-                    } label: {
-                        Text(currentNoteURL.path)
-                            .font(.system(size: 11))
-                            .foregroundStyle(Color(nsColor: .linkColor))
-                            .underline()
-                            .multilineTextAlignment(.leading)
-                            .fixedSize(horizontal: false, vertical: true)
+            Divider()
+
+            detail
+                .padding(.top, 16)
+        }
+        .padding(20)
+        .frame(width: 560, height: 420)
+    }
+
+    @ViewBuilder
+    private var detail: some View {
+        switch destination {
+        case .localStorage:
+            localStorageDetail
+        case .shortcuts:
+            shortcutsDetail
+        case .help:
+            helpDetail
+        }
+    }
+
+    private var localStorageDetail: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text("每条便签保存为独立的 RTFD 文档。")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                if let folder = locations.first?.url.deletingLastPathComponent() {
+                    Button("打开存储文件夹") { NSWorkspace.shared.open(folder) }
+                        .controlSize(.small)
+                }
+            }
+
+            if locations.isEmpty {
+                Spacer()
+                Text("暂无便签")
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity)
+                Spacer()
+            } else {
+                ScrollView {
+                    LazyVStack(spacing: 4) {
+                        ForEach(locations) { location in
+                            storageRow(location)
+                        }
                     }
-                    .buttonStyle(.plain)
-                    .help("在访达中显示当前便签")
-                    .accessibilityLabel("在访达中显示当前便签")
-                    .padding(.top, 8)
-                } else {
-                    Text("当前没有打开的便签")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
-                        .padding(.top, 8)
                 }
-            } label: {
-                settingsLabel("本地存储", systemImage: "folder")
-            }
-
-            Divider()
-                .padding(.vertical, 10)
-
-            DisclosureGroup {
-                VStack(alignment: .leading, spacing: 10) {
-                    shortcutRow("双击 Command", detail: "打开或收起 QuickNote")
-                    shortcutRow("Option + 空格", detail: "分析当前选中的文字")
-                }
-                .padding(.top, 8)
-            } label: {
-                settingsLabel("快捷键", systemImage: "keyboard")
-            }
-
-            Divider()
-                .padding(.vertical, 10)
-
-            DisclosureGroup {
-                VStack(alignment: .leading, spacing: 10) {
-                    permissionRow(
-                        path: "隐私与安全性 → 输入监控",
-                        button: "打开输入监控",
-                        settingsPane: "Privacy_ListenEvent"
-                    )
-                    permissionRow(
-                        path: "隐私与安全性 → 辅助功能",
-                        button: "打开辅助功能",
-                        settingsPane: "Privacy_Accessibility"
-                    )
-                    Text("API Key 仅保存在这台 Mac 的系统钥匙串中；AI 内容只发送给当前服务商。")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                .padding(.top, 8)
-            } label: {
-                settingsLabel("帮助与权限", systemImage: "questionmark.circle")
             }
         }
-        .padding(14)
-        .frame(width: 330)
     }
 
-    private func settingsLabel(_ title: String, systemImage: String) -> some View {
-        Label(title, systemImage: systemImage)
-            .font(.system(size: 13, weight: .medium))
+    private var shortcutsDetail: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            shortcutRow(keys: ["⌘", "⌘"], title: "双击 Command", detail: "打开或收起 QuickNote")
+            Divider().padding(.leading, 58)
+            shortcutRow(keys: ["⌥", "Space"], title: "Option + 空格", detail: "分析当前选中的文字")
+            Spacer()
+        }
     }
 
-    private func shortcutRow(_ shortcut: String, detail: String) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 10) {
-            Text(shortcut)
-                .font(.system(size: 12, weight: .semibold))
-                .frame(width: 108, alignment: .leading)
-            Text(detail)
-                .font(.system(size: 11))
+    private var helpDetail: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            permissionRow(
+                title: "输入监控",
+                detail: "隐私与安全性 → 输入监控，用于识别双击 Command。",
+                button: "打开设置",
+                settingsPane: "Privacy_ListenEvent"
+            )
+            Divider()
+            permissionRow(
+                title: "辅助功能",
+                detail: "隐私与安全性 → 辅助功能，用于读取你主动选中的文字。",
+                button: "打开设置",
+                settingsPane: "Privacy_Accessibility"
+            )
+            Divider()
+            Label("API Key 只保存在这台 Mac 的系统钥匙串中。", systemImage: "key")
+                .font(.system(size: 12))
                 .foregroundStyle(.secondary)
+            Spacer()
         }
+    }
+
+    private func storageRow(_ location: NoteStorageLocation) -> some View {
+        Button { reveal(location.url) } label: {
+            HStack(spacing: 12) {
+                Image(systemName: "note.text")
+                    .foregroundStyle(.secondary)
+                    .frame(width: 20)
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: 6) {
+                        Text(location.title.isEmpty ? "新便签" : location.title)
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundStyle(.primary)
+                            .lineLimit(1)
+                        if location.isCurrent {
+                            Text("当前")
+                                .font(.system(size: 10, weight: .medium))
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    Text(location.url.path)
+                        .font(.system(size: 11))
+                        .foregroundStyle(Color(nsColor: .linkColor))
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+                Spacer()
+                Image(systemName: "arrow.forward.circle")
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 10)
+            .frame(maxWidth: .infinity, minHeight: 54, alignment: .leading)
+            .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help("在访达中显示")
+    }
+
+    private func shortcutRow(keys: [String], title: String, detail: String) -> some View {
+        HStack(spacing: 16) {
+            HStack(spacing: 5) {
+                ForEach(Array(keys.enumerated()), id: \.offset) { _, key in
+                    Text(key)
+                        .font(.system(size: key == "Space" ? 10 : 15, weight: .medium))
+                        .frame(minWidth: key == "Space" ? 48 : 28, minHeight: 28)
+                        .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 6))
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 6)
+                                .stroke(Color.secondary.opacity(0.25), lineWidth: 1)
+                        }
+                }
+            }
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title).font(.system(size: 13, weight: .semibold))
+                Text(detail).font(.system(size: 12)).foregroundStyle(.secondary)
+            }
+            Spacer()
+        }
+        .frame(height: 72)
     }
 
     private func permissionRow(
-        path: String,
+        title: String,
+        detail: String,
         button: String,
         settingsPane: String
     ) -> some View {
-        HStack(spacing: 8) {
-            Text(path)
-                .font(.system(size: 11))
-                .foregroundStyle(.secondary)
-            Spacer()
-            Button(button) {
-                guard let url = URL(
-                    string: "x-apple.systempreferences:com.apple.preference.security?\(settingsPane)"
-                ) else { return }
-                NSWorkspace.shared.open(url)
+        HStack(alignment: .top, spacing: 14) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title).font(.system(size: 13, weight: .semibold))
+                Text(detail)
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
-            .controlSize(.small)
+            Spacer(minLength: 16)
+            Button(button) { openSystemSettings(settingsPane) }
+                .controlSize(.small)
+        }
+    }
+
+    private func openSystemSettings(_ pane: String) {
+        guard let url = URL(
+            string: "x-apple.systempreferences:com.apple.preference.security?\(pane)"
+        ) else { return }
+        NSWorkspace.shared.open(url)
+    }
+
+    private func reveal(_ url: URL) {
+        if FileManager.default.fileExists(atPath: url.path) {
+            NSWorkspace.shared.activateFileViewerSelecting([url])
+        } else {
+            NSWorkspace.shared.open(url.deletingLastPathComponent())
         }
     }
 }

@@ -6,6 +6,20 @@ import XCTest
 
 @MainActor
 final class NotePersistenceTests: XCTestCase {
+    func testSessionResolvesEachNoteDocumentPath() throws {
+        let configuration = ModelConfiguration(isStoredInMemoryOnly: true)
+        let container = try ModelContainer(for: NoteRecord.self, configurations: configuration)
+        let repository = NoteRepository(context: container.mainContext)
+        let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        let session = NoteSession(repository: repository, documents: NoteDocumentStore(root: root))
+        let first = NoteRecord()
+        let second = NoteRecord()
+
+        XCTAssertEqual(session.documentURL(for: first), root.appending(path: first.documentPath))
+        XCTAssertEqual(session.documentURL(for: second), root.appending(path: second.documentPath))
+        XCTAssertNotEqual(session.documentURL(for: first), session.documentURL(for: second))
+    }
+
     func testRTFDRoundTripPreservesText() throws {
         let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
         let store = NoteDocumentStore(root: root)

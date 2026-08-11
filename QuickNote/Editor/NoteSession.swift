@@ -18,8 +18,8 @@ final class NoteSession: ObservableObject {
 
     var onSaved: (() -> Void)?
 
-    var currentDocumentURL: URL? {
-        currentNote.map { documents.root.appending(path: $0.documentPath) }
+    func documentURL(for note: NoteRecord) -> URL {
+        documents.root.appending(path: note.documentPath)
     }
 
     init(
