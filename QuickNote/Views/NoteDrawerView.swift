@@ -103,6 +103,7 @@ struct NoteDrawerView: View {
                 Image(systemName: "folder.badge.plus")
             }
             .buttonStyle(.borderless)
+            .quickNoteHoverHighlight()
             .help("新建文件夹")
             .accessibilityLabel("新建文件夹")
 
@@ -110,6 +111,7 @@ struct NoteDrawerView: View {
                 Image(systemName: "square.and.pencil")
             }
             .buttonStyle(.borderless)
+            .quickNoteHoverHighlight()
             .help("新建便签")
             .accessibilityLabel("新建便签")
         }
@@ -177,6 +179,7 @@ struct NoteDrawerView: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .quickNoteHoverHighlight(cornerRadius: 6)
             .accessibilityLabel("\(expandedFolders.contains(folder.id) ? "收起" : "展开")文件夹 \(folder.name)")
 
             Menu {
@@ -200,6 +203,7 @@ struct NoteDrawerView: View {
             .menuStyle(.borderlessButton)
             .menuIndicator(.hidden)
             .fixedSize()
+            .quickNoteHoverHighlight(cornerRadius: 6)
             .help("编辑文件夹")
             .accessibilityLabel("编辑文件夹 \(folder.name)")
         }
@@ -226,6 +230,7 @@ struct NoteDrawerView: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .quickNoteHoverHighlight(cornerRadius: 6, enabled: note.id != selectedID)
 
             Menu {
                 Button(action: { togglePin(note) }) {
@@ -275,6 +280,7 @@ struct NoteDrawerView: View {
             .menuStyle(.borderlessButton)
             .menuIndicator(.hidden)
             .fixedSize()
+            .quickNoteHoverHighlight(cornerRadius: 6)
             .help("编辑便签")
             .accessibilityLabel("编辑便签")
         }

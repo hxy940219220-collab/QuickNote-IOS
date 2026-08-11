@@ -18,6 +18,7 @@ struct EdgeRailView: View {
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .quickNoteHoverHighlight(cornerRadius: 6)
                 .accessibilityLabel(note.title)
                 .onHover { preview($0 ? note : nil) }
             }

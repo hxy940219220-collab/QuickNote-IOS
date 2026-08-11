@@ -1,6 +1,30 @@
 import AppKit
 import SwiftUI
 
+struct QuickNoteHoverHighlight: ViewModifier {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var hovering = false
+
+    let cornerRadius: CGFloat
+    let enabled: Bool
+
+    func body(content: Content) -> some View {
+        content
+            .background(
+                Color.primary.opacity(enabled && hovering ? 0.065 : 0),
+                in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+            )
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: hovering)
+            .onHover { hovering = enabled && $0 }
+    }
+}
+
+extension View {
+    func quickNoteHoverHighlight(cornerRadius: CGFloat = 6, enabled: Bool = true) -> some View {
+        modifier(QuickNoteHoverHighlight(cornerRadius: cornerRadius, enabled: enabled))
+    }
+}
+
 enum QuickNoteShortcut: Equatable {
     case zoomIn
     case zoomOut
@@ -103,6 +127,7 @@ struct RootNoteView: View {
                                 .font(.system(size: 12, weight: .medium))
                         }
                         .buttonStyle(.borderless)
+                        .quickNoteHoverHighlight()
                         .help("查看日历")
                         .accessibilityLabel(CalendarText.fullDate(for: context.date))
                         .popover(isPresented: $calendarPresented, arrowEdge: .top) {
@@ -431,6 +456,7 @@ struct RootNoteView: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.borderless)
+        .quickNoteHoverHighlight()
         .help(label)
         .accessibilityLabel(label)
     }
@@ -480,6 +506,7 @@ private struct NoteThemePicker: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .quickNoteHoverHighlight(cornerRadius: 7, enabled: selection != theme.rawValue)
                 .accessibilityLabel("切换到\(theme.name)主题")
             }
         }
@@ -515,6 +542,7 @@ private struct NoteFormatPopover: View {
                         .background(Color.yellow.opacity(0.48), in: RoundedRectangle(cornerRadius: 5))
                 }
                 .buttonStyle(.borderless)
+                .quickNoteHoverHighlight(cornerRadius: 5)
                 .help("文字与背景颜色")
                 .accessibilityLabel("文字与背景颜色")
                 .popover(isPresented: $colorsPresented, arrowEdge: .trailing) {
@@ -532,6 +560,7 @@ private struct NoteFormatPopover: View {
                     .frame(width: 36, height: 28)
                 }
                 .buttonStyle(.borderless)
+                .quickNoteHoverHighlight(cornerRadius: 5)
                 .help("对齐与缩进")
                 .accessibilityLabel("对齐与缩进")
                 .popover(isPresented: $paragraphPresented, arrowEdge: .trailing) {
@@ -552,6 +581,7 @@ private struct NoteFormatPopover: View {
                         .padding(.vertical, 5)
                 }
                 .buttonStyle(.plain)
+                .quickNoteHoverHighlight(cornerRadius: 5)
             }
 
             Divider().padding(.vertical, 6)
@@ -572,6 +602,7 @@ private struct NoteFormatPopover: View {
                 .frame(width: 28, height: 28)
         }
         .buttonStyle(.borderless)
+        .quickNoteHoverHighlight(cornerRadius: 5)
         .help(help)
         .accessibilityLabel(help)
     }
@@ -588,6 +619,7 @@ private struct NoteFormatPopover: View {
                 .padding(.vertical, 5)
         }
         .buttonStyle(.plain)
+        .quickNoteHoverHighlight(cornerRadius: 5)
     }
 
 }
@@ -634,6 +666,7 @@ private struct ParagraphFormatPopover: View {
                 .frame(height: 30)
         }
         .buttonStyle(.plain)
+        .quickNoteHoverHighlight(cornerRadius: 5)
     }
 
     private func lineSpacingButton(_ title: String, value: CGFloat) -> some View {
@@ -673,6 +706,7 @@ private struct EditorColorPopover: View {
                             .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 5))
                     }
                     .buttonStyle(.plain)
+                    .quickNoteHoverHighlight(cornerRadius: 5)
                     .help(item.name)
                     .accessibilityLabel("字体颜色：\(item.name)")
                 }
@@ -693,6 +727,7 @@ private struct EditorColorPopover: View {
                         .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 5))
                 }
                 .buttonStyle(.plain)
+                .quickNoteHoverHighlight(cornerRadius: 5)
                 .help("无背景色")
                 .accessibilityLabel("无背景色")
 
@@ -705,6 +740,7 @@ private struct EditorColorPopover: View {
                             .frame(width: 28, height: 28)
                     }
                     .buttonStyle(.plain)
+                    .quickNoteHoverHighlight(cornerRadius: 5)
                     .help(item.name)
                     .accessibilityLabel("背景颜色：\(item.name)")
                 }
@@ -915,6 +951,7 @@ private struct QuickNoteSettingsView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .quickNoteHoverHighlight(cornerRadius: 6)
         .accessibilityHint("打开详细页面")
     }
 }
@@ -1076,6 +1113,7 @@ private struct QuickNoteSettingsDetailView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .quickNoteHoverHighlight(cornerRadius: 8)
         .help("在访达中显示")
     }
 
@@ -1203,6 +1241,7 @@ private struct CalendarPopoverView: View {
                 .frame(width: 22, height: 22)
         }
         .buttonStyle(.borderless)
+        .quickNoteHoverHighlight(cornerRadius: 5)
         .help(label)
         .accessibilityLabel(label)
     }
@@ -1229,6 +1268,7 @@ private struct CalendarPopoverView: View {
                 }
         }
         .buttonStyle(.plain)
+        .quickNoteHoverHighlight(cornerRadius: 14, enabled: !selected)
         .accessibilityLabel(CalendarText.fullDate(for: date))
     }
 }
