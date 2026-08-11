@@ -127,8 +127,24 @@ final class RichTextEditorController: ObservableObject {
         types: NSTextCheckingResult.CheckingType.link.rawValue
     )
     private static let listPrefix = try? NSRegularExpression(
-        pattern: #"^([\t ]*)(\d+|[A-Za-z])\.\s+"#
+        pattern: #"^([\t ]*)((?:\d+|[A-Za-z])\.|[•◦\-–›>])\s+"#
     )
+
+    private enum ParagraphPrefixStyle {
+        case bullet
+        case dash
+        case numbered
+        case quote
+
+        func prefix(at index: Int) -> String {
+            switch self {
+            case .bullet: "• "
+            case .dash: "– "
+            case .numbered: "\(index + 1). "
+            case .quote: "› "
+            }
+        }
+    }
 
     func connect(_ textView: NSTextView) {
         self.textView = textView
@@ -163,6 +179,7 @@ final class RichTextEditorController: ObservableObject {
         } else {
             registerUndoSnapshot(in: textView)
             textView.textStorage?.addAttribute(.font, value: style.font, range: range)
+            alignChecklistAttachments(in: textView, range: range, font: style.font)
             commit(textView, preserving: textView.selectedRange())
         }
     }
@@ -311,16 +328,16 @@ final class RichTextEditorController: ObservableObject {
     func prepareChecklistAttachments(in textView: NSTextView) {
         guard let storage = textView.textStorage else { return }
         let range = NSRange(location: 0, length: storage.length)
-        var items: [(Int, Bool)] = []
+        var items: [(Int, Bool, NSFont)] = []
         storage.enumerateAttribute(.attachment, in: range) { value, range, _ in
             guard value is NSTextAttachment,
                   let checked = checklistState(at: range.location, in: storage) else { return }
-            items.append((range.location, checked))
+            items.append((range.location, checked, checklistFont(at: range.location, in: textView)))
         }
-        for (location, checked) in items.reversed() {
+        for (location, checked, font) in items.reversed() {
             storage.replaceCharacters(
                 in: NSRange(location: location, length: 1),
-                with: checklistMarker(checked: checked)
+                with: checklistMarker(checked: checked, font: font)
             )
         }
     }
@@ -348,20 +365,23 @@ final class RichTextEditorController: ObservableObject {
         let indentation = value.substring(with: match.range(at: 1))
         let marker = value.substring(with: match.range(at: 2))
         let next: String
-        if let number = Int(marker) {
-            next = String(number + 1)
-        } else {
-            guard let scalar = marker.unicodeScalars.first,
+        if marker.hasSuffix("."), let number = Int(marker.dropLast()) {
+            next = "\(number + 1)."
+        } else if marker.hasSuffix(".") {
+            let letter = marker.dropLast()
+            guard let scalar = letter.unicodeScalars.first,
                   scalar.value != 90,
                   scalar.value != 122,
                   let following = UnicodeScalar(scalar.value + 1) else { return false }
-            next = String(following)
+            next = "\(following)."
+        } else {
+            next = marker
         }
         var continuationAttributes = storage.attributes(at: paragraph.location, effectiveRange: nil)
         continuationAttributes.removeValue(forKey: .link)
         continuationAttributes.removeValue(forKey: .attachment)
         let content = NSAttributedString(
-            string: "\n\(indentation)\(next). ",
+            string: "\n\(indentation)\(next) ",
             attributes: continuationAttributes
         )
         registerUndoSnapshot(in: textView)
@@ -404,7 +424,10 @@ final class RichTextEditorController: ObservableObject {
             return
         }
         registerUndoSnapshot(in: textView)
-        let marker = checklistMarker(checked: false)
+        let marker = checklistMarker(
+            checked: false,
+            font: checklistFont(at: paragraph.location, in: textView)
+        )
         let content = NSMutableAttributedString(attributedString: marker)
         content.append(NSAttributedString(string: " "))
         storage.insert(content, at: paragraph.location)
@@ -422,43 +445,91 @@ final class RichTextEditorController: ObservableObject {
         registerUndoSnapshot(in: textView)
         storage.replaceCharacters(
             in: NSRange(location: location, length: 1),
-            with: checklistMarker(checked: !checked)
+            with: checklistMarker(
+                checked: !checked,
+                font: checklistFont(at: location, in: textView)
+            )
         )
         commit(textView, preserving: textView.selectedRange())
         return true
     }
 
     func applyList(_ marker: NSTextList.MarkerFormat?) {
-        guard let textView, let storage = textView.textStorage else { return }
-        let selection = textView.selectedRange()
-        let target = paragraphRange(in: textView)
-        guard target.length > 0 else { return }
-        registerUndoSnapshot(in: textView)
-        enumerateParagraphs(in: target, text: storage.string) { range in
-            let existing = (storage.attribute(.paragraphStyle, at: range.location, effectiveRange: nil)
-                as? NSParagraphStyle)?.mutableCopy() as? NSMutableParagraphStyle ?? NSMutableParagraphStyle()
-            existing.textLists = marker.map { [NSTextList(markerFormat: $0, options: 0)] } ?? []
-            existing.headIndent = marker == nil ? 0 : 14
-            existing.firstLineHeadIndent = 0
-            storage.addAttribute(.paragraphStyle, value: existing, range: range)
+        let style: ParagraphPrefixStyle?
+        if marker == .disc {
+            style = .bullet
+        } else if marker == .hyphen {
+            style = .dash
+        } else if marker == .decimal {
+            style = .numbered
+        } else {
+            style = nil
         }
-        commit(textView, preserving: selection)
+        applyParagraphPrefix(style)
     }
 
     func applyBlockQuote() {
+        applyParagraphPrefix(.quote)
+    }
+
+    private func applyParagraphPrefix(_ style: ParagraphPrefixStyle?) {
         guard let textView, let storage = textView.textStorage else { return }
         let selection = textView.selectedRange()
         let target = paragraphRange(in: textView)
-        guard target.length > 0 else { return }
-        registerUndoSnapshot(in: textView)
-        enumerateParagraphs(in: target, text: storage.string) { range in
-            let existing = (storage.attribute(.paragraphStyle, at: range.location, effectiveRange: nil)
-                as? NSParagraphStyle)?.mutableCopy() as? NSMutableParagraphStyle ?? NSMutableParagraphStyle()
-            existing.headIndent = existing.headIndent == 18 ? 0 : 18
-            existing.firstLineHeadIndent = existing.headIndent
-            storage.addAttribute(.paragraphStyle, value: existing, range: range)
+        var paragraphs: [NSRange] = []
+        if target.length == 0 {
+            paragraphs = [target]
+        } else {
+            enumerateParagraphs(in: target, text: storage.string) { paragraphs.append($0) }
         }
-        commit(textView, preserving: selection)
+        let removing = style.map { style in
+            paragraphs.enumerated().allSatisfy { index, range in
+                (storage.string as NSString).substring(with: range).hasPrefix(style.prefix(at: index))
+            }
+        } ?? false
+        let appliedStyle = removing ? nil : style
+        var adjustedSelection = selection
+
+        registerUndoSnapshot(in: textView)
+        for (index, paragraph) in paragraphs.enumerated().reversed() {
+            let value = (storage.string as NSString).substring(with: paragraph)
+            let valueRange = NSRange(location: 0, length: (value as NSString).length)
+            let match = Self.listPrefix?.firstMatch(in: value, range: valueRange)
+            let prefixRange = match.map {
+                NSRange(location: paragraph.location + $0.range.location, length: $0.range.length)
+            } ?? NSRange(location: paragraph.location, length: 0)
+            let replacementText = appliedStyle?.prefix(at: index) ?? ""
+            var attributes = paragraph.location < storage.length
+                ? storage.attributes(at: paragraph.location, effectiveRange: nil)
+                : textView.typingAttributes
+            attributes.removeValue(forKey: .attachment)
+            attributes.removeValue(forKey: .link)
+            let replacement = NSAttributedString(string: replacementText, attributes: attributes)
+            let delta = replacement.length - prefixRange.length
+
+            if NSMaxRange(prefixRange) <= adjustedSelection.location {
+                adjustedSelection.location += delta
+            } else if prefixRange.location < NSMaxRange(adjustedSelection) {
+                adjustedSelection.length = max(0, adjustedSelection.length + delta)
+            }
+            storage.replaceCharacters(in: prefixRange, with: replacement)
+
+            let updatedRange = NSRange(location: paragraph.location, length: paragraph.length + delta)
+            let paragraphStyle = (attributes[.paragraphStyle] as? NSParagraphStyle)?
+                .mutableCopy() as? NSMutableParagraphStyle ?? NSMutableParagraphStyle()
+            paragraphStyle.textLists = []
+            paragraphStyle.firstLineHeadIndent = 0
+            paragraphStyle.headIndent = appliedStyle == nil ? 0 : 14
+            if updatedRange.length > 0 {
+                storage.addAttribute(.paragraphStyle, value: paragraphStyle, range: updatedRange)
+            } else {
+                textView.typingAttributes[.paragraphStyle] = paragraphStyle
+            }
+        }
+
+        adjustedSelection.location = min(adjustedSelection.location, storage.length)
+        adjustedSelection.length = min(adjustedSelection.length, storage.length - adjustedSelection.location)
+        commit(textView, preserving: adjustedSelection)
     }
 
     func insertTable(rows: Int = 2, columns: Int = 2) {
@@ -867,24 +938,24 @@ final class RichTextEditorController: ObservableObject {
             ?? EditorTextStyle.body.font
     }
 
-    private func checklistMarker(checked: Bool) -> NSAttributedString {
-        let image = NSImage(size: NSSize(width: 15, height: 15))
+    private func checklistMarker(checked: Bool, font: NSFont) -> NSAttributedString {
+        let image = NSImage(size: NSSize(width: 11, height: 11))
         image.lockFocus()
-        let circle = NSBezierPath(ovalIn: NSRect(x: 1.5, y: 1.5, width: 12, height: 12))
+        let circle = NSBezierPath(ovalIn: NSRect(x: 1, y: 1, width: 9, height: 9))
         if checked {
             NSColor.controlAccentColor.setFill()
             circle.fill()
             let checkmark = NSBezierPath()
-            checkmark.move(to: NSPoint(x: 4.2, y: 7.4))
-            checkmark.line(to: NSPoint(x: 6.5, y: 5.2))
-            checkmark.line(to: NSPoint(x: 10.9, y: 10))
-            checkmark.lineWidth = 1.6
+            checkmark.move(to: NSPoint(x: 3, y: 5.5))
+            checkmark.line(to: NSPoint(x: 4.8, y: 3.8))
+            checkmark.line(to: NSPoint(x: 8.3, y: 7.7))
+            checkmark.lineWidth = 1.25
             checkmark.lineCapStyle = .round
             checkmark.lineJoinStyle = .round
             NSColor.white.setStroke()
             checkmark.stroke()
         } else {
-            circle.lineWidth = 1.5
+            circle.lineWidth = 1.25
             NSColor.tertiaryLabelColor.setStroke()
             circle.stroke()
         }
@@ -895,9 +966,33 @@ final class RichTextEditorController: ObservableObject {
         let wrapper = FileWrapper(regularFileWithContents: png ?? Data())
         wrapper.preferredFilename = "quicknote-checklist-\(checked ? "checked" : "unchecked").png"
         let attachment = NSTextAttachment(fileWrapper: wrapper)
-        attachment.bounds = NSRect(x: 0, y: -2, width: 15, height: 15)
+        attachment.bounds = checklistBounds(for: font)
         attachment.attachmentCell = ChecklistAttachmentCell(imageCell: png.flatMap(NSImage.init(data:)))
         return NSAttributedString(attachment: attachment)
+    }
+
+    private func checklistFont(at location: Int, in textView: NSTextView) -> NSFont {
+        guard let storage = textView.textStorage, storage.length > 0 else {
+            return textView.typingAttributes[.font] as? NSFont ?? EditorTextStyle.body.font
+        }
+        let nextCharacter = min(location + 2, storage.length - 1)
+        return storage.attribute(.font, at: nextCharacter, effectiveRange: nil) as? NSFont
+            ?? font(at: location, in: textView)
+    }
+
+    private func checklistBounds(for font: NSFont) -> NSRect {
+        let size: CGFloat = 11
+        return NSRect(x: 0, y: (font.capHeight - size) / 2, width: size, height: size)
+    }
+
+    private func alignChecklistAttachments(in textView: NSTextView, range: NSRange, font: NSFont) {
+        guard let storage = textView.textStorage, range.length > 0 else { return }
+        storage.enumerateAttribute(.attachment, in: range) { value, _, _ in
+            guard let attachment = value as? NSTextAttachment,
+                  let filename = attachment.fileWrapper?.preferredFilename ?? attachment.fileWrapper?.filename,
+                  filename.hasPrefix("quicknote-checklist-") else { return }
+            attachment.bounds = checklistBounds(for: font)
+        }
     }
 
     private func checklistState(at location: Int, in storage: NSTextStorage) -> Bool? {

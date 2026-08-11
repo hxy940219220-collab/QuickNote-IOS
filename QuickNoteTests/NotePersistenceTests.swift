@@ -395,8 +395,19 @@ final class NotePersistenceTests: XCTestCase {
             document.attribute(.attachment, at: itemRange.location, effectiveRange: nil) as? NSTextAttachment
         )
         XCTAssertEqual(attachment.fileWrapper?.preferredFilename, "quicknote-checklist-unchecked.png")
+        XCTAssertEqual(attachment.bounds.size, NSSize(width: 11, height: 11))
 
         let textView = try XCTUnwrap(host.descendant(ofType: NSTextView.self))
+        textView.setSelectedRange(NSRange(location: 0, length: document.length))
+        controller.applyTextStyle(.title)
+        attachment = try XCTUnwrap(
+            document.attribute(.attachment, at: itemRange.location, effectiveRange: nil) as? NSTextAttachment
+        )
+        XCTAssertEqual(
+            attachment.bounds.origin.y,
+            (EditorTextStyle.title.font.capHeight - 11) / 2,
+            accuracy: 0.01
+        )
         let click = try XCTUnwrap(NSEvent.mouseEvent(
             with: .leftMouseDown,
             location: .zero,
@@ -410,7 +421,7 @@ final class NotePersistenceTests: XCTestCase {
         ))
         let handled = attachment.attachmentCell?.trackMouse(
             with: click,
-            in: NSRect(x: 0, y: 0, width: 15, height: 15),
+            in: attachment.bounds,
             of: textView,
             atCharacterIndex: itemRange.location,
             untilMouseUp: false
@@ -443,6 +454,47 @@ final class NotePersistenceTests: XCTestCase {
         XCTAssertNotNil((reopenedAttachment?.attachmentCell as? NSTextAttachmentCell)?.image)
         XCTAssertEqual(reopenedAttachment?.fileWrapper?.preferredFilename, "quicknote-checklist-unchecked.png")
         XCTAssertNil(reopened.attribute(.link, at: itemRange.location, effectiveRange: nil))
+    }
+
+    func testParagraphFormattingUsesVisiblePrefixes() throws {
+        let controller = RichTextEditorController()
+        var document = NSAttributedString(string: "第一项\n第二项")
+        let editor = RichTextEditor(
+            document: document,
+            cursorLocation: 0,
+            controller: controller,
+            onChange: { updated, _ in document = updated },
+            onActivate: {}
+        )
+        let host = NSHostingView(rootView: editor)
+        host.frame = NSRect(x: 0, y: 0, width: 320, height: 240)
+        host.layoutSubtreeIfNeeded()
+        let textView = try XCTUnwrap(host.descendant(ofType: NSTextView.self))
+
+        func selectAll() {
+            textView.setSelectedRange(NSRange(location: 0, length: document.length))
+        }
+
+        selectAll()
+        controller.applyList(.disc)
+        XCTAssertEqual(document.string, "• 第一项\n• 第二项")
+        selectAll()
+        controller.applyList(.hyphen)
+        XCTAssertEqual(document.string, "– 第一项\n– 第二项")
+        selectAll()
+        controller.applyList(.decimal)
+        XCTAssertEqual(document.string, "1. 第一项\n2. 第二项")
+        selectAll()
+        controller.applyBlockQuote()
+        XCTAssertEqual(document.string, "› 第一项\n› 第二项")
+        selectAll()
+        controller.applyBlockQuote()
+        XCTAssertEqual(document.string, "第一项\n第二项")
+
+        textView.textStorage?.setAttributedString(NSAttributedString())
+        textView.setSelectedRange(.init(location: 0, length: 0))
+        controller.applyList(.disc)
+        XCTAssertEqual(document.string, "• ")
     }
 
     func testLegacyLinkedChecklistIsMigratedToDirectClickMarker() throws {
