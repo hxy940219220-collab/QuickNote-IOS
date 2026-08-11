@@ -438,7 +438,7 @@ final class RichTextEditorController: ObservableObject {
             let existing = (storage.attribute(.paragraphStyle, at: range.location, effectiveRange: nil)
                 as? NSParagraphStyle)?.mutableCopy() as? NSMutableParagraphStyle ?? NSMutableParagraphStyle()
             existing.textLists = marker.map { [NSTextList(markerFormat: $0, options: 0)] } ?? []
-            existing.headIndent = marker == nil ? 0 : 22
+            existing.headIndent = marker == nil ? 0 : 14
             existing.firstLineHeadIndent = 0
             storage.addAttribute(.paragraphStyle, value: existing, range: range)
         }

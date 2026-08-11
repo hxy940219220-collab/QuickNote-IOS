@@ -236,8 +236,8 @@ enum SelectionResultFormatter {
                 var attributes: [NSAttributedString.Key: Any] = [.font: font]
                 if bulletLevel > 0 {
                     let style = NSMutableParagraphStyle()
-                    style.firstLineHeadIndent = bulletLevel == 1 ? 0 : 18
-                    style.headIndent = bulletLevel == 1 ? 18 : 36
+                    style.firstLineHeadIndent = bulletLevel == 1 ? 0 : 14
+                    style.headIndent = bulletLevel == 1 ? 14 : 28
                     attributes[.paragraphStyle] = style
                 }
                 if intent?.contains(.strikethrough) == true {
