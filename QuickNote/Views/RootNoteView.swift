@@ -86,9 +86,6 @@ struct RootNoteView: View {
                 .padding(.trailing, 10)
 
                 HStack(spacing: 2) {
-                    toolbarButton("撤回", systemImage: "arrow.uturn.backward", action: editorController.undo)
-                        .disabled(!editorController.canUndo)
-
                     toolbarButton("格式", systemImage: "textformat") {
                         formatPresented.toggle()
                     }
