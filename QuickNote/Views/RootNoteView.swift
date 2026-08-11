@@ -778,18 +778,18 @@ private struct QuickNoteSettingsView: View {
     let open: (QuickNoteSettingsDestination) -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: 0) {
             Text("设置")
-                .font(.system(size: 15, weight: .semibold))
-                .padding(.horizontal, 8)
-                .padding(.bottom, 4)
+                .font(.system(size: 14, weight: .semibold))
+                .padding(.horizontal, 6)
+                .padding(.bottom, 2)
 
             settingsButton(.localStorage)
             settingsButton(.shortcuts)
             settingsButton(.help)
         }
-        .padding(10)
-        .frame(width: 248)
+        .padding(8)
+        .frame(width: 176)
     }
 
     private func settingsButton(_ destination: QuickNoteSettingsDestination) -> some View {
@@ -804,8 +804,8 @@ private struct QuickNoteSettingsView: View {
                     .foregroundStyle(.tertiary)
             }
             .font(.system(size: 13, weight: .medium))
-            .padding(.horizontal, 8)
-            .frame(maxWidth: .infinity, minHeight: 38, alignment: .leading)
+            .padding(.horizontal, 6)
+            .frame(maxWidth: .infinity, minHeight: 30, alignment: .leading)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
