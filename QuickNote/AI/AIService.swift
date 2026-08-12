@@ -705,14 +705,14 @@ final class AISettingsController {
 
     private func makePanel() -> NSPanel {
         let panel = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 760, height: 620),
+            contentRect: NSRect(x: 0, y: 0, width: 720, height: 520),
             styleMask: [.titled, .closable, .resizable],
             backing: .buffered,
             defer: false
         )
         panel.title = "AI 模型"
         panel.isReleasedWhenClosed = false
-        panel.minSize = NSSize(width: 720, height: 600)
+        panel.minSize = NSSize(width: 680, height: 500)
         panel.contentView = NSHostingView(rootView: AISettingsView(store: store))
         return panel
     }
@@ -776,15 +776,15 @@ private struct AISettingsView: View {
                     .font(.system(size: 10, weight: .medium))
                     .foregroundStyle(.secondary)
             }
-            .frame(maxWidth: 640)
-            .padding(.top, 24)
-            .padding(.bottom, 18)
+            .frame(maxWidth: 672)
+            .padding(.top, 20)
+            .padding(.bottom, 14)
 
             Divider()
-                .frame(maxWidth: 640)
+                .frame(maxWidth: 672)
 
             ScrollView(.vertical) {
-                VStack(alignment: .leading, spacing: 24) {
+                VStack(alignment: .leading, spacing: 20) {
                     VStack(alignment: .leading, spacing: 10) {
                         sectionTitle("模型路由", detail: "按输入类型自动选择模型")
                         HStack(alignment: .top, spacing: 14) {
@@ -815,15 +815,19 @@ private struct AISettingsView: View {
                     }
 
                     VStack(alignment: .leading, spacing: 14) {
-                        sectionTitle("API 接入", detail: "已配置 \(configuredCount) / 6")
-                        Picker("", selection: $slot) {
-                            ForEach(AIProfileSlot.allCases) { item in
-                                Text("接入 \(item.rawValue + 1)").tag(item)
+                        HStack(spacing: 12) {
+                            sectionTitle("API 接入", detail: "已配置 \(configuredCount) / 6")
+                            Spacer()
+                            Picker("", selection: $slot) {
+                                ForEach(AIProfileSlot.allCases) { item in
+                                    Text("接入 \(item.rawValue + 1)").tag(item)
+                                }
                             }
+                            .labelsHidden()
+                            .pickerStyle(.segmented)
+                            .frame(width: 372)
+                            .onChange(of: slot) { _, value in load(value) }
                         }
-                        .labelsHidden()
-                        .pickerStyle(.segmented)
-                        .onChange(of: slot) { _, value in load(value) }
 
                         HStack(alignment: .top, spacing: 14) {
                             VStack(spacing: 14) {
@@ -861,13 +865,13 @@ private struct AISettingsView: View {
                         }
                     }
                 }
-                .frame(maxWidth: 640, alignment: .leading)
-                .padding(.vertical, 20)
+                .frame(maxWidth: 672, alignment: .leading)
+                .padding(.vertical, 16)
                 .frame(maxWidth: .infinity)
             }
 
             Divider()
-                .frame(maxWidth: 640)
+                .frame(maxWidth: 672)
             VStack(spacing: 8) {
                 if !status.isEmpty {
                     HStack(spacing: 6) {
@@ -907,11 +911,12 @@ private struct AISettingsView: View {
                         .buttonStyle(.borderedProminent)
                 }
             }
-            .frame(maxWidth: 640)
-            .padding(.vertical, 14)
+            .frame(maxWidth: 672)
+            .padding(.top, 12)
+            .padding(.bottom, 14)
         }
-        .padding(.horizontal, 32)
-        .frame(minWidth: 720, idealWidth: 760, minHeight: 600, idealHeight: 620)
+        .padding(.horizontal, 24)
+        .frame(minWidth: 680, idealWidth: 720, minHeight: 500, idealHeight: 520)
         .alert(item: $capabilityAlert) { alert in
             Alert(
                 title: Text("能力测试"),

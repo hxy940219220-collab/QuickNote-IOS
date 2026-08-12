@@ -223,8 +223,13 @@ private struct ScreenshotActionView: View {
                     .resizable()
                     .scaledToFit()
                     .frame(maxWidth: .infinity, minHeight: 150, maxHeight: state.result.isEmpty ? 260 : 190)
-                    .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 11))
-                    .overlay { RoundedRectangle(cornerRadius: 11).stroke(Color.secondary.opacity(0.12)) }
+                    .padding(8)
+                    .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 11))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 11)
+                            .stroke(Color.secondary.opacity(0.32), lineWidth: 1)
+                    }
+                    .shadow(color: Color.black.opacity(0.06), radius: 4, y: 1)
 
                 HStack(spacing: 8) {
                     TextField("你想了解这张图片的什么？", text: $state.prompt)
