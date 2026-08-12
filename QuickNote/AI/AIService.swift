@@ -787,27 +787,25 @@ private struct AISettingsView: View {
                 VStack(alignment: .leading, spacing: 24) {
                     VStack(alignment: .leading, spacing: 10) {
                         sectionTitle("模型路由", detail: "按输入类型自动选择模型")
-                        VStack(spacing: 12) {
-                            HStack(alignment: .top, spacing: 14) {
-                                routePicker("文字模型", icon: "textformat", selection: $textRoute, modality: .text)
-                                routePicker("图片模型", icon: "photo", selection: $imageRoute, modality: .image)
-                            }
-                            Divider()
-                            HStack(spacing: 12) {
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text("自动回退")
+                        HStack(alignment: .top, spacing: 14) {
+                            routePicker("文字模型", icon: "textformat", selection: $textRoute, modality: .text)
+                            routePicker("图片模型", icon: "photo", selection: $imageRoute, modality: .image)
+                            VStack(alignment: .leading, spacing: 5) {
+                                Label("自动回退", systemImage: "arrow.trianglehead.2.clockwise.rotate.90")
+                                    .font(.system(size: 10, weight: .medium))
+                                    .foregroundStyle(.secondary)
+                                HStack(spacing: 8) {
+                                    Text("失败时切换一次")
                                         .font(.system(size: 11, weight: .medium))
-                                    Text("首选模型失败时，仅切换一次")
-                                        .font(.system(size: 10))
-                                        .foregroundStyle(.secondary)
+                                    Spacer()
+                                    Toggle("", isOn: $automaticFallback)
+                                        .labelsHidden()
+                                        .onChange(of: automaticFallback) { _, value in
+                                            store.automaticFallback = value
+                                        }
                                 }
-                                Spacer()
-                                Toggle("", isOn: $automaticFallback)
-                                    .labelsHidden()
-                                    .onChange(of: automaticFallback) { _, value in
-                                        store.automaticFallback = value
-                                    }
                             }
+                            .frame(maxWidth: .infinity, alignment: .leading)
                         }
                         .padding(14)
                         .background(
@@ -828,55 +826,38 @@ private struct AISettingsView: View {
                         .onChange(of: slot) { _, value in load(value) }
 
                         HStack(alignment: .top, spacing: 14) {
-                            field("接入名称") {
-                                TextField("例如：主力文字模型", text: $profileName)
-                                    .textFieldStyle(.roundedBorder)
-                            }
-                            field("服务商") {
-                                Picker("", selection: providerBinding) {
-                                    ForEach(AIProvider.allCases) { provider in
-                                        Text(provider.name).tag(provider)
-                                    }
+                            VStack(spacing: 14) {
+                                field("接入名称") {
+                                    TextField("例如：主力文字模型", text: $profileName)
+                                        .textFieldStyle(.roundedBorder)
                                 }
-                                .labelsHidden()
-                                .frame(maxWidth: .infinity)
+                                field("Base URL") {
+                                    TextField("https://…", text: $baseURL)
+                                        .textFieldStyle(.roundedBorder)
+                                }
+                                field("API Key") {
+                                    SecureField("sk-…", text: $apiKey)
+                                        .textFieldStyle(.roundedBorder)
+                                }
                             }
-                        }
+                            .frame(maxWidth: .infinity, alignment: .leading)
 
-                        HStack(alignment: .top, spacing: 14) {
-                            field("Base URL") {
-                                TextField("https://…", text: $baseURL)
-                                    .textFieldStyle(.roundedBorder)
-                            }
-                            field("模型名称") {
-                                TextField("model-id", text: $model)
-                                    .textFieldStyle(.roundedBorder)
-                            }
-                        }
-
-                        field("输入能力") {
-                            HStack(spacing: 7) {
-                                ForEach(AIInputModality.allCases) { modality in
-                                    modalityButton(modality)
-                                }
-                                Button(action: testSelectedModalities) {
-                                    if isTestingCapabilities {
-                                        ProgressView().controlSize(.mini)
-                                    } else {
-                                        Image(systemName: "checkmark.circle")
-                                            .font(.system(size: 12, weight: .medium))
+                            VStack(spacing: 14) {
+                                field("服务商") {
+                                    Picker("", selection: providerBinding) {
+                                        ForEach(AIProvider.allCases) { provider in
+                                            Text(provider.name).tag(provider)
+                                        }
                                     }
+                                    .labelsHidden()
+                                    .frame(maxWidth: .infinity, alignment: .leading)
                                 }
-                                .buttonStyle(.plain)
-                                .frame(width: 22, height: 22)
-                                .disabled(isTestingCapabilities)
-                                .help("测试已勾选的识别能力")
-                                .accessibilityLabel("测试已勾选的识别能力")
+                                field("模型名称") {
+                                    TextField("model-id", text: $model)
+                                        .textFieldStyle(.roundedBorder)
+                                }
                             }
-                        }
-                        field("API Key") {
-                            SecureField("sk-…", text: $apiKey)
-                                .textFieldStyle(.roundedBorder)
+                            .frame(maxWidth: .infinity, alignment: .leading)
                         }
                     }
                 }
@@ -887,19 +868,44 @@ private struct AISettingsView: View {
 
             Divider()
                 .frame(maxWidth: 640)
-            HStack(spacing: 10) {
-                Image(systemName: status.isEmpty ? "lock" : "info.circle")
+            VStack(spacing: 8) {
+                if !status.isEmpty {
+                    HStack(spacing: 6) {
+                        Image(systemName: "info.circle")
+                        Text(status)
+                            .lineLimit(1)
+                        Spacer()
+                    }
+                    .font(.system(size: 10))
                     .foregroundStyle(.secondary)
-                Text(status.isEmpty ? "API Key 仅存入 macOS 钥匙串" : status)
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                Spacer()
-                Button("恢复预设", action: restorePreset)
-                Button(isTesting ? "测试中…" : "测试连接", action: testConnection)
-                    .disabled(isTesting)
-                Button("保存接入", action: save)
-                    .buttonStyle(.borderedProminent)
+                }
+                HStack(spacing: 7) {
+                    Text("模型能力")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(.secondary)
+                    ForEach(AIInputModality.allCases) { modality in
+                        modalityButton(modality)
+                    }
+                    Button(action: testSelectedModalities) {
+                        if isTestingCapabilities {
+                            ProgressView().controlSize(.mini)
+                        } else {
+                            Image(systemName: "checkmark.circle")
+                                .font(.system(size: 12, weight: .medium))
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .frame(width: 22, height: 22)
+                    .disabled(isTestingCapabilities)
+                    .help("测试已勾选的识别能力")
+                    .accessibilityLabel("测试已勾选的识别能力")
+                    Spacer()
+                    Button("恢复预设", action: restorePreset)
+                    Button(isTesting ? "测试中…" : "测试连接", action: testConnection)
+                        .disabled(isTesting)
+                    Button("保存接入", action: save)
+                        .buttonStyle(.borderedProminent)
+                }
             }
             .frame(maxWidth: 640)
             .padding(.vertical, 14)
