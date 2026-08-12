@@ -746,6 +746,7 @@ private struct AISettingsView: View {
     @State private var textRoute: AIProfileSlot
     @State private var imageRoute: AIProfileSlot
     @State private var automaticFallback: Bool
+    @State private var didCopyAPIKey = false
     @FocusState private var focusedField: AISettingsField?
 
     init(store: AIConfigurationStore) {
@@ -836,62 +837,82 @@ private struct AISettingsView: View {
 
                     HStack(alignment: .top, spacing: 14) {
                         field("接入名称", icon: "tag") {
-                            TextField("例如：主力文字模型", text: $profileName)
-                                .textFieldStyle(.roundedBorder)
-                                .focused($focusedField, equals: .profileName)
+                            inputChrome(focused: .profileName) {
+                                TextField("例如：主力文字模型", text: $profileName)
+                                    .textFieldStyle(.plain)
+                                    .focused($focusedField, equals: .profileName)
+                            }
                         }
                         field("服务商", icon: "building.2") {
-                            Menu {
-                                ForEach(AIProvider.allCases) { item in
-                                    Button {
-                                        providerBinding.wrappedValue = item
-                                        focusedField = nil
-                                    } label: {
-                                        if item == provider {
-                                            Label(item.name, systemImage: "checkmark")
-                                        } else {
-                                            Text(item.name)
+                            inputChrome {
+                                Menu {
+                                    ForEach(AIProvider.allCases) { item in
+                                        Button {
+                                            providerBinding.wrappedValue = item
+                                            focusedField = nil
+                                        } label: {
+                                            if item == provider {
+                                                Label(item.name, systemImage: "checkmark")
+                                            } else {
+                                                Text(item.name)
+                                            }
                                         }
                                     }
+                                } label: {
+                                    HStack(spacing: 8) {
+                                        Text(provider.name)
+                                            .foregroundStyle(.primary)
+                                        Spacer()
+                                        Image(systemName: "chevron.down")
+                                            .font(.system(size: 9, weight: .semibold))
+                                            .foregroundStyle(.secondary)
+                                    }
+                                    .frame(maxWidth: .infinity)
+                                    .contentShape(Rectangle())
                                 }
-                            } label: {
-                                HStack(spacing: 8) {
-                                    Text(provider.name)
-                                        .foregroundStyle(.primary)
-                                    Spacer()
-                                    Image(systemName: "chevron.up.chevron.down")
-                                        .font(.system(size: 9, weight: .semibold))
-                                        .foregroundStyle(.secondary)
-                                }
-                                .padding(.horizontal, 8)
-                                .frame(maxWidth: .infinity, minHeight: 22)
-                                .contentShape(Rectangle())
-                                .overlay {
-                                    RoundedRectangle(cornerRadius: 5)
-                                        .stroke(Color.secondary.opacity(0.22), lineWidth: 1)
-                                }
+                                .menuStyle(.borderlessButton)
+                                .menuIndicator(.hidden)
+                                .frame(maxWidth: .infinity)
                             }
-                            .menuStyle(.borderlessButton)
-                            .menuIndicator(.hidden)
-                            .frame(maxWidth: .infinity)
                         }
                     }
                     HStack(alignment: .top, spacing: 14) {
                         field("Base URL", icon: "link") {
-                            TextField("https://…", text: $baseURL)
-                                .textFieldStyle(.roundedBorder)
-                                .focused($focusedField, equals: .baseURL)
+                            inputChrome(focused: .baseURL) {
+                                TextField("https://…", text: $baseURL)
+                                    .textFieldStyle(.plain)
+                                    .focused($focusedField, equals: .baseURL)
+                            }
                         }
                         field("模型名称", icon: "cube") {
-                            TextField("model-id", text: $model)
-                                .textFieldStyle(.roundedBorder)
-                                .focused($focusedField, equals: .model)
+                            inputChrome(focused: .model) {
+                                TextField("model-id", text: $model)
+                                    .textFieldStyle(.plain)
+                                    .focused($focusedField, equals: .model)
+                            }
                         }
                     }
                     field("API Key", icon: "key.fill") {
-                        SecureField("sk-…", text: $apiKey)
-                            .textFieldStyle(.roundedBorder)
-                            .focused($focusedField, equals: .apiKey)
+                        inputChrome(focused: .apiKey) {
+                            HStack(spacing: 6) {
+                                SecureField("sk-…", text: $apiKey)
+                                    .textFieldStyle(.plain)
+                                    .focused($focusedField, equals: .apiKey)
+                                Divider().frame(height: 14)
+                                Button(action: copyAPIKey) {
+                                    Image(systemName: didCopyAPIKey ? "checkmark" : "doc.on.doc")
+                                        .font(.system(size: 11, weight: .medium))
+                                        .foregroundStyle(didCopyAPIKey ? Color.green : Color.secondary)
+                                        .frame(width: 22, height: 20)
+                                        .contentShape(Rectangle())
+                                }
+                                .buttonStyle(.plain)
+                                .quickNoteHoverHighlight(cornerRadius: 4, enabled: !apiKey.isEmpty)
+                                .disabled(apiKey.isEmpty)
+                                .help(didCopyAPIKey ? "已复制" : "复制 API Key")
+                                .accessibilityLabel(didCopyAPIKey ? "API Key 已复制" : "复制 API Key")
+                            }
+                        }
                     }
                 }
             }
@@ -985,6 +1006,26 @@ private struct AISettingsView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
+    private func inputChrome<Content: View>(
+        focused field: AISettingsField? = nil,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        content()
+            .padding(.horizontal, 8)
+            .frame(maxWidth: .infinity, minHeight: 25)
+            .background(Color(nsColor: .textBackgroundColor).opacity(0.35), in: RoundedRectangle(cornerRadius: 6))
+            .overlay {
+                RoundedRectangle(cornerRadius: 6)
+                    .stroke(
+                        focusedField == field && field != nil
+                            ? Color.accentColor.opacity(0.7)
+                            : Color.secondary.opacity(0.2),
+                        lineWidth: focusedField == field && field != nil ? 1.5 : 1
+                    )
+            }
+            .transaction { $0.animation = nil }
+    }
+
     private func routePicker(
         _ title: String,
         icon: String,
@@ -1029,6 +1070,17 @@ private struct AISettingsView: View {
         baseURL = provider.defaultBaseURL
         model = provider.defaultModel
         status = "已恢复预设，保存后生效。"
+    }
+
+    private func copyAPIKey() {
+        guard !apiKey.isEmpty else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(apiKey, forType: .string)
+        focusedField = nil
+        didCopyAPIKey = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.4) {
+            didCopyAPIKey = false
+        }
     }
 
     private func testSelectedModalities() {
