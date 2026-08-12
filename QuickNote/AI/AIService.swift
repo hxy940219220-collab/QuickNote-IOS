@@ -705,14 +705,14 @@ final class AISettingsController {
 
     private func makePanel() -> NSPanel {
         let panel = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 720, height: 520),
+            contentRect: NSRect(x: 0, y: 0, width: 640, height: 480),
             styleMask: [.titled, .closable, .resizable],
             backing: .buffered,
             defer: false
         )
         panel.title = "AI 模型"
         panel.isReleasedWhenClosed = false
-        panel.minSize = NSSize(width: 680, height: 500)
+        panel.minSize = NSSize(width: 620, height: 470)
         panel.contentView = NSHostingView(rootView: AISettingsView(store: store))
         return panel
     }
@@ -776,15 +776,14 @@ private struct AISettingsView: View {
                     .font(.system(size: 10, weight: .medium))
                     .foregroundStyle(.secondary)
             }
-            .frame(maxWidth: 672)
+            .frame(maxWidth: 592)
             .padding(.top, 20)
             .padding(.bottom, 14)
 
             Divider()
-                .frame(maxWidth: 672)
+                .frame(maxWidth: 592)
 
-            ScrollView(.vertical) {
-                VStack(alignment: .leading, spacing: 20) {
+            VStack(alignment: .leading, spacing: 20) {
                     VStack(alignment: .leading, spacing: 10) {
                         sectionTitle("模型路由", detail: "按输入类型自动选择模型")
                         HStack(alignment: .top, spacing: 14) {
@@ -797,13 +796,13 @@ private struct AISettingsView: View {
                                 HStack(spacing: 8) {
                                     Text("失败时切换一次")
                                         .font(.system(size: 11, weight: .medium))
-                                    Spacer()
                                     Toggle("", isOn: $automaticFallback)
                                         .labelsHidden()
                                         .onChange(of: automaticFallback) { _, value in
                                             store.automaticFallback = value
                                         }
                                 }
+                                .frame(maxWidth: .infinity, alignment: .leading)
                             }
                             .frame(maxWidth: .infinity, alignment: .leading)
                         }
@@ -817,7 +816,6 @@ private struct AISettingsView: View {
                     VStack(alignment: .leading, spacing: 14) {
                         HStack(spacing: 12) {
                             sectionTitle("API 接入", detail: "已配置 \(configuredCount) / 6")
-                            Spacer()
                             Picker("", selection: $slot) {
                                 ForEach(AIProfileSlot.allCases) { item in
                                     Text("接入 \(item.rawValue + 1)").tag(item)
@@ -825,7 +823,7 @@ private struct AISettingsView: View {
                             }
                             .labelsHidden()
                             .pickerStyle(.segmented)
-                            .frame(width: 372)
+                            .frame(maxWidth: .infinity)
                             .onChange(of: slot) { _, value in load(value) }
                         }
 
@@ -864,14 +862,12 @@ private struct AISettingsView: View {
                             .frame(maxWidth: .infinity, alignment: .leading)
                         }
                     }
-                }
-                .frame(maxWidth: 672, alignment: .leading)
-                .padding(.vertical, 16)
-                .frame(maxWidth: .infinity)
             }
+            .frame(maxWidth: 592, alignment: .leading)
+            .padding(.vertical, 14)
 
             Divider()
-                .frame(maxWidth: 672)
+                .frame(maxWidth: 592)
             VStack(spacing: 8) {
                 if !status.isEmpty {
                     HStack(spacing: 6) {
@@ -910,13 +906,14 @@ private struct AISettingsView: View {
                     Button("保存接入", action: save)
                         .buttonStyle(.borderedProminent)
                 }
+                .controlSize(.small)
             }
-            .frame(maxWidth: 672)
+            .frame(maxWidth: 592)
             .padding(.top, 12)
-            .padding(.bottom, 14)
+            .padding(.bottom, 18)
         }
         .padding(.horizontal, 24)
-        .frame(minWidth: 680, idealWidth: 720, minHeight: 500, idealHeight: 520)
+        .frame(minWidth: 620, idealWidth: 640, minHeight: 470, idealHeight: 480)
         .alert(item: $capabilityAlert) { alert in
             Alert(
                 title: Text("能力测试"),
