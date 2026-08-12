@@ -41,3 +41,32 @@ struct DoubleCommandDetector {
         firstReleaseTime = nil
     }
 }
+
+struct CommandShiftDetector {
+    enum Observation {
+        case modifiersChanged(commandDown: Bool, shiftDown: Bool, hasOtherModifiers: Bool)
+        case otherInput
+    }
+
+    private(set) var isTracking = false
+
+    mutating func observe(_ observation: Observation) -> Bool {
+        switch observation {
+        case .otherInput:
+            isTracking = false
+            return false
+        case let .modifiersChanged(commandDown, shiftDown, hasOtherModifiers):
+            if hasOtherModifiers {
+                isTracking = false
+                return false
+            }
+            if commandDown && shiftDown {
+                isTracking = true
+                return false
+            }
+            guard isTracking, !commandDown, !shiftDown else { return false }
+            isTracking = false
+            return true
+        }
+    }
+}

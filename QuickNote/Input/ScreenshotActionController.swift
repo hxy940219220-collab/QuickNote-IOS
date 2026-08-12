@@ -1,9 +1,9 @@
 import AppKit
-import ScreenCaptureKit
 import SwiftUI
 
 @MainActor
 final class ScreenshotActionController: NSObject, NSWindowDelegate {
+    private let session: NoteSession
     private let aiStore: AIConfigurationStore
     private let showSettings: () -> Void
     private let state = ScreenshotActionState()
@@ -12,15 +12,17 @@ final class ScreenshotActionController: NSObject, NSWindowDelegate {
     private lazy var panel = makePanel()
 
     init(
+        session: NoteSession,
         aiStore: AIConfigurationStore = .shared,
         showSettings: @escaping () -> Void
     ) {
+        self.session = session
         self.aiStore = aiStore
         self.showSettings = showSettings
         super.init()
     }
 
-    func capture(_ mode: CommandEventMonitor.ScreenshotMode) {
+    func capture() {
         guard captureTask == nil else { return }
         analysisTask?.cancel()
         panel.orderOut(nil)
@@ -29,7 +31,7 @@ final class ScreenshotActionController: NSObject, NSWindowDelegate {
             guard let self else { return }
             defer { captureTask = nil }
             do {
-                let image = try await ScreenshotCapture.capture(mode)
+                let image = try await ScreenshotCapture.capture()
                 guard !Task.isCancelled else { return }
                 present(image)
             } catch is CancellationError {
@@ -49,6 +51,7 @@ final class ScreenshotActionController: NSObject, NSWindowDelegate {
         guard let imageData = state.imageData else { return }
         analysisTask?.cancel()
         state.result = ""
+        state.resultImported = false
         state.provider = ""
         state.notice = ""
         state.needsConfiguration = false
@@ -82,6 +85,31 @@ final class ScreenshotActionController: NSObject, NSWindowDelegate {
     private func setPromptAndAnalyze(_ prompt: String) {
         state.prompt = prompt
         analyze()
+    }
+
+    private func importImage() {
+        guard let data = state.imageData else { return }
+        do {
+            try session.appendImage(data)
+            state.imageImported = true
+            state.notice = ""
+        } catch {
+            state.notice = "导入失败：\(error.localizedDescription)"
+        }
+    }
+
+    private func importResult() {
+        guard !state.result.isEmpty else { return }
+        do {
+            try session.appendAttributedText(SelectionResultFormatter.richText(
+                from: state.result,
+                asDocumentStart: session.document.string.isEmpty
+            ))
+            state.resultImported = true
+            state.notice = ""
+        } catch {
+            state.notice = "导入失败：\(error.localizedDescription)"
+        }
     }
 
     private func present(_ image: NSImage) {
@@ -126,6 +154,8 @@ final class ScreenshotActionController: NSObject, NSWindowDelegate {
             state: state,
             analyze: { [weak self] in self?.analyze() },
             quickAnalyze: { [weak self] prompt in self?.setPromptAndAnalyze(prompt) },
+            importImage: { [weak self] in self?.importImage() },
+            importResult: { [weak self] in self?.importResult() },
             settings: showSettings,
             close: { [weak self] in self?.dismiss() }
         ))
@@ -143,6 +173,8 @@ private final class ScreenshotActionState: ObservableObject {
     @Published var notice = ""
     @Published var isLoading = false
     @Published var needsConfiguration = false
+    @Published var imageImported = false
+    @Published var resultImported = false
 
     func reset() {
         image = nil
@@ -153,6 +185,8 @@ private final class ScreenshotActionState: ObservableObject {
         notice = ""
         isLoading = false
         needsConfiguration = false
+        imageImported = false
+        resultImported = false
     }
 }
 
@@ -160,6 +194,8 @@ private struct ScreenshotActionView: View {
     @ObservedObject var state: ScreenshotActionState
     let analyze: () -> Void
     let quickAnalyze: (String) -> Void
+    let importImage: () -> Void
+    let importResult: () -> Void
     let settings: () -> Void
     let close: () -> Void
 
@@ -173,11 +209,22 @@ private struct ScreenshotActionView: View {
             }
 
             if let image = state.image {
-                Image(nsImage: image)
-                    .resizable()
-                    .scaledToFit()
-                    .frame(maxWidth: .infinity, minHeight: 160, maxHeight: 280)
-                    .background(Color.black.opacity(0.04), in: RoundedRectangle(cornerRadius: 10))
+                ZStack(alignment: .topTrailing) {
+                    Image(nsImage: image)
+                        .resizable()
+                        .scaledToFit()
+                        .frame(maxWidth: .infinity, minHeight: 160, maxHeight: 280)
+                        .background(Color.black.opacity(0.04), in: RoundedRectangle(cornerRadius: 10))
+                    Button(action: importImage) {
+                        Label(
+                            state.imageImported ? "已导入" : "导入图片",
+                            systemImage: state.imageImported ? "checkmark" : "square.and.arrow.down"
+                        )
+                    }
+                    .controlSize(.small)
+                    .disabled(state.imageImported)
+                    .padding(10)
+                }
 
                 HStack(spacing: 8) {
                     TextField("你想了解这张图片的什么？", text: $state.prompt)
@@ -205,6 +252,15 @@ private struct ScreenshotActionView: View {
                 HStack(spacing: 8) {
                     Text("分析结果").font(.system(size: 13, weight: .semibold))
                     Text(state.provider).font(.system(size: 10)).foregroundStyle(.tertiary)
+                    Spacer()
+                    Button(action: importResult) {
+                        Label(
+                            state.resultImported ? "已导入" : "导入分析",
+                            systemImage: state.resultImported ? "checkmark" : "square.and.arrow.down"
+                        )
+                    }
+                    .controlSize(.small)
+                    .disabled(state.resultImported)
                 }
                 ScrollView {
                     Text(SelectionResultFormatter.attributedText(from: state.result))
@@ -261,16 +317,7 @@ enum ScreenshotImageProcessor {
 }
 
 private enum ScreenshotCapture {
-    static func capture(_ mode: CommandEventMonitor.ScreenshotMode) async throws -> NSImage {
-        switch mode {
-        case .region:
-            return try await interactive(arguments: ["-i", "-s"])
-        case .window:
-            return try await interactive(arguments: ["-i", "-w"])
-        case .screen:
-            return try await currentScreen()
-        }
-    }
+    static func capture() async throws -> NSImage { try await interactive(arguments: ["-i", "-s"]) }
 
     private static func interactive(arguments: [String]) async throws -> NSImage {
         let url = FileManager.default.temporaryDirectory
@@ -295,38 +342,15 @@ private enum ScreenshotCapture {
         return image
     }
 
-    private static func currentScreen() async throws -> NSImage {
-        let screen = NSScreen.screens.first { NSMouseInRect(NSEvent.mouseLocation, $0.frame, false) }
-            ?? NSScreen.main
-        guard let displayID = screen?.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID else {
-            throw ScreenshotCaptureError.noDisplay
-        }
-        let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
-        guard let display = content.displays.first(where: { $0.displayID == displayID }) else {
-            throw ScreenshotCaptureError.noDisplay
-        }
-        let filter = SCContentFilter(display: display, excludingApplications: [], exceptingWindows: [])
-        let configuration = SCStreamConfiguration()
-        configuration.width = display.width
-        configuration.height = display.height
-        configuration.showsCursor = false
-        let image = try await SCScreenshotManager.captureImage(
-            contentFilter: filter,
-            configuration: configuration
-        )
-        return NSImage(cgImage: image, size: NSSize(width: image.width, height: image.height))
-    }
 }
 
 private enum ScreenshotCaptureError: LocalizedError, Equatable {
     case cancelled
-    case noDisplay
     case encodingFailed
 
     var errorDescription: String? {
         switch self {
         case .cancelled: "已取消截图。"
-        case .noDisplay: "没有找到可截图的显示器。"
         case .encodingFailed: "截图无法读取，请重试。"
         }
     }

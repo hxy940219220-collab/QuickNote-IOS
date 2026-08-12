@@ -58,9 +58,6 @@ enum AIProfileSlot: Int, CaseIterable, Identifiable, Sendable {
     case fourth
     case fifth
     case sixth
-    case seventh
-    case eighth
-    case ninth
 
     var id: Int { rawValue }
     var title: String { "模型 \(rawValue + 1)" }
@@ -696,13 +693,14 @@ final class AISettingsController {
 
     private func makePanel() -> NSPanel {
         let panel = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 620, height: 470),
-            styleMask: [.titled, .closable],
+            contentRect: NSRect(x: 0, y: 0, width: 700, height: 560),
+            styleMask: [.titled, .closable, .resizable],
             backing: .buffered,
             defer: false
         )
         panel.title = "AI 模型"
         panel.isReleasedWhenClosed = false
+        panel.minSize = NSSize(width: 640, height: 540)
         panel.contentView = NSHostingView(rootView: AISettingsView(store: store))
         return panel
     }
@@ -716,7 +714,6 @@ private struct AICapabilityAlert: Identifiable {
 private struct AISettingsView: View {
     let store: AIConfigurationStore
     @State private var slot: AIProfileSlot
-    @State private var activeSlot: AIProfileSlot
     @State private var profileName: String
     @State private var provider: AIProvider
     @State private var baseURL: String
@@ -725,20 +722,17 @@ private struct AISettingsView: View {
     @State private var inputModalities: Set<AIInputModality>
     @State private var status = ""
     @State private var isTesting = false
-    @State private var editingName = false
     @State private var capabilityAlert: AICapabilityAlert?
     @State private var isTestingCapabilities = false
     @State private var textRoute: AIProfileSlot
     @State private var imageRoute: AIProfileSlot
     @State private var automaticFallback: Bool
-    @FocusState private var nameFocused: Bool
 
     init(store: AIConfigurationStore) {
         self.store = store
         let slot = store.activeSlot
         let draft = store.draft(for: slot)
         _slot = State(initialValue: slot)
-        _activeSlot = State(initialValue: slot)
         _profileName = State(initialValue: draft.name)
         _provider = State(initialValue: draft.provider)
         _baseURL = State(initialValue: draft.baseURL)
@@ -751,87 +745,63 @@ private struct AISettingsView: View {
     }
 
     var body: some View {
-        HStack(spacing: 0) {
-            List(AIProfileSlot.allCases) { item in
-                Button {
-                    finishNameEditing()
-                    slot = item
-                    activeSlot = store.activate(item)
-                    load(item)
-                } label: {
-                    HStack(spacing: 9) {
-                        Image(systemName: item == activeSlot ? "checkmark.circle.fill" : "circle")
-                            .foregroundStyle(item == activeSlot ? Color.accentColor : Color.secondary.opacity(0.45))
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(store.displayName(for: item))
-                                .font(.system(size: 12, weight: .medium))
-                            HStack(spacing: 5) {
-                                Text(profileDetail(item))
-                                    .font(.system(size: 10))
-                                    .foregroundStyle(.secondary)
-                                    .lineLimit(1)
-                                Spacer(minLength: 2)
-                                modalityBadges(for: item)
-                            }
-                        }
-                        Spacer()
-                    }
-                    .padding(.vertical, 4)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(alignment: .firstTextBaseline) {
+                Text("AI 模型")
+                    .font(.system(size: 22, weight: .semibold))
+                Text("最多保存 6 个 API 接入")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Text("API Key 仅存入 macOS 钥匙串")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.tertiary)
             }
-            .listStyle(.sidebar)
-            .frame(width: 180)
+            .padding(.bottom, 14)
 
             Divider()
 
-            VStack(alignment: .leading, spacing: 14) {
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack(spacing: 7) {
-                        if editingName {
-                            TextField("模型名称", text: $profileName)
-                                .textFieldStyle(.plain)
-                                .font(.system(size: 20, weight: .semibold))
-                                .frame(maxWidth: 220)
-                                .focused($nameFocused)
-                                .onSubmit { finishNameEditing() }
-                        } else {
-                            Text(profileName)
-                                .font(.system(size: 20, weight: .semibold))
-                                .onTapGesture(count: 2, perform: beginNameEditing)
-                        }
-                        Button(action: beginNameEditing) {
-                            Image(systemName: "pencil")
-                                .font(.system(size: 11, weight: .medium))
-                        }
-                        .buttonStyle(.plain)
-                        .help("编辑模型名称")
-                        .accessibilityLabel("编辑模型名称")
-                        if slot == activeSlot {
-                            Text("使用中")
-                                .font(.system(size: 10, weight: .medium))
-                                .foregroundStyle(Color.accentColor)
-                                .padding(.horizontal, 7)
-                                .padding(.vertical, 3)
-                                .background(Color.accentColor.opacity(0.1), in: Capsule())
-                        }
-                        Spacer()
+            VStack(alignment: .leading, spacing: 16) {
+                VStack(alignment: .leading, spacing: 10) {
+                    sectionTitle("模型路由", detail: "按输入类型自动选择模型")
+                    HStack(spacing: 14) {
+                        routePicker("文字优先", selection: $textRoute, modality: .text)
+                        routePicker("图片优先", selection: $imageRoute, modality: .image)
+                        Toggle("失败时切换一次", isOn: $automaticFallback)
+                            .font(.system(size: 11, weight: .medium))
+                            .onChange(of: automaticFallback) { _, value in
+                                store.automaticFallback = value
+                            }
                     }
-                    Text("每个槽位可独立保存配置，保存后自动设为当前模型。")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(.secondary)
                 }
 
+                Divider()
+
                 VStack(alignment: .leading, spacing: 12) {
-                    field("服务商") {
-                        Picker("", selection: providerBinding) {
-                            ForEach(AIProvider.allCases) { provider in
-                                Text(provider.name).tag(provider)
-                            }
+                    sectionTitle("API 接入", detail: "已配置 \(configuredCount) / 6")
+                    Picker("", selection: $slot) {
+                        ForEach(AIProfileSlot.allCases) { item in
+                            Text("接入 \(item.rawValue + 1)").tag(item)
                         }
-                        .labelsHidden()
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .labelsHidden()
+                    .pickerStyle(.segmented)
+                    .onChange(of: slot) { _, value in load(value) }
+
+                    HStack(alignment: .top, spacing: 14) {
+                        field("接入名称") {
+                            TextField("例如：主力文字模型", text: $profileName)
+                                .textFieldStyle(.roundedBorder)
+                        }
+                        field("服务商") {
+                            Picker("", selection: providerBinding) {
+                                ForEach(AIProvider.allCases) { provider in
+                                    Text(provider.name).tag(provider)
+                                }
+                            }
+                            .labelsHidden()
+                        }
+                        .frame(width: 190)
                     }
                     field("Base URL") {
                         TextField("https://…", text: $baseURL)
@@ -867,20 +837,6 @@ private struct AISettingsView: View {
                     }
                 }
 
-                Divider()
-
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack(spacing: 12) {
-                        routePicker("文字优先", selection: $textRoute, modality: .text)
-                        routePicker("图片优先", selection: $imageRoute, modality: .image)
-                    }
-                    Toggle("失败时切换一次", isOn: $automaticFallback)
-                        .font(.system(size: 11, weight: .medium))
-                        .onChange(of: automaticFallback) { _, value in
-                            store.automaticFallback = value
-                        }
-                }
-
                 HStack(alignment: .firstTextBaseline) {
                     VStack(alignment: .leading, spacing: 3) {
                         Text(status.isEmpty ? "API Key 储存在 macOS 钥匙串中" : status)
@@ -894,15 +850,14 @@ private struct AISettingsView: View {
                     Button("恢复预设", action: restorePreset)
                     Button(isTesting ? "测试中…" : "测试连接", action: testConnection)
                         .disabled(isTesting)
-                    Button("保存并使用", action: save)
+                    Button("保存接入", action: save)
                         .buttonStyle(.borderedProminent)
                 }
-
-                Spacer(minLength: 0)
             }
-            .padding(22)
+            .padding(.top, 16)
         }
-        .frame(width: 620, height: 470)
+        .padding(22)
+        .frame(minWidth: 640, idealWidth: 700, minHeight: 540, idealHeight: 560)
         .alert(item: $capabilityAlert) { alert in
             Alert(
                 title: Text("能力测试"),
@@ -910,8 +865,16 @@ private struct AISettingsView: View {
                 dismissButton: .default(Text("好"))
             )
         }
-        .onChange(of: nameFocused) { _, focused in
-            if !focused && editingName { finishNameEditing() }
+    }
+
+    private var configuredCount: Int {
+        AIProfileSlot.allCases.filter { !store.draft(for: $0).apiKey.isEmpty }.count
+    }
+
+    private func sectionTitle(_ title: String, detail: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text(title).font(.system(size: 14, weight: .semibold))
+            Text(detail).font(.system(size: 10)).foregroundStyle(.secondary)
         }
     }
 
@@ -933,7 +896,10 @@ private struct AISettingsView: View {
             ForEach(AIProfileSlot.allCases) { item in
                 Text(store.displayName(for: item))
                     .tag(item)
-                    .disabled(!store.inputModalities(for: item).contains(modality))
+                    .disabled(
+                        store.draft(for: item).apiKey.isEmpty
+                            || !store.inputModalities(for: item).contains(modality)
+                    )
             }
         }
         .font(.system(size: 11, weight: .medium))
@@ -1004,8 +970,8 @@ private struct AISettingsView: View {
         do {
             try store.save(draft, to: slot)
             store.saveInputModalities(inputModalities, for: slot)
-            activeSlot = slot
-            status = "已保存并切换为当前模型。"
+            profileName = store.displayName(for: slot)
+            status = "已保存。"
         } catch {
             status = error.localizedDescription
         }
@@ -1054,26 +1020,6 @@ private struct AISettingsView: View {
         )
     }
 
-    private func profileDetail(_ slot: AIProfileSlot) -> String {
-        let draft = store.draft(for: slot)
-        return draft.apiKey.isEmpty ? "未配置" : "\(draft.provider.name) · \(draft.model)"
-    }
-
-    private func modalityBadges(for slot: AIProfileSlot) -> some View {
-        let selected = store.inputModalities(for: slot)
-        return HStack(spacing: 2) {
-            ForEach(AIInputModality.allCases.filter(selected.contains)) { modality in
-                Image(systemName: modality.symbolName)
-                    .font(.system(size: 7, weight: .semibold))
-                    .foregroundStyle(modality.color)
-                    .frame(width: 13, height: 13)
-                    .background(modality.color.opacity(0.12), in: RoundedRectangle(cornerRadius: 4))
-                    .help("支持输入\(modality.title)")
-                    .accessibilityLabel("支持输入\(modality.title)")
-            }
-        }
-    }
-
     private func modalityButton(_ modality: AIInputModality) -> some View {
         let selected = inputModalities.contains(modality)
         return Button {
@@ -1103,16 +1049,4 @@ private struct AISettingsView: View {
         .accessibilityLabel("\(modality.title)输入，\(selected ? "已支持" : "未支持")")
     }
 
-    private func beginNameEditing() {
-        editingName = true
-        nameFocused = true
-    }
-
-    private func finishNameEditing() {
-        guard editingName else { return }
-        store.rename(slot, to: profileName)
-        profileName = store.displayName(for: slot)
-        editingName = false
-        nameFocused = false
-    }
 }

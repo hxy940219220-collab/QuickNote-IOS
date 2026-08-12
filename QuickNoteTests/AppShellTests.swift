@@ -135,12 +135,6 @@ final class AppShellTests: XCTestCase {
         XCTAssertEqual(CommandEventMonitor.selectionHotKeyModifiers, UInt32(optionKey))
     }
 
-    func testScreenshotHotKeysUseCommandShiftOneTwoThree() {
-        XCTAssertEqual(CommandEventMonitor.screenshotHotKeyModifiers, UInt32(cmdKey | shiftKey))
-        XCTAssertEqual(CommandEventMonitor.ScreenshotMode.allCases.map(\.rawValue), [1, 2, 3])
-        XCTAssertEqual(CommandEventMonitor.ScreenshotMode.allCases.map(\.keyCode), [18, 19, 20])
-    }
-
     func testProviderPresetsBuildOpenAICompatibleChatURLs() throws {
         for provider in AIProvider.allCases {
             let configuration = AIConfiguration(
@@ -189,9 +183,9 @@ final class AppShellTests: XCTestCase {
         XCTAssertEqual(AIConfigurationStore.keychainVaultAccount, "profiles.v1")
     }
 
-    func testAIConfigurationFillsSidebarWithNineModelSlots() {
-        XCTAssertEqual(AIProfileSlot.allCases.map(\.title), (1...9).map { "模型 \($0)" })
-        XCTAssertEqual(AIProfileSlot.allCases.count, 9)
+    func testAIConfigurationSupportsAtMostSixAPIConnections() {
+        XCTAssertEqual(AIProfileSlot.allCases.map(\.title), (1...6).map { "模型 \($0)" })
+        XCTAssertEqual(AIProfileSlot.allCases.count, 6)
     }
 
     @MainActor

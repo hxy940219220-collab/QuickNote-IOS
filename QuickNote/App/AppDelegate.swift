@@ -97,7 +97,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 session: session,
                 showSettings: aiSettings.show
             )
-            let screenshotActions = ScreenshotActionController(showSettings: aiSettings.show)
+            let screenshotActions = ScreenshotActionController(
+                session: session,
+                showSettings: aiSettings.show
+            )
             statusMenu = StatusMenuController(
                 showAction: { _ = presentationLifecycle.applicationShouldHandleReopen() },
                 settingsAction: aiSettings.show,

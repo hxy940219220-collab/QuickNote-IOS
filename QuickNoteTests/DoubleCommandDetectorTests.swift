@@ -34,4 +34,36 @@ final class DoubleCommandDetectorTests: XCTestCase {
         _ = detector.observe(.commandChanged(isDown: true, time: 1.50))
         XCTAssertFalse(detector.observe(.commandChanged(isDown: false, time: 1.54)))
     }
+
+    func testCommandShiftTriggersOnlyWhenNoThirdInputOccurs() {
+        var detector = CommandShiftDetector()
+        XCTAssertFalse(detector.observe(.modifiersChanged(
+            commandDown: true,
+            shiftDown: false,
+            hasOtherModifiers: false
+        )))
+        XCTAssertFalse(detector.observe(.modifiersChanged(
+            commandDown: true,
+            shiftDown: true,
+            hasOtherModifiers: false
+        )))
+        XCTAssertFalse(detector.observe(.modifiersChanged(
+            commandDown: true,
+            shiftDown: false,
+            hasOtherModifiers: false
+        )))
+        XCTAssertTrue(detector.observe(.modifiersChanged(
+            commandDown: false,
+            shiftDown: false,
+            hasOtherModifiers: false
+        )))
+
+        _ = detector.observe(.modifiersChanged(commandDown: true, shiftDown: true, hasOtherModifiers: false))
+        _ = detector.observe(.otherInput)
+        XCTAssertFalse(detector.observe(.modifiersChanged(
+            commandDown: false,
+            shiftDown: false,
+            hasOtherModifiers: false
+        )))
+    }
 }

@@ -80,6 +80,27 @@ final class NotePersistenceTests: XCTestCase {
         XCTAssertNotNil(NSImage(data: imageData))
     }
 
+    func testScreenshotImportPersistsAsAnImageAttachment() throws {
+        let configuration = ModelConfiguration(isStoredInMemoryOnly: true)
+        let container = try ModelContainer(for: NoteRecord.self, configurations: configuration)
+        let repository = NoteRepository(context: container.mainContext)
+        let documents = NoteDocumentStore(
+            root: FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        )
+        let session = NoteSession(repository: repository, documents: documents)
+        try session.createAndOpen()
+        let note = try XCTUnwrap(session.currentNote)
+        let image = testImage()
+        let data = try XCTUnwrap(image.tiffRepresentation)
+
+        try session.appendImage(data)
+
+        let reopened = NoteSession(repository: repository, documents: documents)
+        try reopened.open(note)
+        XCTAssertEqual(reopened.document.attachmentCount, 1)
+        XCTAssertEqual(reopened.currentNote?.title, "截图")
+    }
+
     func testEditorToolbarFormatsTextAndInsertsTableAndFile() throws {
         let controller = RichTextEditorController()
         var document = NSAttributedString(string: "测试")

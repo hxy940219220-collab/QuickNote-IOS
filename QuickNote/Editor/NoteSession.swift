@@ -88,6 +88,28 @@ final class NoteSession: ObservableObject {
         try flush()
     }
 
+    func appendImage(_ data: Data, filename: String = "截图.png") throws {
+        guard let image = NSImage(data: data) else { throw CocoaError(.fileReadCorruptFile) }
+        let wrapper = FileWrapper(regularFileWithContents: data)
+        wrapper.preferredFilename = filename
+        let attachment = NSTextAttachment(fileWrapper: wrapper)
+        let size = AttachmentPresentation.scaledSize(
+            for: image.size,
+            fitting: NSSize(width: 620, height: 480)
+        )
+        attachment.image = AttachmentPresentation.scaledImage(image, to: size)
+        attachment.bounds.size = size
+        let content = NSMutableAttributedString()
+        if document.string.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            content.append(NSAttributedString(
+                string: "截图\n",
+                attributes: [.font: EditorTextStyle.title.font]
+            ))
+        }
+        content.append(NSAttributedString(attachment: attachment))
+        try appendAttributedText(content)
+    }
+
     func setTags(_ values: [String]) {
         guard let note = currentNote else { return }
         let normalized = values.compactMap { value -> String? in
