@@ -984,8 +984,8 @@ private struct QuickNoteSettingsDetailView: View {
     private var detailSize: CGSize {
         switch destination {
         case .localStorage: CGSize(width: 560, height: 420)
-        case .shortcuts: CGSize(width: 430, height: 390)
-        case .help: CGSize(width: 500, height: 320)
+        case .shortcuts: CGSize(width: 430, height: 460)
+        case .help: CGSize(width: 500, height: 390)
         }
     }
 
@@ -1048,6 +1048,12 @@ private struct QuickNoteSettingsDetailView: View {
                 shortcutRow(keys: ["⌘", "K"], title: "Command + K", detail: "为选中文字插入链接")
                 shortcutDivider
                 shortcutRow(keys: ["⌘", "Z"], title: "Command + Z", detail: "撤销最近一次文字或格式操作")
+                shortcutDivider
+                shortcutRow(keys: ["⌘⇧", "1"], title: "Command + Shift + 1", detail: "区域截图并使用 AI 分析")
+                shortcutDivider
+                shortcutRow(keys: ["⌘⇧", "2"], title: "Command + Shift + 2", detail: "窗口截图并使用 AI 分析")
+                shortcutDivider
+                shortcutRow(keys: ["⌘⇧", "3"], title: "Command + Shift + 3", detail: "当前屏幕截图并使用 AI 分析")
             }
         }
     }
@@ -1070,6 +1076,13 @@ private struct QuickNoteSettingsDetailView: View {
                 detail: "隐私与安全性 → 辅助功能，用于读取你主动选中的文字。",
                 button: "打开设置",
                 settingsPane: "Privacy_Accessibility"
+            )
+            Divider()
+            permissionRow(
+                title: "屏幕录制",
+                detail: "隐私与安全性 → 屏幕与系统音频录制，用于你主动触发的截图识图。",
+                button: "打开设置",
+                settingsPane: "Privacy_ScreenCapture"
             )
             Divider()
             Label("API Key 只保存在这台 Mac 的系统钥匙串中。", systemImage: "key")
@@ -1123,7 +1136,7 @@ private struct QuickNoteSettingsDetailView: View {
                 ForEach(Array(keys.enumerated()), id: \.offset) { _, key in
                     Text(key)
                         .font(.system(size: key == "Space" ? 9 : 13, weight: .medium))
-                        .frame(minWidth: key == "Space" || key == "+ / −" ? 44 : 24, minHeight: 24)
+                        .frame(minWidth: key == "Space" || key == "+ / −" ? 44 : (key == "⌘⇧" ? 34 : 24), minHeight: 24)
                         .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 5))
                         .overlay {
                             RoundedRectangle(cornerRadius: 5)

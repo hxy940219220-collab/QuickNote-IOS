@@ -21,6 +21,7 @@ targets:
         CFBundleDisplayName: QuickNote
         LSApplicationCategoryType: public.app-category.productivity
         NSHighResolutionCapable: true
+        NSScreenCaptureUsageDescription: QuickNote 需要截取你主动选择的屏幕区域，用于图片分析。
   QuickNoteTests:
     type: bundle.unit-test
     platform: macOS

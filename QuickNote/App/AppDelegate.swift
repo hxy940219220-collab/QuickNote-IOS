@@ -25,6 +25,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var panelCoordinator: PanelCoordinator?
     private var edgeRail: EdgeRailController?
     private var selectionActions: SelectionActionController?
+    private var screenshotActions: ScreenshotActionController?
     private var aiSettings: AISettingsController?
     private var presentationLifecycle: AppPresentationLifecycle?
 
@@ -96,6 +97,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 session: session,
                 showSettings: aiSettings.show
             )
+            let screenshotActions = ScreenshotActionController(showSettings: aiSettings.show)
             statusMenu = StatusMenuController(
                 showAction: { _ = presentationLifecycle.applicationShouldHandleReopen() },
                 settingsAction: aiSettings.show,
@@ -103,7 +105,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             )
             let monitorStarted = commandMonitor.start(
                 onDoubleCommand: togglePanel,
-                onSelectionShortcut: selectionActions.captureSelection
+                onSelectionShortcut: selectionActions.captureSelection,
+                onScreenshotShortcut: screenshotActions.capture
             )
             if !monitorStarted {
                 statusMenu?.setShortcutUnavailable()
@@ -115,6 +118,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             panelCoordinator = coordinator
             edgeRail = rail
             self.selectionActions = selectionActions
+            self.screenshotActions = screenshotActions
             self.aiSettings = aiSettings
             self.presentationLifecycle = presentationLifecycle
             presentationLifecycle.applicationDidLaunch()

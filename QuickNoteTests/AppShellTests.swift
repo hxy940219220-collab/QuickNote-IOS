@@ -135,6 +135,12 @@ final class AppShellTests: XCTestCase {
         XCTAssertEqual(CommandEventMonitor.selectionHotKeyModifiers, UInt32(optionKey))
     }
 
+    func testScreenshotHotKeysUseCommandShiftOneTwoThree() {
+        XCTAssertEqual(CommandEventMonitor.screenshotHotKeyModifiers, UInt32(cmdKey | shiftKey))
+        XCTAssertEqual(CommandEventMonitor.ScreenshotMode.allCases.map(\.rawValue), [1, 2, 3])
+        XCTAssertEqual(CommandEventMonitor.ScreenshotMode.allCases.map(\.keyCode), [18, 19, 20])
+    }
+
     func testProviderPresetsBuildOpenAICompatibleChatURLs() throws {
         for provider in AIProvider.allCases {
             let configuration = AIConfiguration(
@@ -224,6 +230,51 @@ final class AppShellTests: XCTestCase {
 
         XCTAssertEqual(store.inputModalities(for: .third), [.text, .image, .video])
         XCTAssertEqual(store.inputModalities(for: .first), [.text])
+    }
+
+    @MainActor
+    func testModelRoutingKeepsTextAndImagePreferencesIndependent() throws {
+        let suite = "QuickNoteTests.AIRouting.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let store = AIConfigurationStore(defaults: defaults)
+
+        store.setPreferredSlot(.second, for: .text)
+        store.setPreferredSlot(.fourth, for: .image)
+        store.automaticFallback = false
+
+        XCTAssertEqual(store.preferredSlot(for: .text), .second)
+        XCTAssertEqual(store.preferredSlot(for: .image), .fourth)
+        XCTAssertFalse(store.automaticFallback)
+    }
+
+    func testRouterOnlyFallsBackForTransientOrUnsupportedImageFailures() {
+        XCTAssertTrue(AIRouter.shouldFallback(
+            after: AIAnalyzerError.server(status: 429, message: "rate limit"),
+            modality: .text
+        ))
+        XCTAssertTrue(AIRouter.shouldFallback(
+            after: AIAnalyzerError.server(status: 400, message: "image input is unsupported"),
+            modality: .image
+        ))
+        XCTAssertFalse(AIRouter.shouldFallback(
+            after: AIAnalyzerError.server(status: 401, message: "invalid API key"),
+            modality: .image
+        ))
+    }
+
+    func testScreenshotImageIsDownscaledBeforeUpload() throws {
+        let image = NSImage(size: NSSize(width: 2_400, height: 1_200))
+        image.lockFocus()
+        NSColor.white.setFill()
+        NSRect(origin: .zero, size: image.size).fill()
+        image.unlockFocus()
+
+        let data = try XCTUnwrap(ScreenshotImageProcessor.pngData(from: image))
+        let bitmap = try XCTUnwrap(NSBitmapImageRep(data: data))
+
+        XCTAssertEqual(bitmap.pixelsWide, 2_200)
+        XCTAssertEqual(bitmap.pixelsHigh, 1_100)
     }
 
     func testSelectionResultPanelGrowsWithContentAndStopsBeforeClipping() {

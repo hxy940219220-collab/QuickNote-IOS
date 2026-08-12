@@ -24,5 +24,7 @@
 	<string>public.app-category.productivity</string>
 	<key>NSHighResolutionCapable</key>
 	<true/>
+	<key>NSScreenCaptureUsageDescription</key>
+	<string>QuickNote 需要截取你主动选择的屏幕区域，用于图片分析。</string>
 </dict>
 </plist>
