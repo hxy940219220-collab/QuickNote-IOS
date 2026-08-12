@@ -133,22 +133,16 @@ final class ScreenshotActionController: NSObject, NSWindowDelegate {
         panel.makeKeyAndOrderFront(nil)
     }
 
-    private func dismiss() {
-        analysisTask?.cancel()
-        panel.orderOut(nil)
-        state.reset()
-    }
-
     private func makePanel() -> NSPanel {
         let panel = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 680, height: 620),
+            contentRect: NSRect(x: 0, y: 0, width: 720, height: 640),
             styleMask: [.titled, .closable, .resizable],
             backing: .buffered,
             defer: false
         )
         panel.title = "截图识图"
         panel.isReleasedWhenClosed = false
-        panel.minSize = NSSize(width: 560, height: 480)
+        panel.minSize = NSSize(width: 620, height: 520)
         panel.delegate = self
         panel.contentView = NSHostingView(rootView: ScreenshotActionView(
             state: state,
@@ -156,8 +150,7 @@ final class ScreenshotActionController: NSObject, NSWindowDelegate {
             quickAnalyze: { [weak self] prompt in self?.setPromptAndAnalyze(prompt) },
             importImage: { [weak self] in self?.importImage() },
             importResult: { [weak self] in self?.importResult() },
-            settings: showSettings,
-            close: { [weak self] in self?.dismiss() }
+            settings: showSettings
         ))
         return panel
     }
@@ -197,34 +190,41 @@ private struct ScreenshotActionView: View {
     let importImage: () -> Void
     let importResult: () -> Void
     let settings: () -> Void
-    let close: () -> Void
+    private let quickActions = [
+        ("概括", "text.alignleft", "概括这张截图的主要内容和重点。"),
+        ("提取文字", "doc.text.viewfinder", "准确提取截图中的全部文字，保持原有段落和列表结构。"),
+        ("解释界面", "rectangle.3.group", "解释这个界面的用途、主要模块和当前状态。"),
+        ("发现问题", "exclamationmark.magnifyingglass", "找出截图中的异常、错误或体验问题，并给出解决建议。"),
+    ]
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack {
-                Label("截图识图", systemImage: "viewfinder")
-                    .font(.system(size: 18, weight: .semibold))
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(spacing: 11) {
+                Image(systemName: "viewfinder")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(Color.accentColor)
+                    .frame(width: 34, height: 34)
+                    .background(Color.accentColor.opacity(0.1), in: RoundedRectangle(cornerRadius: 9))
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("截图识图").font(.system(size: 18, weight: .semibold))
+                    Text(state.provider.isEmpty ? "选择问题，或直接输入你想了解的内容" : state.provider)
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                }
                 Spacer()
-                Button("关闭", action: close)
+                Button(action: importImage) {
+                    Label(state.imageImported ? "图片已导入" : "导入图片", systemImage: state.imageImported ? "checkmark" : "square.and.arrow.down")
+                }
+                .disabled(state.imageImported || state.image == nil)
             }
 
             if let image = state.image {
-                ZStack(alignment: .topTrailing) {
-                    Image(nsImage: image)
-                        .resizable()
-                        .scaledToFit()
-                        .frame(maxWidth: .infinity, minHeight: 160, maxHeight: 280)
-                        .background(Color.black.opacity(0.04), in: RoundedRectangle(cornerRadius: 10))
-                    Button(action: importImage) {
-                        Label(
-                            state.imageImported ? "已导入" : "导入图片",
-                            systemImage: state.imageImported ? "checkmark" : "square.and.arrow.down"
-                        )
-                    }
-                    .controlSize(.small)
-                    .disabled(state.imageImported)
-                    .padding(10)
-                }
+                Image(nsImage: image)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(maxWidth: .infinity, minHeight: 150, maxHeight: state.result.isEmpty ? 260 : 190)
+                    .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 11))
+                    .overlay { RoundedRectangle(cornerRadius: 11).stroke(Color.secondary.opacity(0.12)) }
 
                 HStack(spacing: 8) {
                     TextField("你想了解这张图片的什么？", text: $state.prompt)
@@ -234,24 +234,23 @@ private struct ScreenshotActionView: View {
                         .buttonStyle(.borderedProminent)
                         .disabled(state.isLoading)
                 }
-                HStack(spacing: 6) {
-                    quickButton("概括内容", prompt: "概括这张截图的主要内容和重点。")
-                    quickButton("提取文字", prompt: "准确提取截图中的全部文字，保持原有段落和列表结构。")
-                    quickButton("解释界面", prompt: "解释这个界面的用途、主要模块和当前状态。")
-                    quickButton("查找问题", prompt: "找出截图中的异常、错误或体验问题，并给出解决建议。")
+                HStack(spacing: 7) {
+                    ForEach(quickActions, id: \.0) { action in
+                        quickButton(action.0, icon: action.1, prompt: action.2)
+                    }
                 }
                 .controlSize(.small)
             }
 
             if state.isLoading {
-                HStack(spacing: 8) {
+                HStack(spacing: 9) {
                     ProgressView().controlSize(.small)
                     Text("正在调用图片模型…").foregroundStyle(.secondary)
                 }
+                .frame(maxWidth: .infinity, minHeight: 84, alignment: .center)
             } else if !state.result.isEmpty {
                 HStack(spacing: 8) {
                     Text("分析结果").font(.system(size: 13, weight: .semibold))
-                    Text(state.provider).font(.system(size: 10)).foregroundStyle(.tertiary)
                     Spacer()
                     Button(action: importResult) {
                         Label(
@@ -265,9 +264,12 @@ private struct ScreenshotActionView: View {
                 ScrollView {
                     Text(SelectionResultFormatter.attributedText(from: state.result))
                         .font(.system(size: 13))
+                        .lineSpacing(3)
                         .textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(12)
                 }
+                .background(Color(nsColor: .controlBackgroundColor).opacity(0.55), in: RoundedRectangle(cornerRadius: 10))
             } else if !state.notice.isEmpty {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
                     Image(systemName: "exclamationmark.circle")
@@ -280,12 +282,14 @@ private struct ScreenshotActionView: View {
             }
             Spacer(minLength: 0)
         }
-        .padding(18)
-        .frame(minWidth: 560, minHeight: 480)
+        .padding(20)
+        .frame(minWidth: 620, minHeight: 520)
     }
 
-    private func quickButton(_ title: String, prompt: String) -> some View {
-        Button(title) { quickAnalyze(prompt) }
+    private func quickButton(_ title: String, icon: String, prompt: String) -> some View {
+        Button { quickAnalyze(prompt) } label: {
+            Label(title, systemImage: icon)
+        }
             .disabled(state.isLoading)
     }
 }

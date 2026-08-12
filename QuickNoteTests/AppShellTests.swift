@@ -350,6 +350,13 @@ final class AppShellTests: XCTestCase {
         }
     }
 
+    func testAIResponseSanitizerRemovesPrivateReasoningBlocks() {
+        XCTAssertEqual(
+            AIResponseSanitizer.cleaned("<think>internal reasoning</think>\n最终答案"),
+            "最终答案"
+        )
+    }
+
     func testLegacyBodyFontsNormalizeToThirteenPointsWithoutFlatteningTitleOrBold() throws {
         let document = NSMutableAttributedString(
             string: "标题\n",

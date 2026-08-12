@@ -117,6 +117,134 @@ enum EditorTextStyle: String, CaseIterable, Identifiable {
     }
 }
 
+enum NotePasteNormalizer {
+    static func normalized(
+        _ source: NSAttributedString,
+        destinationFont: NSFont,
+        replacesWholeDocument: Bool
+    ) -> NSAttributedString {
+        let result = NSMutableAttributedString(attributedString: source)
+        let fullRange = NSRange(location: 0, length: source.length)
+        guard fullRange.length > 0 else { return result }
+        let firstLineEnd = (source.string as NSString).range(of: "\n").location
+        let titleEnd = firstLineEnd == NSNotFound ? source.length : firstLineEnd
+        let bodyFont = editorFont(matching: destinationFont)
+
+        source.enumerateAttributes(in: fullRange) { attributes, range, _ in
+            guard attributes[.attachment] == nil else { return }
+            let base = replacesWholeDocument && range.location < titleEnd
+                ? EditorTextStyle.title.font
+                : (replacesWholeDocument ? EditorTextStyle.body.font : bodyFont)
+            result.addAttribute(
+                .font,
+                value: preservingTraits(from: attributes[.font] as? NSFont, on: base),
+                range: range
+            )
+        }
+
+        for key: NSAttributedString.Key in [
+            .foregroundColor,
+            .backgroundColor,
+            .strokeColor,
+            .strokeWidth,
+            .shadow,
+            .kern,
+            .baselineOffset,
+            .expansion,
+            .obliqueness,
+            .underlineColor,
+            .strikethroughColor,
+        ] {
+            result.removeAttribute(key, range: fullRange)
+        }
+
+        source.enumerateAttribute(.paragraphStyle, in: fullRange) { value, range, _ in
+            let style = (value as? NSParagraphStyle)?.mutableCopy() as? NSMutableParagraphStyle
+                ?? NSMutableParagraphStyle()
+            style.lineSpacing = 1
+            style.paragraphSpacing = 4
+            style.paragraphSpacingBefore = 0
+            style.lineHeightMultiple = 0
+            style.minimumLineHeight = 0
+            style.maximumLineHeight = 0
+            style.firstLineHeadIndent = min(max(style.firstLineHeadIndent, 0), 56)
+            style.headIndent = min(max(style.headIndent, 0), 56)
+            result.addAttribute(.paragraphStyle, value: style, range: range)
+        }
+        return result
+    }
+
+    private static func editorFont(matching font: NSFont) -> NSFont {
+        if font.fontDescriptor.symbolicTraits.contains(.monoSpace) { return EditorTextStyle.monospaced.font }
+        return switch font.pointSize {
+        case EditorTextStyle.title.font.pointSize: EditorTextStyle.title.font
+        case EditorTextStyle.heading.font.pointSize: EditorTextStyle.heading.font
+        case EditorTextStyle.subheading.font.pointSize: EditorTextStyle.subheading.font
+        default: EditorTextStyle.body.font
+        }
+    }
+
+    private static func preservingTraits(from source: NSFont?, on base: NSFont) -> NSFont {
+        guard let source else { return base }
+        let sourceTraits = source.fontDescriptor.symbolicTraits
+        var traits = base.fontDescriptor.symbolicTraits
+        if sourceTraits.contains(.bold) { traits.insert(.bold) }
+        if sourceTraits.contains(.italic) { traits.insert(.italic) }
+        return NSFont(descriptor: base.fontDescriptor.withSymbolicTraits(traits), size: base.pointSize) ?? base
+    }
+}
+
+final class QuickNoteTextView: NSTextView {
+    override func readSelection(from pasteboard: NSPasteboard) -> Bool {
+        let richTypes: [NSPasteboard.PasteboardType] = [.rtfd, .rtf, .html]
+        guard richTypes.contains(where: { pasteboard.availableType(from: [$0]) != nil }) else {
+            return super.readSelection(from: pasteboard)
+        }
+        return insertNormalizedRichText(from: pasteboard)
+    }
+
+    override func readSelection(
+        from pasteboard: NSPasteboard,
+        type: NSPasteboard.PasteboardType
+    ) -> Bool {
+        let richTypes: Set<NSPasteboard.PasteboardType> = [.rtf, .rtfd, .html]
+        guard richTypes.contains(type) else {
+            return super.readSelection(from: pasteboard, type: type)
+        }
+        return insertNormalizedRichText(from: pasteboard)
+    }
+
+    private func insertNormalizedRichText(from pasteboard: NSPasteboard) -> Bool {
+        guard let source = pasteboard.readObjects(
+            forClasses: [NSAttributedString.self],
+            options: nil
+        )?.first as? NSAttributedString else { return false }
+        let selection = selectedRange()
+        let replacesWholeDocument = selection.location == 0
+            && selection.length == (textStorage?.length ?? 0)
+        let typingFont = typingAttributes[.font] as? NSFont
+            ?? font
+            ?? EditorTextStyle.body.font
+        let firstNewline = (string as NSString).range(of: "\n").location
+        let destinationFont = firstNewline != NSNotFound
+            && selection.location > firstNewline
+            && typingFont.pointSize == EditorTextStyle.title.font.pointSize
+            ? EditorTextStyle.body.font
+            : typingFont
+        let normalized = NotePasteNormalizer.normalized(
+            source,
+            destinationFont: destinationFont,
+            replacesWholeDocument: replacesWholeDocument
+        )
+        guard shouldChangeText(in: selection, replacementString: normalized.string) else { return false }
+        textStorage?.replaceCharacters(in: selection, with: normalized)
+        setSelectedRange(NSRange(location: selection.location + normalized.length, length: 0))
+        typingAttributes[.font] = destinationFont
+        didChangeText()
+        return true
+    }
+}
+
 enum EditorLink {
     static func url(from input: String) -> URL? {
         let value = input.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1130,7 +1258,7 @@ struct RichTextEditor: NSViewRepresentable {
     func makeCoordinator() -> Coordinator { Coordinator(owner: self) }
 
     func makeNSView(context: Context) -> NSScrollView {
-        let scroll = NSTextView.scrollableTextView()
+        let scroll = QuickNoteTextView.scrollableTextView()
         let textView = scroll.documentView as! NSTextView
         scroll.allowsMagnification = true
         scroll.minMagnification = 0.7

@@ -411,6 +411,16 @@ struct AITextResult: Sendable {
     let providerName: String
 }
 
+enum AIResponseSanitizer {
+    static func cleaned(_ text: String) -> String {
+        text.replacingOccurrences(
+            of: #"<think\b[^>]*>[\s\S]*?</think>\s*"#,
+            with: "",
+            options: [.regularExpression, .caseInsensitive]
+        ).trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+}
+
 enum AIRouter {
     static func perform<T: Sendable>(
         modality: AIInputModality,
@@ -672,7 +682,9 @@ enum OpenAICompatibleClient {
         guard let content, !content.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines).isEmpty else {
             throw AIAnalyzerError.invalidResponse
         }
-        return content.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines)
+        let cleaned = AIResponseSanitizer.cleaned(content)
+        guard !cleaned.isEmpty else { throw AIAnalyzerError.invalidResponse }
+        return cleaned
     }
 }
 
@@ -693,14 +705,14 @@ final class AISettingsController {
 
     private func makePanel() -> NSPanel {
         let panel = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 700, height: 560),
+            contentRect: NSRect(x: 0, y: 0, width: 720, height: 600),
             styleMask: [.titled, .closable, .resizable],
             backing: .buffered,
             defer: false
         )
         panel.title = "AI 模型"
         panel.isReleasedWhenClosed = false
-        panel.minSize = NSSize(width: 640, height: 540)
+        panel.minSize = NSSize(width: 680, height: 570)
         panel.contentView = NSHostingView(rootView: AISettingsView(store: store))
         return panel
     }
@@ -745,119 +757,124 @@ private struct AISettingsView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack(alignment: .firstTextBaseline) {
-                Text("AI 模型")
-                    .font(.system(size: 22, weight: .semibold))
-                Text("最多保存 6 个 API 接入")
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
-                Spacer()
-                Text("API Key 仅存入 macOS 钥匙串")
-                    .font(.system(size: 10))
-                    .foregroundStyle(.tertiary)
-            }
-            .padding(.bottom, 14)
-
-            Divider()
-
-            VStack(alignment: .leading, spacing: 16) {
-                VStack(alignment: .leading, spacing: 10) {
-                    sectionTitle("模型路由", detail: "按输入类型自动选择模型")
-                    HStack(spacing: 14) {
-                        routePicker("文字优先", selection: $textRoute, modality: .text)
-                        routePicker("图片优先", selection: $imageRoute, modality: .image)
-                        Toggle("失败时切换一次", isOn: $automaticFallback)
-                            .font(.system(size: 11, weight: .medium))
-                            .onChange(of: automaticFallback) { _, value in
-                                store.automaticFallback = value
-                            }
-                    }
+        VStack(alignment: .leading, spacing: 18) {
+            HStack(spacing: 12) {
+                Image(systemName: "point.3.connected.trianglepath.dotted")
+                    .font(.system(size: 17, weight: .medium))
+                    .foregroundStyle(Color.accentColor)
+                    .frame(width: 34, height: 34)
+                    .background(Color.accentColor.opacity(0.1), in: RoundedRectangle(cornerRadius: 9))
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("AI 模型")
+                        .font(.system(size: 20, weight: .semibold))
+                    Text("配置接入，并按内容类型自动选择模型")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
                 }
+                Spacer()
+                Label("钥匙串保护", systemImage: "lock.fill")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(.secondary)
+            }
 
-                Divider()
-
-                VStack(alignment: .leading, spacing: 12) {
-                    sectionTitle("API 接入", detail: "已配置 \(configuredCount) / 6")
-                    Picker("", selection: $slot) {
-                        ForEach(AIProfileSlot.allCases) { item in
-                            Text("接入 \(item.rawValue + 1)").tag(item)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    VStack(alignment: .leading, spacing: 10) {
+                        sectionTitle("模型路由", detail: "按输入类型自动选择模型")
+                        HStack(spacing: 12) {
+                            routePicker("文字", icon: "textformat", selection: $textRoute, modality: .text)
+                            routePicker("图片", icon: "photo", selection: $imageRoute, modality: .image)
+                            Toggle("失败时切换一次", isOn: $automaticFallback)
+                                .font(.system(size: 11, weight: .medium))
+                                .onChange(of: automaticFallback) { _, value in
+                                    store.automaticFallback = value
+                                }
                         }
                     }
-                    .labelsHidden()
-                    .pickerStyle(.segmented)
-                    .onChange(of: slot) { _, value in load(value) }
+                    .padding(14)
+                    .background(Color(nsColor: .controlBackgroundColor).opacity(0.72), in: RoundedRectangle(cornerRadius: 11))
 
-                    HStack(alignment: .top, spacing: 14) {
-                        field("接入名称") {
-                            TextField("例如：主力文字模型", text: $profileName)
+                    VStack(alignment: .leading, spacing: 12) {
+                        sectionTitle("API 接入", detail: "已配置 \(configuredCount) / 6")
+                        Picker("", selection: $slot) {
+                            ForEach(AIProfileSlot.allCases) { item in
+                                Text("接入 \(item.rawValue + 1)").tag(item)
+                            }
+                        }
+                        .labelsHidden()
+                        .pickerStyle(.segmented)
+                        .onChange(of: slot) { _, value in load(value) }
+
+                        HStack(alignment: .top, spacing: 14) {
+                            field("接入名称") {
+                                TextField("例如：主力文字模型", text: $profileName)
+                                    .textFieldStyle(.roundedBorder)
+                            }
+                            field("服务商") {
+                                Picker("", selection: providerBinding) {
+                                    ForEach(AIProvider.allCases) { provider in
+                                        Text(provider.name).tag(provider)
+                                    }
+                                }
+                                .labelsHidden()
+                            }
+                            .frame(width: 190)
+                        }
+                        field("Base URL") {
+                            TextField("https://…", text: $baseURL)
                                 .textFieldStyle(.roundedBorder)
                         }
-                        field("服务商") {
-                            Picker("", selection: providerBinding) {
-                                ForEach(AIProvider.allCases) { provider in
-                                    Text(provider.name).tag(provider)
-                                }
-                            }
-                            .labelsHidden()
+                        field("模型名称") {
+                            TextField("model-id", text: $model)
+                                .textFieldStyle(.roundedBorder)
                         }
-                        .frame(width: 190)
-                    }
-                    field("Base URL") {
-                        TextField("https://…", text: $baseURL)
-                            .textFieldStyle(.roundedBorder)
-                    }
-                    field("模型名称") {
-                        TextField("model-id", text: $model)
-                            .textFieldStyle(.roundedBorder)
-                    }
-                    field("输入能力") {
-                        HStack(spacing: 7) {
-                            ForEach(AIInputModality.allCases) { modality in
-                                modalityButton(modality)
-                            }
-                            Button(action: testSelectedModalities) {
-                                if isTestingCapabilities {
-                                    ProgressView().controlSize(.mini)
-                                } else {
-                                    Image(systemName: "checkmark.circle")
-                                        .font(.system(size: 12, weight: .medium))
+                        field("输入能力") {
+                            HStack(spacing: 7) {
+                                ForEach(AIInputModality.allCases) { modality in
+                                    modalityButton(modality)
                                 }
+                                Button(action: testSelectedModalities) {
+                                    if isTestingCapabilities {
+                                        ProgressView().controlSize(.mini)
+                                    } else {
+                                        Image(systemName: "checkmark.circle")
+                                            .font(.system(size: 12, weight: .medium))
+                                    }
+                                }
+                                .buttonStyle(.plain)
+                                .frame(width: 22, height: 22)
+                                .disabled(isTestingCapabilities)
+                                .help("测试已勾选的识别能力")
+                                .accessibilityLabel("测试已勾选的识别能力")
                             }
-                            .buttonStyle(.plain)
-                            .frame(width: 22, height: 22)
-                            .disabled(isTestingCapabilities)
-                            .help("测试已勾选的识别能力")
-                            .accessibilityLabel("测试已勾选的识别能力")
+                        }
+                        field("API Key") {
+                            SecureField("sk-…", text: $apiKey)
+                                .textFieldStyle(.roundedBorder)
                         }
                     }
-                    field("API Key") {
-                        SecureField("sk-…", text: $apiKey)
-                            .textFieldStyle(.roundedBorder)
-                    }
                 }
-
-                HStack(alignment: .firstTextBaseline) {
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text(status.isEmpty ? "API Key 储存在 macOS 钥匙串中" : status)
-                            .font(.system(size: 11))
-                            .foregroundStyle(.secondary)
-                        Text("请求内容会发送给当前服务商。")
-                            .font(.system(size: 10))
-                            .foregroundStyle(.tertiary)
-                    }
-                    Spacer()
-                    Button("恢复预设", action: restorePreset)
-                    Button(isTesting ? "测试中…" : "测试连接", action: testConnection)
-                        .disabled(isTesting)
-                    Button("保存接入", action: save)
-                        .buttonStyle(.borderedProminent)
-                }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .padding(.top, 16)
+
+            Divider()
+            HStack(spacing: 10) {
+                Image(systemName: status.isEmpty ? "lock" : "info.circle")
+                    .foregroundStyle(.secondary)
+                Text(status.isEmpty ? "API Key 仅存入 macOS 钥匙串，请求会发送给所选服务商。" : status)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                Spacer()
+                Button("恢复预设", action: restorePreset)
+                Button(isTesting ? "测试中…" : "测试连接", action: testConnection)
+                    .disabled(isTesting)
+                Button("保存接入", action: save)
+                    .buttonStyle(.borderedProminent)
+            }
         }
         .padding(22)
-        .frame(minWidth: 640, idealWidth: 700, minHeight: 540, idealHeight: 560)
+        .frame(minWidth: 680, idealWidth: 720, minHeight: 570, idealHeight: 600)
         .alert(item: $capabilityAlert) { alert in
             Alert(
                 title: Text("能力测试"),
@@ -889,18 +906,25 @@ private struct AISettingsView: View {
 
     private func routePicker(
         _ title: String,
+        icon: String,
         selection: Binding<AIProfileSlot>,
         modality: AIInputModality
     ) -> some View {
-        Picker(title, selection: selection) {
-            ForEach(AIProfileSlot.allCases) { item in
-                Text(store.displayName(for: item))
-                    .tag(item)
-                    .disabled(
-                        store.draft(for: item).apiKey.isEmpty
-                            || !store.inputModalities(for: item).contains(modality)
-                    )
+        VStack(alignment: .leading, spacing: 5) {
+            Label(title, systemImage: icon)
+                .font(.system(size: 10, weight: .medium))
+                .foregroundStyle(.secondary)
+            Picker("", selection: selection) {
+                ForEach(AIProfileSlot.allCases) { item in
+                    Text(store.displayName(for: item))
+                        .tag(item)
+                        .disabled(
+                            store.draft(for: item).apiKey.isEmpty
+                                || !store.inputModalities(for: item).contains(modality)
+                        )
+                }
             }
+            .labelsHidden()
         }
         .font(.system(size: 11, weight: .medium))
         .frame(maxWidth: .infinity)

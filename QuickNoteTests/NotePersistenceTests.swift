@@ -80,6 +80,61 @@ final class NotePersistenceTests: XCTestCase {
         XCTAssertNotNil(NSImage(data: imageData))
     }
 
+    func testWebsiteRichTextPasteAdoptsQuickNoteTypographyAndDropsColors() throws {
+        let controller = RichTextEditorController()
+        let title = NSAttributedString(
+            string: "标题\n",
+            attributes: [.font: EditorTextStyle.title.font]
+        )
+        let editor = RichTextEditor(
+            document: title,
+            cursorLocation: title.length,
+            controller: controller,
+            onChange: { _, _ in },
+            onActivate: {}
+        )
+        let host = NSHostingView(rootView: editor)
+        host.frame = NSRect(x: 0, y: 0, width: 320, height: 240)
+        host.layoutSubtreeIfNeeded()
+        let textView = try XCTUnwrap(host.descendant(ofType: NSTextView.self))
+        let source = NSMutableAttributedString(
+            string: "网页重点\n第二段",
+            attributes: [
+                .font: NSFont(name: "Times New Roman Bold", size: 28)!,
+                .foregroundColor: NSColor.systemRed,
+                .backgroundColor: NSColor.systemYellow,
+            ]
+        )
+        let linkRange = (source.string as NSString).range(of: "第二段")
+        source.addAttribute(.link, value: URL(string: "https://example.com")!, range: linkRange)
+        let pasteboard = NSPasteboard(name: NSPasteboard.Name(UUID().uuidString))
+        pasteboard.clearContents()
+        XCTAssertTrue(pasteboard.setData(
+            try source.data(
+                from: NSRange(location: 0, length: source.length),
+                documentAttributes: [.documentType: NSAttributedString.DocumentType.rtf]
+            ),
+            forType: .rtf
+        ))
+
+        XCTAssertTrue(textView.readSelection(from: pasteboard))
+
+        let insertedRange = NSRange(location: title.length, length: source.length)
+        let font = try XCTUnwrap(textView.textStorage?.attribute(
+            .font,
+            at: insertedRange.location,
+            effectiveRange: nil
+        ) as? NSFont)
+        XCTAssertEqual(font.pointSize, EditorTextStyle.body.font.pointSize)
+        XCTAssertTrue(font.fontDescriptor.symbolicTraits.contains(.bold))
+        XCTAssertNil(textView.textStorage?.attribute(.foregroundColor, at: insertedRange.location, effectiveRange: nil))
+        XCTAssertNil(textView.textStorage?.attribute(.backgroundColor, at: insertedRange.location, effectiveRange: nil))
+        XCTAssertEqual(
+            textView.textStorage?.attribute(.link, at: NSMaxRange(insertedRange) - 1, effectiveRange: nil) as? URL,
+            URL(string: "https://example.com")
+        )
+    }
+
     func testScreenshotImportPersistsAsAnImageAttachment() throws {
         let configuration = ModelConfiguration(isStoredInMemoryOnly: true)
         let container = try ModelContainer(for: NoteRecord.self, configurations: configuration)
