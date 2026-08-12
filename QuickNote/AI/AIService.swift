@@ -723,6 +723,13 @@ private struct AICapabilityAlert: Identifiable {
     let message: String
 }
 
+private enum AISettingsField: Hashable {
+    case profileName
+    case baseURL
+    case model
+    case apiKey
+}
+
 private struct AISettingsView: View {
     let store: AIConfigurationStore
     @State private var slot: AIProfileSlot
@@ -739,6 +746,7 @@ private struct AISettingsView: View {
     @State private var textRoute: AIProfileSlot
     @State private var imageRoute: AIProfileSlot
     @State private var automaticFallback: Bool
+    @FocusState private var focusedField: AISettingsField?
 
     init(store: AIConfigurationStore) {
         self.store = store
@@ -830,14 +838,41 @@ private struct AISettingsView: View {
                         field("接入名称", icon: "tag") {
                             TextField("例如：主力文字模型", text: $profileName)
                                 .textFieldStyle(.roundedBorder)
+                                .focused($focusedField, equals: .profileName)
                         }
                         field("服务商", icon: "building.2") {
-                            Picker("", selection: providerBinding) {
-                                ForEach(AIProvider.allCases) { provider in
-                                    Text(provider.name).tag(provider)
+                            Menu {
+                                ForEach(AIProvider.allCases) { item in
+                                    Button {
+                                        providerBinding.wrappedValue = item
+                                        focusedField = nil
+                                    } label: {
+                                        if item == provider {
+                                            Label(item.name, systemImage: "checkmark")
+                                        } else {
+                                            Text(item.name)
+                                        }
+                                    }
+                                }
+                            } label: {
+                                HStack(spacing: 8) {
+                                    Text(provider.name)
+                                        .foregroundStyle(.primary)
+                                    Spacer()
+                                    Image(systemName: "chevron.up.chevron.down")
+                                        .font(.system(size: 9, weight: .semibold))
+                                        .foregroundStyle(.secondary)
+                                }
+                                .padding(.horizontal, 8)
+                                .frame(maxWidth: .infinity, minHeight: 22)
+                                .contentShape(Rectangle())
+                                .overlay {
+                                    RoundedRectangle(cornerRadius: 5)
+                                        .stroke(Color.secondary.opacity(0.22), lineWidth: 1)
                                 }
                             }
-                            .labelsHidden()
+                            .menuStyle(.borderlessButton)
+                            .menuIndicator(.hidden)
                             .frame(maxWidth: .infinity)
                         }
                     }
@@ -845,15 +880,18 @@ private struct AISettingsView: View {
                         field("Base URL", icon: "link") {
                             TextField("https://…", text: $baseURL)
                                 .textFieldStyle(.roundedBorder)
+                                .focused($focusedField, equals: .baseURL)
                         }
                         field("模型名称", icon: "cube") {
                             TextField("model-id", text: $model)
                                 .textFieldStyle(.roundedBorder)
+                                .focused($focusedField, equals: .model)
                         }
                     }
                     field("API Key", icon: "key.fill") {
                         SecureField("sk-…", text: $apiKey)
                             .textFieldStyle(.roundedBorder)
+                            .focused($focusedField, equals: .apiKey)
                     }
                 }
             }
@@ -887,13 +925,10 @@ private struct AISettingsView: View {
                         .help("测试已勾选的识别能力")
                         .accessibilityLabel("测试已勾选的识别能力")
                         Spacer()
-                        Button("恢复预设", action: restorePreset)
-                        Button(isTesting ? "测试中…" : "测试连接", action: testConnection)
-                            .disabled(isTesting)
-                        Button("保存接入", action: save)
-                            .buttonStyle(.borderedProminent)
+                        footerButton("恢复预设", action: restorePreset)
+                        footerButton(isTesting ? "测试中…" : "测试连接", disabled: isTesting, action: testConnection)
+                        footerButton("保存接入", primary: true, action: save)
                     }
-                    .controlSize(.small)
                 }
             }
         }
@@ -923,10 +958,12 @@ private struct AISettingsView: View {
         content()
             .padding(16)
             .frame(maxWidth: .infinity)
-            .background(
-                Color(nsColor: .controlBackgroundColor).opacity(0.38),
-                in: RoundedRectangle(cornerRadius: 11)
-            )
+            .background {
+                RoundedRectangle(cornerRadius: 11)
+                    .fill(Color(nsColor: .controlBackgroundColor).opacity(0.38))
+                    .contentShape(Rectangle())
+                    .onTapGesture { focusedField = nil }
+            }
             .overlay {
                 RoundedRectangle(cornerRadius: 11)
                     .stroke(Color.secondary.opacity(0.16), lineWidth: 1)
@@ -1101,8 +1138,7 @@ private struct AISettingsView: View {
             Label(modality.title, systemImage: modality.symbolName)
                 .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(selected ? modality.color : Color.secondary)
-                .padding(.horizontal, 9)
-                .frame(height: 25)
+                .frame(width: 72, height: 25)
                 .background(
                     selected ? modality.color.opacity(0.12) : Color(nsColor: .controlBackgroundColor),
                     in: RoundedRectangle(cornerRadius: 7)
@@ -1115,6 +1151,31 @@ private struct AISettingsView: View {
         .buttonStyle(.plain)
         .help(modality == .text ? "文字输入始终支持" : "标记模型是否支持输入\(modality.title)")
         .accessibilityLabel("\(modality.title)输入，\(selected ? "已支持" : "未支持")")
+    }
+
+    private func footerButton(
+        _ title: String,
+        primary: Bool = false,
+        disabled: Bool = false,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Text(title)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(primary ? Color.white : Color.primary)
+                .frame(width: 72, height: 25)
+                .background(
+                    primary ? Color.accentColor : Color(nsColor: .controlBackgroundColor),
+                    in: RoundedRectangle(cornerRadius: 7)
+                )
+                .overlay {
+                    RoundedRectangle(cornerRadius: 7)
+                        .stroke(primary ? Color.clear : Color.secondary.opacity(0.15))
+                }
+        }
+        .buttonStyle(.plain)
+        .disabled(disabled)
+        .opacity(disabled ? 0.55 : 1)
     }
 
 }
