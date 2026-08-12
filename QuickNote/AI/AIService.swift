@@ -705,14 +705,14 @@ final class AISettingsController {
 
     private func makePanel() -> NSPanel {
         let panel = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 640, height: 480),
+            contentRect: NSRect(x: 0, y: 0, width: 720, height: 560),
             styleMask: [.titled, .closable, .resizable],
             backing: .buffered,
             defer: false
         )
         panel.title = "AI 模型"
         panel.isReleasedWhenClosed = false
-        panel.minSize = NSSize(width: 620, height: 470)
+        panel.minSize = NSSize(width: 680, height: 540)
         panel.contentView = NSHostingView(rootView: AISettingsView(store: store))
         return panel
     }
@@ -757,163 +757,148 @@ private struct AISettingsView: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            HStack(spacing: 12) {
-                Image(systemName: "point.3.connected.trianglepath.dotted")
-                    .font(.system(size: 17, weight: .medium))
-                    .foregroundStyle(Color.accentColor)
-                    .frame(width: 34, height: 34)
-                    .background(Color.accentColor.opacity(0.1), in: RoundedRectangle(cornerRadius: 9))
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("AI 模型")
-                        .font(.system(size: 20, weight: .semibold))
-                    Text("配置接入，并按内容类型自动选择模型")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
+        VStack(spacing: 10) {
+            card {
+                HStack(spacing: 12) {
+                    Image(systemName: "point.3.connected.trianglepath.dotted")
+                        .font(.system(size: 17, weight: .medium))
+                        .foregroundStyle(Color.accentColor)
+                        .frame(width: 38, height: 38)
+                        .background(Color.accentColor.opacity(0.1), in: RoundedRectangle(cornerRadius: 9))
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("AI 模型")
+                            .font(.system(size: 20, weight: .semibold))
+                        Text("配置接入方式，并按内容类型自动选择模型")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Label("钥匙串保护", systemImage: "lock.fill")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(Color.green)
+                        .padding(.horizontal, 9)
+                        .frame(height: 26)
+                        .background(Color.green.opacity(0.08), in: RoundedRectangle(cornerRadius: 7))
                 }
-                Spacer()
-                Label("钥匙串保护", systemImage: "lock.fill")
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundStyle(.secondary)
             }
-            .frame(maxWidth: 592)
-            .padding(.top, 20)
-            .padding(.bottom, 14)
 
-            Divider()
-                .frame(maxWidth: 592)
-
-            VStack(alignment: .leading, spacing: 20) {
-                    VStack(alignment: .leading, spacing: 10) {
-                        sectionTitle("模型路由", detail: "按输入类型自动选择模型")
-                        HStack(alignment: .top, spacing: 14) {
-                            routePicker("文字模型", icon: "textformat", selection: $textRoute, modality: .text)
-                            routePicker("图片模型", icon: "photo", selection: $imageRoute, modality: .image)
-                            VStack(alignment: .leading, spacing: 5) {
-                                Label("自动回退", systemImage: "arrow.trianglehead.2.clockwise.rotate.90")
-                                    .font(.system(size: 10, weight: .medium))
-                                    .foregroundStyle(.secondary)
-                                HStack(spacing: 8) {
-                                    Text("失败时切换一次")
-                                        .font(.system(size: 11, weight: .medium))
-                                    Toggle("", isOn: $automaticFallback)
-                                        .labelsHidden()
-                                        .onChange(of: automaticFallback) { _, value in
-                                            store.automaticFallback = value
-                                        }
-                                }
-                                .frame(maxWidth: .infinity, alignment: .leading)
+            card {
+                VStack(alignment: .leading, spacing: 14) {
+                    sectionTitle("模型路由", detail: "按输入类型自动选择模型")
+                    HStack(alignment: .top, spacing: 16) {
+                        routePicker("文字模型", icon: "textformat", selection: $textRoute, modality: .text)
+                        routePicker("图片模型", icon: "photo", selection: $imageRoute, modality: .image)
+                        VStack(alignment: .leading, spacing: 7) {
+                            Label("自动回退", systemImage: "arrow.trianglehead.2.clockwise.rotate.90")
+                                .font(.system(size: 10, weight: .medium))
+                                .foregroundStyle(.secondary)
+                            HStack(spacing: 8) {
+                                Text("失败时切换一次")
+                                    .font(.system(size: 11, weight: .medium))
+                                Spacer()
+                                Toggle("", isOn: $automaticFallback)
+                                    .labelsHidden()
+                                    .toggleStyle(.switch)
+                                    .controlSize(.small)
+                                    .onChange(of: automaticFallback) { _, value in
+                                        store.automaticFallback = value
+                                    }
                             }
-                            .frame(maxWidth: .infinity, alignment: .leading)
                         }
-                        .padding(14)
-                        .background(
-                            Color(nsColor: .controlBackgroundColor).opacity(0.72),
-                            in: RoundedRectangle(cornerRadius: 11)
-                        )
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+            }
+
+            card {
+                VStack(alignment: .leading, spacing: 14) {
+                    HStack(spacing: 16) {
+                        sectionTitle("API 接入", detail: "已配置 \(configuredCount) / 6")
+                        Spacer()
+                        Picker("", selection: $slot) {
+                            ForEach(AIProfileSlot.allCases) { item in
+                                Text("接入 \(item.rawValue + 1)").tag(item)
+                            }
+                        }
+                        .labelsHidden()
+                        .pickerStyle(.segmented)
+                        .frame(width: 390)
+                        .onChange(of: slot) { _, value in load(value) }
                     }
 
-                    VStack(alignment: .leading, spacing: 14) {
-                        HStack(spacing: 12) {
-                            sectionTitle("API 接入", detail: "已配置 \(configuredCount) / 6")
-                            Picker("", selection: $slot) {
-                                ForEach(AIProfileSlot.allCases) { item in
-                                    Text("接入 \(item.rawValue + 1)").tag(item)
+                    HStack(alignment: .top, spacing: 14) {
+                        field("接入名称", icon: "tag") {
+                            TextField("例如：主力文字模型", text: $profileName)
+                                .textFieldStyle(.roundedBorder)
+                        }
+                        field("服务商", icon: "building.2") {
+                            Picker("", selection: providerBinding) {
+                                ForEach(AIProvider.allCases) { provider in
+                                    Text(provider.name).tag(provider)
                                 }
                             }
                             .labelsHidden()
-                            .pickerStyle(.segmented)
                             .frame(maxWidth: .infinity)
-                            .onChange(of: slot) { _, value in load(value) }
-                        }
-
-                        HStack(alignment: .top, spacing: 14) {
-                            VStack(spacing: 14) {
-                                field("接入名称") {
-                                    TextField("例如：主力文字模型", text: $profileName)
-                                        .textFieldStyle(.roundedBorder)
-                                }
-                                field("Base URL") {
-                                    TextField("https://…", text: $baseURL)
-                                        .textFieldStyle(.roundedBorder)
-                                }
-                                field("API Key") {
-                                    SecureField("sk-…", text: $apiKey)
-                                        .textFieldStyle(.roundedBorder)
-                                }
-                            }
-                            .frame(maxWidth: .infinity, alignment: .leading)
-
-                            VStack(spacing: 14) {
-                                field("服务商") {
-                                    Picker("", selection: providerBinding) {
-                                        ForEach(AIProvider.allCases) { provider in
-                                            Text(provider.name).tag(provider)
-                                        }
-                                    }
-                                    .labelsHidden()
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                                }
-                                field("模型名称") {
-                                    TextField("model-id", text: $model)
-                                        .textFieldStyle(.roundedBorder)
-                                }
-                            }
-                            .frame(maxWidth: .infinity, alignment: .leading)
                         }
                     }
-            }
-            .frame(maxWidth: 592, alignment: .leading)
-            .padding(.vertical, 14)
-
-            Divider()
-                .frame(maxWidth: 592)
-            VStack(spacing: 8) {
-                if !status.isEmpty {
-                    HStack(spacing: 6) {
-                        Image(systemName: "info.circle")
-                        Text(status)
-                            .lineLimit(1)
-                        Spacer()
+                    HStack(alignment: .top, spacing: 14) {
+                        field("Base URL", icon: "link") {
+                            TextField("https://…", text: $baseURL)
+                                .textFieldStyle(.roundedBorder)
+                        }
+                        field("模型名称", icon: "cube") {
+                            TextField("model-id", text: $model)
+                                .textFieldStyle(.roundedBorder)
+                        }
                     }
-                    .font(.system(size: 10))
-                    .foregroundStyle(.secondary)
+                    field("API Key", icon: "key.fill") {
+                        SecureField("sk-…", text: $apiKey)
+                            .textFieldStyle(.roundedBorder)
+                    }
                 }
-                HStack(spacing: 7) {
+            }
+
+            card {
+                VStack(alignment: .leading, spacing: 8) {
+                    if !status.isEmpty {
+                        Label(status, systemImage: "info.circle")
+                            .font(.system(size: 10))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
                     Text("模型能力")
                         .font(.system(size: 10, weight: .medium))
                         .foregroundStyle(.secondary)
-                    ForEach(AIInputModality.allCases) { modality in
-                        modalityButton(modality)
-                    }
-                    Button(action: testSelectedModalities) {
-                        if isTestingCapabilities {
-                            ProgressView().controlSize(.mini)
-                        } else {
-                            Image(systemName: "checkmark.circle")
-                                .font(.system(size: 12, weight: .medium))
+                    HStack(spacing: 7) {
+                        ForEach(AIInputModality.allCases) { modality in
+                            modalityButton(modality)
                         }
+                        Button(action: testSelectedModalities) {
+                            if isTestingCapabilities {
+                                ProgressView().controlSize(.mini)
+                            } else {
+                                Image(systemName: "checkmark.circle")
+                                    .font(.system(size: 12, weight: .medium))
+                            }
+                        }
+                        .buttonStyle(.plain)
+                        .frame(width: 22, height: 22)
+                        .disabled(isTestingCapabilities)
+                        .help("测试已勾选的识别能力")
+                        .accessibilityLabel("测试已勾选的识别能力")
+                        Spacer()
+                        Button("恢复预设", action: restorePreset)
+                        Button(isTesting ? "测试中…" : "测试连接", action: testConnection)
+                            .disabled(isTesting)
+                        Button("保存接入", action: save)
+                            .buttonStyle(.borderedProminent)
                     }
-                    .buttonStyle(.plain)
-                    .frame(width: 22, height: 22)
-                    .disabled(isTestingCapabilities)
-                    .help("测试已勾选的识别能力")
-                    .accessibilityLabel("测试已勾选的识别能力")
-                    Spacer()
-                    Button("恢复预设", action: restorePreset)
-                    Button(isTesting ? "测试中…" : "测试连接", action: testConnection)
-                        .disabled(isTesting)
-                    Button("保存接入", action: save)
-                        .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
                 }
-                .controlSize(.small)
             }
-            .frame(maxWidth: 592)
-            .padding(.top, 12)
-            .padding(.bottom, 18)
         }
-        .padding(.horizontal, 24)
-        .frame(minWidth: 620, idealWidth: 640, minHeight: 470, idealHeight: 480)
+        .padding(14)
+        .frame(minWidth: 680, idealWidth: 720, minHeight: 540, idealHeight: 560)
         .alert(item: $capabilityAlert) { alert in
             Alert(
                 title: Text("能力测试"),
@@ -934,9 +919,27 @@ private struct AISettingsView: View {
         }
     }
 
-    private func field<Content: View>(_ label: String, @ViewBuilder content: () -> Content) -> some View {
+    private func card<Content: View>(@ViewBuilder content: () -> Content) -> some View {
+        content()
+            .padding(16)
+            .frame(maxWidth: .infinity)
+            .background(
+                Color(nsColor: .controlBackgroundColor).opacity(0.38),
+                in: RoundedRectangle(cornerRadius: 11)
+            )
+            .overlay {
+                RoundedRectangle(cornerRadius: 11)
+                    .stroke(Color.secondary.opacity(0.16), lineWidth: 1)
+            }
+    }
+
+    private func field<Content: View>(
+        _ label: String,
+        icon: String,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
         VStack(alignment: .leading, spacing: 5) {
-            Text(label)
+            Label(label, systemImage: icon)
                 .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(.secondary)
             content()
