@@ -1,6 +1,6 @@
 # QuickNote
 
-QuickNote 是一款本地优先的 macOS 便签工具。双击 Command 即刻唤起，记录完成后回到原来的工作流；选中文字后按 Option + Space，可以直接解释、分析、翻译或拓展，并保留排版导入便签。
+QuickNote 是一款本地优先的 macOS 便签工具。双击 Command 即刻唤起，记录完成后回到原来的工作流；选中文字后按 Option + Space，或按 Command + Shift 截取屏幕区域，可以直接调用 AI 分析并把结果导入便签。
 
 ## 功能演示
 
@@ -22,7 +22,11 @@ QuickNote 是一款本地优先的 macOS 便签工具。双击 Command 即刻唤
 
 ![QuickNote 划词 AI](docs/feature-ai.webp)
 
-### 4. 主题切换
+### 4. 截图识图 AI
+
+按 Command + Shift 选择屏幕区域，QuickNote 会将截图交给图片模型。可以总结要点、提取原文、翻译中文、整理表格、生成待办或排查问题，截图和分析结果均可导入便签。
+
+### 5. 主题切换
 
 除系统默认外，还提供暖纸、鼠尾草、暮光紫、午夜墨与雾蓝五套主题。主题只改变阅读环境，不改变笔记内容。
 
@@ -37,6 +41,8 @@ QuickNote 是一款本地优先的 macOS 便签工具。双击 Command 即刻唤
 - Command + Z 逐步撤销文字与格式操作
 - 五套主题配色
 - 选中文字后调用 AI，并将结构化结果保留格式导入
+- Command + Shift 截图识图，支持六种常用分析场景
+- 最多保存 6 个 API 接入，按文字或图片任务自动路由模型
 - RTFD 本地持久化，API Key 存入 macOS 钥匙串
 
 ## 环境
