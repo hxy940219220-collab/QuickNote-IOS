@@ -870,9 +870,9 @@ private struct AISettingsView: View {
                                     .frame(maxWidth: .infinity)
                                     .contentShape(Rectangle())
                                 }
-                                .menuStyle(.borderlessButton)
+                                .buttonStyle(.plain)
                                 .menuIndicator(.hidden)
-                                .frame(maxWidth: .infinity)
+                                .frame(maxWidth: .infinity, alignment: .leading)
                             }
                         }
                     }

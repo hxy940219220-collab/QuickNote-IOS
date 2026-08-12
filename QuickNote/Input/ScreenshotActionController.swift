@@ -191,10 +191,12 @@ private struct ScreenshotActionView: View {
     let importResult: () -> Void
     let settings: () -> Void
     private let quickActions = [
-        ("概括", "text.alignleft", "概括这张截图的主要内容和重点。"),
-        ("提取文字", "doc.text.viewfinder", "准确提取截图中的全部文字，保持原有段落和列表结构。"),
-        ("解释界面", "rectangle.3.group", "解释这个界面的用途、主要模块和当前状态。"),
-        ("发现问题", "exclamationmark.magnifyingglass", "找出截图中的异常、错误或体验问题，并给出解决建议。"),
+        ("总结要点", "text.alignleft", "用简洁的条目总结截图中的核心内容和重点。"),
+        ("提取原文", "doc.text.viewfinder", "准确提取截图中的全部文字，保持原有段落和列表结构。"),
+        ("翻译中文", "character.book.closed", "提取截图中的文字并翻译成自然、准确的中文，保留原有结构。"),
+        ("整理表格", "tablecells", "识别截图中的表格或结构化数据，并整理成清晰的 Markdown 表格。"),
+        ("生成待办", "checklist", "从截图内容中提取需要执行的事项，整理成简洁的待办清单。"),
+        ("排查问题", "exclamationmark.magnifyingglass", "找出截图中的异常、错误或体验问题，并给出可执行的解决建议。"),
     ]
 
     var body: some View {
@@ -235,7 +237,7 @@ private struct ScreenshotActionView: View {
                     TextField("你想了解这张图片的什么？", text: $state.prompt)
                         .textFieldStyle(.roundedBorder)
                         .onSubmit(analyze)
-                    Button(state.isLoading ? "分析中…" : "分析", action: analyze)
+                    Button(state.isLoading ? "分析中…" : "AI 分析", action: analyze)
                         .buttonStyle(.borderedProminent)
                         .disabled(state.isLoading)
                 }
