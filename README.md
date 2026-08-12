@@ -26,6 +26,8 @@ QuickNote 是一款本地优先的 macOS 便签工具。双击 Command 即刻唤
 
 按 Command + Shift 选择屏幕区域，QuickNote 会将截图交给图片模型。可以总结要点、提取原文、翻译中文、整理表格、生成待办或排查问题，截图和分析结果均可导入便签。
 
+![QuickNote 截图识图 AI](docs/feature-screenshot-ai.webp)
+
 ### 5. 主题切换
 
 除系统默认外，还提供暖纸、鼠尾草、暮光紫、午夜墨与雾蓝五套主题。主题只改变阅读环境，不改变笔记内容。
