@@ -705,14 +705,14 @@ final class AISettingsController {
 
     private func makePanel() -> NSPanel {
         let panel = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 720, height: 600),
+            contentRect: NSRect(x: 0, y: 0, width: 760, height: 620),
             styleMask: [.titled, .closable, .resizable],
             backing: .buffered,
             defer: false
         )
         panel.title = "AI 模型"
         panel.isReleasedWhenClosed = false
-        panel.minSize = NSSize(width: 680, height: 570)
+        panel.minSize = NSSize(width: 720, height: 600)
         panel.contentView = NSHostingView(rootView: AISettingsView(store: store))
         return panel
     }
@@ -757,7 +757,7 @@ private struct AISettingsView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
+        VStack(spacing: 0) {
             HStack(spacing: 12) {
                 Image(systemName: "point.3.connected.trianglepath.dotted")
                     .font(.system(size: 17, weight: .medium))
@@ -776,25 +776,47 @@ private struct AISettingsView: View {
                     .font(.system(size: 10, weight: .medium))
                     .foregroundStyle(.secondary)
             }
+            .frame(maxWidth: 640)
+            .padding(.top, 24)
+            .padding(.bottom, 18)
 
-            ScrollView {
-                VStack(alignment: .leading, spacing: 18) {
+            Divider()
+                .frame(maxWidth: 640)
+
+            ScrollView(.vertical) {
+                VStack(alignment: .leading, spacing: 24) {
                     VStack(alignment: .leading, spacing: 10) {
                         sectionTitle("模型路由", detail: "按输入类型自动选择模型")
-                        HStack(spacing: 12) {
-                            routePicker("文字", icon: "textformat", selection: $textRoute, modality: .text)
-                            routePicker("图片", icon: "photo", selection: $imageRoute, modality: .image)
-                            Toggle("失败时切换一次", isOn: $automaticFallback)
-                                .font(.system(size: 11, weight: .medium))
-                                .onChange(of: automaticFallback) { _, value in
-                                    store.automaticFallback = value
+                        VStack(spacing: 12) {
+                            HStack(alignment: .top, spacing: 14) {
+                                routePicker("文字模型", icon: "textformat", selection: $textRoute, modality: .text)
+                                routePicker("图片模型", icon: "photo", selection: $imageRoute, modality: .image)
+                            }
+                            Divider()
+                            HStack(spacing: 12) {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text("自动回退")
+                                        .font(.system(size: 11, weight: .medium))
+                                    Text("首选模型失败时，仅切换一次")
+                                        .font(.system(size: 10))
+                                        .foregroundStyle(.secondary)
                                 }
+                                Spacer()
+                                Toggle("", isOn: $automaticFallback)
+                                    .labelsHidden()
+                                    .onChange(of: automaticFallback) { _, value in
+                                        store.automaticFallback = value
+                                    }
+                            }
                         }
+                        .padding(14)
+                        .background(
+                            Color(nsColor: .controlBackgroundColor).opacity(0.72),
+                            in: RoundedRectangle(cornerRadius: 11)
+                        )
                     }
-                    .padding(14)
-                    .background(Color(nsColor: .controlBackgroundColor).opacity(0.72), in: RoundedRectangle(cornerRadius: 11))
 
-                    VStack(alignment: .leading, spacing: 12) {
+                    VStack(alignment: .leading, spacing: 14) {
                         sectionTitle("API 接入", detail: "已配置 \(configuredCount) / 6")
                         Picker("", selection: $slot) {
                             ForEach(AIProfileSlot.allCases) { item in
@@ -817,17 +839,21 @@ private struct AISettingsView: View {
                                     }
                                 }
                                 .labelsHidden()
+                                .frame(maxWidth: .infinity)
                             }
-                            .frame(width: 190)
                         }
-                        field("Base URL") {
-                            TextField("https://…", text: $baseURL)
-                                .textFieldStyle(.roundedBorder)
+
+                        HStack(alignment: .top, spacing: 14) {
+                            field("Base URL") {
+                                TextField("https://…", text: $baseURL)
+                                    .textFieldStyle(.roundedBorder)
+                            }
+                            field("模型名称") {
+                                TextField("model-id", text: $model)
+                                    .textFieldStyle(.roundedBorder)
+                            }
                         }
-                        field("模型名称") {
-                            TextField("model-id", text: $model)
-                                .textFieldStyle(.roundedBorder)
-                        }
+
                         field("输入能力") {
                             HStack(spacing: 7) {
                                 ForEach(AIInputModality.allCases) { modality in
@@ -854,14 +880,17 @@ private struct AISettingsView: View {
                         }
                     }
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .frame(maxWidth: 640, alignment: .leading)
+                .padding(.vertical, 20)
+                .frame(maxWidth: .infinity)
             }
 
             Divider()
+                .frame(maxWidth: 640)
             HStack(spacing: 10) {
                 Image(systemName: status.isEmpty ? "lock" : "info.circle")
                     .foregroundStyle(.secondary)
-                Text(status.isEmpty ? "API Key 仅存入 macOS 钥匙串，请求会发送给所选服务商。" : status)
+                Text(status.isEmpty ? "API Key 仅存入 macOS 钥匙串" : status)
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
@@ -872,9 +901,11 @@ private struct AISettingsView: View {
                 Button("保存接入", action: save)
                     .buttonStyle(.borderedProminent)
             }
+            .frame(maxWidth: 640)
+            .padding(.vertical, 14)
         }
-        .padding(22)
-        .frame(minWidth: 680, idealWidth: 720, minHeight: 570, idealHeight: 600)
+        .padding(.horizontal, 32)
+        .frame(minWidth: 720, idealWidth: 760, minHeight: 600, idealHeight: 620)
         .alert(item: $capabilityAlert) { alert in
             Alert(
                 title: Text("能力测试"),
@@ -901,7 +932,9 @@ private struct AISettingsView: View {
                 .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(.secondary)
             content()
+                .frame(maxWidth: .infinity)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private func routePicker(
@@ -927,7 +960,7 @@ private struct AISettingsView: View {
             .labelsHidden()
         }
         .font(.system(size: 11, weight: .medium))
-        .frame(maxWidth: .infinity)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .onChange(of: selection.wrappedValue) { _, value in
             store.setPreferredSlot(value, for: modality)
         }
