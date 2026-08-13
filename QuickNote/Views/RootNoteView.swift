@@ -494,7 +494,7 @@ struct RootNoteView: View {
                 .frame(width: 26, height: 26)
                 .contentShape(Rectangle())
         }
-        .buttonStyle(.borderless)
+        .buttonStyle(.plain)
         .quickNoteTooltip(label)
         .accessibilityLabel(label)
     }
