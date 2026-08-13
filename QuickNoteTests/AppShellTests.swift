@@ -97,6 +97,28 @@ final class AppShellTests: XCTestCase {
         XCTAssertFalse(NSFontManager.shared.traits(of: restoredFont).contains(.boldFontMask))
     }
 
+    @MainActor
+    func testTextStyleUsesSelectionCapturedBeforePopoverTakesFocus() throws {
+        let controller = RichTextEditorController()
+        let textView = UndoableTestTextView()
+        textView.textStorage?.setAttributedString(NSAttributedString(
+            string: "第一段\n第二段",
+            attributes: [.font: EditorTextStyle.body.font]
+        ))
+        let selection = (textView.string as NSString).range(of: "第二段")
+        textView.setSelectedRange(selection)
+        controller.connect(textView)
+        controller.captureSelection()
+        textView.setSelectedRange(NSRange(location: 0, length: 0))
+
+        controller.applyTextStyle(.heading)
+
+        XCTAssertEqual(
+            (textView.textStorage?.attribute(.font, at: selection.location, effectiveRange: nil) as? NSFont)?.pointSize,
+            EditorTextStyle.heading.font.pointSize
+        )
+    }
+
     func testChineseCalendarDetailsForKnownDate() throws {
         var gregorian = Calendar(identifier: .gregorian)
         gregorian.timeZone = try XCTUnwrap(TimeZone(identifier: "Asia/Shanghai"))

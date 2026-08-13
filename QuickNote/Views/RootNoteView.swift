@@ -195,6 +195,7 @@ struct RootNoteView: View {
 
                 HStack(spacing: 2) {
                     toolbarButton("格式", systemImage: "textformat") {
+                        editorController.captureSelection()
                         formatPresented.toggle()
                     }
                     .popover(isPresented: $formatPresented, arrowEdge: .top) {

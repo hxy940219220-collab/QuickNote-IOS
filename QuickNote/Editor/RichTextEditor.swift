@@ -261,6 +261,7 @@ enum EditorLink {
 @MainActor
 final class RichTextEditorController: ObservableObject {
     private weak var textView: NSTextView?
+    private var capturedSelection: NSRange?
     @Published private(set) var canUndo = false
     private var imagePreviewPanel: NSPanel?
     private var preparedAttachmentWidth: CGFloat?
@@ -290,6 +291,10 @@ final class RichTextEditorController: ObservableObject {
     func connect(_ textView: NSTextView) {
         self.textView = textView
         refreshUndoAvailability()
+    }
+
+    func captureSelection() {
+        capturedSelection = textView?.selectedRange()
     }
 
     func undo() {
@@ -351,7 +356,11 @@ final class RichTextEditorController: ObservableObject {
 
     func applyTextStyle(_ style: EditorTextStyle) {
         guard let textView else { return }
-        let range = paragraphRange(in: textView)
+        let selection = textView.selectedRange().length > 0
+            ? textView.selectedRange()
+            : capturedSelection ?? textView.selectedRange()
+        capturedSelection = nil
+        let range = (textView.string as NSString).paragraphRange(for: selection)
         if range.length == 0 {
             registerUndoSnapshot(in: textView)
             textView.typingAttributes[.font] = style.font
@@ -359,7 +368,7 @@ final class RichTextEditorController: ObservableObject {
             registerUndoSnapshot(in: textView)
             textView.textStorage?.addAttribute(.font, value: style.font, range: range)
             alignChecklistAttachments(in: textView, range: range, font: style.font)
-            commit(textView, preserving: textView.selectedRange())
+            commit(textView, preserving: selection)
         }
     }
 
