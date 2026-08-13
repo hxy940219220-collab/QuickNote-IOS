@@ -23,6 +23,39 @@ extension View {
     func quickNoteHoverHighlight(cornerRadius: CGFloat = 6, enabled: Bool = true) -> some View {
         modifier(QuickNoteHoverHighlight(cornerRadius: cornerRadius, enabled: enabled))
     }
+
+    func quickNoteTooltip(_ text: String) -> some View {
+        modifier(QuickNoteTooltip(text: text))
+    }
+}
+
+private struct QuickNoteTooltip: ViewModifier {
+    @State private var hovering = false
+    let text: String
+
+    func body(content: Content) -> some View {
+        content
+            .overlay(alignment: .bottomTrailing) {
+                if hovering {
+                    Text(text)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(.primary)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 5)
+                        .fixedSize()
+                        .background(Color(nsColor: .windowBackgroundColor), in: RoundedRectangle(cornerRadius: 6))
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 6)
+                                .stroke(Color.secondary.opacity(0.22), lineWidth: 1)
+                        }
+                        .shadow(color: .black.opacity(0.16), radius: 5, y: 2)
+                        .offset(y: 30)
+                        .allowsHitTesting(false)
+                }
+            }
+            .zIndex(hovering ? 100 : 0)
+            .onHover { hovering = $0 }
+    }
 }
 
 enum QuickNoteShortcut: Equatable {
@@ -463,7 +496,7 @@ struct RootNoteView: View {
         }
         .buttonStyle(.borderless)
         .quickNoteHoverHighlight()
-        .help(label)
+        .quickNoteTooltip(label)
         .accessibilityLabel(label)
     }
 }
