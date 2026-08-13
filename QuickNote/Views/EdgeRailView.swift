@@ -12,6 +12,7 @@ struct EdgeRailView: View {
     let preview: (NoteRecord?) -> Void
     let select: (NoteRecord) -> Void
     let expandedChanged: (Bool) -> Void
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var expanded = false
 
     var body: some View {
@@ -45,8 +46,14 @@ struct EdgeRailView: View {
                     .frame(width: Self.collapsedSize.width, height: Self.collapsedSize.height)
             }
         }
+        .animation(
+            reduceMotion ? nil : .easeOut(duration: 0.16),
+            value: expanded
+        )
         .onHover { hovering in
-            expanded = hovering
+            withAnimation(reduceMotion ? nil : .easeOut(duration: 0.16)) {
+                expanded = hovering
+            }
             expandedChanged(hovering)
             if !hovering { preview(nil) }
         }

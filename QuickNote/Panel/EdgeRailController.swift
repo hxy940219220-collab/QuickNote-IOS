@@ -80,7 +80,7 @@ final class EdgeRailController {
         contentSize = expanded
             ? EdgeRailView.expandedSize(noteCount: noteCount)
             : EdgeRailView.collapsedSize
-        reposition(force: true)
+        reposition(force: true, animated: true)
     }
 
     private func removeMouseMonitors() {
@@ -138,13 +138,17 @@ final class EdgeRailController {
         previewWindow.orderFrontRegardless()
     }
 
-    private func reposition(force: Bool = false) {
+    private func reposition(force: Bool = false, animated: Bool = false) {
         guard let screen = NSScreen.screens.first(where: {
             NSMouseInRect(NSEvent.mouseLocation, $0.frame, false)
         }) ?? NSScreen.main else { return }
         guard force || screen !== currentScreen else { return }
         currentScreen = screen
-        window.setFrame(Self.railFrame(in: screen.visibleFrame, contentSize: contentSize), display: true)
+        window.setFrame(
+            Self.railFrame(in: screen.visibleFrame, contentSize: contentSize),
+            display: true,
+            animate: animated && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        )
     }
 }
 
