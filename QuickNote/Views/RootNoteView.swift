@@ -219,6 +219,7 @@ struct RootNoteView: View {
             }
             .frame(height: 38)
             .background(Color(nsColor: theme.toolbarBackground))
+            .zIndex(1)
 
             if let error = session.saveError {
                 HStack {
