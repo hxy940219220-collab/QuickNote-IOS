@@ -24,18 +24,19 @@ extension View {
         modifier(QuickNoteHoverHighlight(cornerRadius: cornerRadius, enabled: enabled))
     }
 
-    func quickNoteTooltip(_ text: String) -> some View {
-        modifier(QuickNoteTooltip(text: text))
+    func quickNoteTooltip(_ text: String, alignment: Alignment = .bottom) -> some View {
+        modifier(QuickNoteTooltip(text: text, alignment: alignment))
     }
 }
 
 private struct QuickNoteTooltip: ViewModifier {
     @State private var hovering = false
     let text: String
+    let alignment: Alignment
 
     func body(content: Content) -> some View {
         content
-            .overlay(alignment: .bottom) {
+            .overlay(alignment: alignment) {
                 if hovering {
                     Text(text)
                         .font(.system(size: 11, weight: .medium))
@@ -185,7 +186,7 @@ struct RootNoteView: View {
                         action: toggleWindowLock
                     )
 
-                    toolbarButton("打开设置", systemImage: "gearshape") {
+                    toolbarButton("打开设置", systemImage: "gearshape", tooltipAlignment: .bottomTrailing) {
                         settingsPresented.toggle()
                     }
                 }
@@ -488,6 +489,7 @@ struct RootNoteView: View {
     private func toolbarButton(
         _ label: String,
         systemImage: String,
+        tooltipAlignment: Alignment = .bottom,
         action: @escaping () -> Void
     ) -> some View {
         Button(action: action) {
@@ -497,7 +499,7 @@ struct RootNoteView: View {
         }
         .buttonStyle(.plain)
         .quickNoteHoverHighlight()
-        .quickNoteTooltip(label)
+        .quickNoteTooltip(label, alignment: tooltipAlignment)
         .accessibilityLabel(label)
     }
 }
