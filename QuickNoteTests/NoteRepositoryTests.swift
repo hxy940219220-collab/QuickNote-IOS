@@ -18,7 +18,7 @@ final class NoteRepositoryTests: XCTestCase {
         XCTAssertEqual(try repository.allNotes().map(\.id), [pinned.id, recent.id])
     }
 
-    func testPinnedNotesPrecedeMoreRecentUnpinnedNotes() throws {
+    func testRecentNotesAreOrderedOnlyByUpdateTime() throws {
         let configuration = ModelConfiguration(isStoredInMemoryOnly: true)
         let container = try ModelContainer(for: NoteRecord.self, configurations: configuration)
         let repository = NoteRepository(context: container.mainContext)
@@ -28,7 +28,7 @@ final class NoteRepositoryTests: XCTestCase {
         container.mainContext.insert(pinned)
         container.mainContext.insert(recent)
         try repository.save()
-        XCTAssertEqual(try repository.recentNotes(limit: 2).map(\.id), [pinned.id, recent.id])
+        XCTAssertEqual(try repository.recentNotes(limit: 2).map(\.id), [recent.id, pinned.id])
     }
 
     func testCreateAndSearchNoteBody() throws {

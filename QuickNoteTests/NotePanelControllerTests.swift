@@ -67,6 +67,14 @@ final class NotePanelControllerTests: XCTestCase {
         XCTAssertEqual(railFrame.midY, collapsedFrame.midY)
     }
 
+    func testEdgeRailCollapsesAndCapsExpandedItemsAtSix() {
+        XCTAssertEqual(EdgeRailView.collapsedSize, NSSize(width: 8, height: 40))
+        XCTAssertEqual(
+            EdgeRailView.expandedSize(noteCount: 9),
+            NSSize(width: 18, height: 124)
+        )
+    }
+
     func testEdgeRailPreviewFrameStaysBesideRailAndInsideScreen() {
         let frame = EdgeRailController.previewFrame(
             beside: NSRect(x: 4, y: 420, width: 18, height: 60),

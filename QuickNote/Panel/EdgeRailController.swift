@@ -18,7 +18,9 @@ final class EdgeRailController {
     private var globalMouseMonitor: Any?
     private var localMouseMonitor: Any?
     private weak var currentScreen: NSScreen?
-    private var contentSize = NSSize(width: 18, height: 31)
+    private var contentSize = EdgeRailView.collapsedSize
+    private var noteCount = 0
+    private var isExpanded = false
 
     var onSelect: ((NoteRecord) -> Void)?
 
@@ -53,18 +55,31 @@ final class EdgeRailController {
     }
 
     func update(notes: [NoteRecord]) {
+        let notes = Array(notes.prefix(EdgeRailView.maximumNotes))
+        noteCount = notes.count
+        isExpanded = false
+        contentSize = EdgeRailView.collapsedSize
         let hostingView = NSHostingView(rootView: EdgeRailView(
-            notes: Array(notes.prefix(8)),
+            notes: notes,
             preview: { [weak self] in self?.setPreview($0) },
             select: { [weak self] note in
                 self?.setPreview(nil)
                 self?.onSelect?(note)
-            }
+            },
+            expandedChanged: { [weak self] in self?.setExpanded($0) }
         ))
         hostingView.wantsLayer = true
         hostingView.layer?.backgroundColor = NSColor.clear.cgColor
         window.contentView = hostingView
-        contentSize = hostingView.fittingSize
+        reposition(force: true)
+    }
+
+    private func setExpanded(_ expanded: Bool) {
+        guard expanded != isExpanded else { return }
+        isExpanded = expanded
+        contentSize = expanded
+            ? EdgeRailView.expandedSize(noteCount: noteCount)
+            : EdgeRailView.collapsedSize
         reposition(force: true)
     }
 

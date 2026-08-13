@@ -63,8 +63,10 @@ final class NoteRepository {
         }
     }
 
-    func recentNotes(limit: Int = 8) throws -> [NoteRecord] {
-        Array(try allNotes().prefix(limit))
+    func recentNotes(limit: Int = 6) throws -> [NoteRecord] {
+        Array(try context.fetch(
+            FetchDescriptor<NoteRecord>(sortBy: [SortDescriptor(\.updatedAt, order: .reverse)])
+        ).prefix(limit))
     }
 
     func search(_ query: String) throws -> [NoteRecord] {
