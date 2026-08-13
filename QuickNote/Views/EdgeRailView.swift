@@ -47,6 +47,8 @@ struct EdgeRailView: View {
                     .frame(width: Self.collapsedSize.width, height: Self.collapsedSize.height)
             }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .contentShape(Rectangle())
         .onHover { hovering in
             transitionTask?.cancel()
             if hovering {
