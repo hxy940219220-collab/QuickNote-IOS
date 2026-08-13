@@ -14,6 +14,7 @@ struct EdgeRailView: View {
     let expandedChanged: (Bool) -> Void
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var expanded = false
+    @State private var transitionTask: Task<Void, Never>?
 
     var body: some View {
         Group {
@@ -46,16 +47,29 @@ struct EdgeRailView: View {
                     .frame(width: Self.collapsedSize.width, height: Self.collapsedSize.height)
             }
         }
-        .animation(
-            reduceMotion ? nil : .easeOut(duration: 0.16),
-            value: expanded
-        )
         .onHover { hovering in
-            withAnimation(reduceMotion ? nil : .easeOut(duration: 0.16)) {
-                expanded = hovering
+            transitionTask?.cancel()
+            if hovering {
+                expandedChanged(true)
+                transitionTask = Task { @MainActor in
+                    if !reduceMotion { try? await Task.sleep(for: .milliseconds(160)) }
+                    guard !Task.isCancelled else { return }
+                    withAnimation(reduceMotion ? nil : .easeOut(duration: 0.1)) {
+                        expanded = true
+                    }
+                }
+            } else {
+                preview(nil)
+                withAnimation(reduceMotion ? nil : .easeOut(duration: 0.08)) {
+                    expanded = false
+                }
+                transitionTask = Task { @MainActor in
+                    if !reduceMotion { try? await Task.sleep(for: .milliseconds(90)) }
+                    guard !Task.isCancelled else { return }
+                    expandedChanged(false)
+                }
             }
-            expandedChanged(hovering)
-            if !hovering { preview(nil) }
         }
+        .onDisappear { transitionTask?.cancel() }
     }
 }
