@@ -35,7 +35,7 @@ private struct QuickNoteTooltip: ViewModifier {
 
     func body(content: Content) -> some View {
         content
-            .overlay(alignment: .bottomTrailing) {
+            .overlay(alignment: .bottom) {
                 if hovering {
                     Text(text)
                         .font(.system(size: 11, weight: .medium))
@@ -496,6 +496,7 @@ struct RootNoteView: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .quickNoteHoverHighlight()
         .quickNoteTooltip(label)
         .accessibilityLabel(label)
     }
