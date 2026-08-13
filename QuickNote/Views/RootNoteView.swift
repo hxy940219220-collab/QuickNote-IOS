@@ -137,14 +137,14 @@ struct RootNoteView: View {
 
                     Spacer(minLength: 8)
 
-                    toolbarButton("便签主题", systemImage: "paintpalette") {
+                    toolbarButton("切换便签主题", systemImage: "paintpalette") {
                         themePresented.toggle()
                     }
                     .popover(isPresented: $themePresented, arrowEdge: .top) {
                         NoteThemePicker(selection: $selectedTheme)
                     }
 
-                    toolbarButton("AI 模型", systemImage: "sparkles", action: showAISettings)
+                    toolbarButton("新建便签（Command + N）", systemImage: "square.and.pencil", action: create)
 
                     toolbarButton(
                         windowLocked ? "取消锁定" : "锁定在最前",
@@ -152,7 +152,7 @@ struct RootNoteView: View {
                         action: toggleWindowLock
                     )
 
-                    toolbarButton("设置", systemImage: "gearshape") {
+                    toolbarButton("打开设置", systemImage: "gearshape") {
                         settingsPresented.toggle()
                     }
                 }
@@ -258,7 +258,13 @@ struct RootNoteView: View {
                         .contentShape(Rectangle())
                         .onTapGesture { settingsPresented = false }
 
-                    QuickNoteSettingsView(open: showSettings)
+                    QuickNoteSettingsView(
+                        open: showSettings,
+                        openAISettings: {
+                            settingsPresented = false
+                            showAISettings()
+                        }
+                    )
                         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
                         .overlay {
                             RoundedRectangle(cornerRadius: 12)
@@ -918,6 +924,7 @@ private struct NoteStorageLocation: Identifiable {
 
 private struct QuickNoteSettingsView: View {
     let open: (QuickNoteSettingsDestination) -> Void
+    let openAISettings: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -926,6 +933,7 @@ private struct QuickNoteSettingsView: View {
                 .padding(.horizontal, 6)
                 .padding(.bottom, 2)
 
+            settingsButton("AI 模型", systemImage: "sparkles", action: openAISettings)
             settingsButton(.localStorage)
             settingsButton(.shortcuts)
             settingsButton(.help)
@@ -935,11 +943,21 @@ private struct QuickNoteSettingsView: View {
     }
 
     private func settingsButton(_ destination: QuickNoteSettingsDestination) -> some View {
-        Button { open(destination) } label: {
+        settingsButton(destination.title, systemImage: destination.systemImage) {
+            open(destination)
+        }
+    }
+
+    private func settingsButton(
+        _ title: String,
+        systemImage: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
             HStack(spacing: 10) {
-                Image(systemName: destination.systemImage)
+                Image(systemName: systemImage)
                     .frame(width: 18)
-                Text(destination.title)
+                Text(title)
                 Spacer()
                 Image(systemName: "chevron.right")
                     .font(.system(size: 9, weight: .semibold))
