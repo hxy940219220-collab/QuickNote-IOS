@@ -195,6 +195,22 @@ enum NotePasteNormalizer {
 }
 
 final class QuickNoteTextView: NSTextView {
+    static func editingMenu() -> NSMenu {
+        let menu = NSMenu()
+        for (title, action) in [
+            ("剪切", #selector(NSText.cut(_:))),
+            ("复制", #selector(NSText.copy(_:))),
+            ("粘贴", #selector(NSText.paste(_:))),
+        ] {
+            menu.addItem(withTitle: title, action: action, keyEquivalent: "")
+        }
+        menu.addItem(.separator())
+        menu.addItem(withTitle: "全选", action: #selector(NSText.selectAll(_:)), keyEquivalent: "")
+        return menu
+    }
+
+    override func menu(for event: NSEvent) -> NSMenu? { Self.editingMenu() }
+
     override func readSelection(from pasteboard: NSPasteboard) -> Bool {
         let richTypes: [NSPasteboard.PasteboardType] = [.rtfd, .rtf, .html]
         guard richTypes.contains(where: { pasteboard.availableType(from: [$0]) != nil }) else {
@@ -891,6 +907,7 @@ final class RichTextEditorController: ObservableObject {
                 value: attachmentParagraphStyle(from: existing, compact: item.compact),
                 range: item.range
             )
+            normalizeSpacingAdjacentToAttachment(item.range, in: storage)
         }
     }
 
@@ -899,9 +916,47 @@ final class RichTextEditorController: ObservableObject {
         compact: Bool = false
     ) -> NSParagraphStyle {
         let style = existing?.mutableCopy() as? NSMutableParagraphStyle ?? NSMutableParagraphStyle()
-        style.paragraphSpacingBefore = compact ? 3 : max(style.paragraphSpacingBefore, 8)
-        style.paragraphSpacing = compact ? 5 : max(style.paragraphSpacing, 12)
+        style.lineSpacing = 0
+        style.lineHeightMultiple = 0
+        style.minimumLineHeight = 0
+        style.maximumLineHeight = 0
+        style.paragraphSpacingBefore = compact ? 3 : 4
+        style.paragraphSpacing = compact ? 5 : 6
         return style
+    }
+
+    private func normalizeSpacingAdjacentToAttachment(
+        _ attachmentParagraph: NSRange,
+        in storage: NSTextStorage
+    ) {
+        let string = storage.string as NSString
+        if attachmentParagraph.location > 0 {
+            let previousRange = string.paragraphRange(
+                for: NSRange(location: attachmentParagraph.location - 1, length: 0)
+            )
+            if previousRange.location < attachmentParagraph.location {
+                let style = (storage.attribute(
+                    .paragraphStyle,
+                    at: previousRange.location,
+                    effectiveRange: nil
+                ) as? NSParagraphStyle)?.mutableCopy() as? NSMutableParagraphStyle
+                    ?? NSMutableParagraphStyle()
+                style.paragraphSpacing = min(style.paragraphSpacing, 4)
+                storage.addAttribute(.paragraphStyle, value: style, range: previousRange)
+            }
+        }
+
+        let nextLocation = NSMaxRange(attachmentParagraph)
+        guard nextLocation < storage.length else { return }
+        let nextRange = string.paragraphRange(for: NSRange(location: nextLocation, length: 0))
+        let style = (storage.attribute(
+            .paragraphStyle,
+            at: nextRange.location,
+            effectiveRange: nil
+        ) as? NSParagraphStyle)?.mutableCopy() as? NSMutableParagraphStyle
+            ?? NSMutableParagraphStyle()
+        style.paragraphSpacingBefore = min(style.paragraphSpacingBefore, 4)
+        storage.addAttribute(.paragraphStyle, value: style, range: nextRange)
     }
 
     func openFileAttachment(at location: Int) -> Bool {

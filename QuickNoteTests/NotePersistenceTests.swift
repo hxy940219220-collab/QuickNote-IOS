@@ -280,9 +280,66 @@ final class NotePersistenceTests: XCTestCase {
         let attachmentParagraph = try XCTUnwrap(
             document.attribute(.paragraphStyle, at: 0, effectiveRange: nil) as? NSParagraphStyle
         )
-        XCTAssertEqual(attachmentParagraph.paragraphSpacingBefore, 8)
-        XCTAssertEqual(attachmentParagraph.paragraphSpacing, 12)
+        XCTAssertEqual(attachmentParagraph.paragraphSpacingBefore, 4)
+        XCTAssertEqual(attachmentParagraph.paragraphSpacing, 6)
         XCTAssertTrue(attachments.allSatisfy { $0.fileWrapper?.regularFileContents != nil })
+    }
+
+    func testEditorUsesCompactChineseContextMenu() {
+        XCTAssertEqual(
+            QuickNoteTextView.editingMenu().items.compactMap { $0.isSeparatorItem ? nil : $0.title },
+            ["剪切", "复制", "粘贴", "全选"]
+        )
+    }
+
+    func testImageAttachmentCapsImportedParagraphSpacing() throws {
+        let controller = RichTextEditorController()
+        let wrapper = FileWrapper(regularFileWithContents: Data())
+        wrapper.preferredFilename = "截图.png"
+        let attachment = NSTextAttachment(fileWrapper: wrapper)
+        let oversized = NSMutableParagraphStyle()
+        oversized.paragraphSpacingBefore = 80
+        oversized.paragraphSpacing = 120
+        let document = NSMutableAttributedString(
+            string: "上方文字\n",
+            attributes: [.paragraphStyle: oversized]
+        )
+        let attachmentString = NSMutableAttributedString(attachment: attachment)
+        attachmentString.addAttribute(
+            .paragraphStyle,
+            value: oversized,
+            range: NSRange(location: 0, length: attachmentString.length)
+        )
+        document.append(attachmentString)
+        document.append(NSAttributedString(
+            string: "\n下方文字",
+            attributes: [.paragraphStyle: oversized]
+        ))
+        let textView = QuickNoteTextView()
+        textView.textStorage?.setAttributedString(document)
+
+        controller.prepareFileAttachments(in: textView)
+
+        let attachmentRange = (textView.string as NSString).range(of: "\u{FFFC}")
+        let attachmentStyle = try XCTUnwrap(textView.textStorage?.attribute(
+            .paragraphStyle,
+            at: attachmentRange.location,
+            effectiveRange: nil
+        ) as? NSParagraphStyle)
+        XCTAssertEqual(attachmentStyle.paragraphSpacingBefore, 4)
+        XCTAssertEqual(attachmentStyle.paragraphSpacing, 6)
+        let previousStyle = try XCTUnwrap(textView.textStorage?.attribute(
+            .paragraphStyle,
+            at: 0,
+            effectiveRange: nil
+        ) as? NSParagraphStyle)
+        XCTAssertEqual(previousStyle.paragraphSpacing, 4)
+        let nextStyle = try XCTUnwrap(textView.textStorage?.attribute(
+            .paragraphStyle,
+            at: NSMaxRange(attachmentRange) + 1,
+            effectiveRange: nil
+        ) as? NSParagraphStyle)
+        XCTAssertEqual(nextStyle.paragraphSpacingBefore, 4)
     }
 
     func testAudioAttachmentPreservesCompactSpacingAndFilename() throws {
