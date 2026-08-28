@@ -287,6 +287,9 @@ final class RichTextEditorController: ObservableObject {
     private static let listPrefix = try? NSRegularExpression(
         pattern: #"^([\t ]*)((?:\d+|[A-Za-z])\.|[•◦\-–›>])\s+"#
     )
+    private static let numberedListPrefix = try? NSRegularExpression(
+        pattern: #"^([\t ]*)(\d+)\.\s+"#
+    )
 
     private enum ParagraphPrefixStyle {
         case bullet
@@ -590,9 +593,58 @@ final class RichTextEditorController: ObservableObject {
         )
         registerUndoSnapshot(in: textView)
         storage.replaceCharacters(in: selection, with: content)
+        if Int(marker.dropLast()) != nil {
+            renumberNumberedParagraphs(startingAt: paragraph.location, in: storage)
+        }
         commit(textView, preserving: NSRange(location: selection.location + content.length, length: 0))
         textView.typingAttributes = continuationAttributes
         return true
+    }
+
+    private func renumberNumberedParagraphs(startingAt start: Int, in storage: NSTextStorage) {
+        var location = start
+        var indentation: String?
+        var expectedNumber: Int?
+
+        while location < storage.length {
+            let string = storage.string as NSString
+            let paragraph = string.paragraphRange(for: NSRange(location: location, length: 0))
+            let value = string.substring(with: paragraph) as NSString
+            let valueRange = NSRange(location: 0, length: value.length)
+            guard let match = Self.numberedListPrefix?.firstMatch(in: value as String, range: valueRange),
+                  let number = Int(value.substring(with: match.range(at: 2))) else {
+                let content = (value as String).trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !content.isEmpty, content.allSatisfy({ $0 == "\u{FFFC}" }) else { return }
+                let next = NSMaxRange(paragraph)
+                guard next > location, next < storage.length else { return }
+                location = next
+                continue
+            }
+            let currentIndentation = value.substring(with: match.range(at: 1))
+            if let indentation, indentation != currentIndentation { return }
+            indentation = currentIndentation
+
+            let expected = expectedNumber.map { $0 + 1 } ?? number
+            expectedNumber = expected
+            if number != expected {
+                let range = NSRange(
+                    location: paragraph.location + match.range(at: 2).location,
+                    length: match.range(at: 2).length
+                )
+                let attributes = storage.attributes(at: range.location, effectiveRange: nil)
+                storage.replaceCharacters(
+                    in: range,
+                    with: NSAttributedString(string: String(expected), attributes: attributes)
+                )
+            }
+
+            let updated = (storage.string as NSString).paragraphRange(
+                for: NSRange(location: location, length: 0)
+            )
+            let next = NSMaxRange(updated)
+            guard next > location, next < storage.length else { return }
+            location = next
+        }
     }
 
     func applyDefaultParagraphSpacing(in textView: NSTextView) {
@@ -859,6 +911,7 @@ final class RichTextEditorController: ObservableObject {
 
     func prepareFileAttachments(in textView: NSTextView, force: Bool = true) {
         guard let storage = textView.textStorage else { return }
+        separateFileAttachments(in: textView)
         let maximumWidth = attachmentWidth(in: textView)
         guard force || abs((preparedAttachmentWidth ?? 0) - maximumWidth) > 1 else { return }
         preparedAttachmentWidth = maximumWidth
@@ -909,6 +962,48 @@ final class RichTextEditorController: ObservableObject {
             )
             normalizeSpacingAdjacentToAttachment(item.range, in: storage)
         }
+    }
+
+    private func separateFileAttachments(in textView: NSTextView) {
+        guard let storage = textView.textStorage, storage.length > 0 else { return }
+        let string = storage.string as NSString
+        var insertions: [Int: [NSAttributedString.Key: Any]] = [:]
+        storage.enumerateAttribute(.attachment, in: NSRange(location: 0, length: storage.length)) {
+            value, range, _ in
+            guard let attachment = value as? NSTextAttachment,
+                  let wrapper = attachment.fileWrapper else { return }
+            let filename = wrapper.preferredFilename ?? wrapper.filename ?? ""
+            guard !filename.hasPrefix("quicknote-checklist-") else { return }
+
+            if range.location > 0, string.character(at: range.location - 1) != 10 {
+                var attributes = storage.attributes(at: range.location - 1, effectiveRange: nil)
+                attributes.removeValue(forKey: .attachment)
+                attributes.removeValue(forKey: .link)
+                insertions[range.location] = attributes
+            }
+            let after = NSMaxRange(range)
+            if after < storage.length, string.character(at: after) != 10 {
+                var attributes = storage.attributes(at: range.location, effectiveRange: nil)
+                attributes.removeValue(forKey: .attachment)
+                attributes.removeValue(forKey: .link)
+                insertions[after] = attributes
+            }
+        }
+        guard !insertions.isEmpty else { return }
+
+        var selection = textView.selectedRange()
+        for location in insertions.keys.sorted(by: >) {
+            storage.insert(
+                NSAttributedString(string: "\n", attributes: insertions[location] ?? [:]),
+                at: location
+            )
+            if location <= selection.location {
+                selection.location += 1
+            } else if location < NSMaxRange(selection) {
+                selection.length += 1
+            }
+        }
+        textView.setSelectedRange(selection)
     }
 
     private func attachmentParagraphStyle(

@@ -342,6 +342,28 @@ final class NotePersistenceTests: XCTestCase {
         XCTAssertEqual(nextStyle.paragraphSpacingBefore, 4)
     }
 
+    func testImageAttachmentIsSeparatedFromAdjacentText() throws {
+        let controller = RichTextEditorController()
+        let data = try XCTUnwrap(
+            testImage().tiffRepresentation
+                .flatMap(NSBitmapImageRep.init(data:))?
+                .representation(using: .png, properties: [:])
+        )
+        let wrapper = FileWrapper(regularFileWithContents: data)
+        wrapper.preferredFilename = "截图.png"
+        let document = NSMutableAttributedString(string: "上方文字")
+        document.append(NSAttributedString(attachment: NSTextAttachment(fileWrapper: wrapper)))
+        document.append(NSAttributedString(string: "下方文字"))
+        let textView = QuickNoteTextView()
+        textView.textStorage?.setAttributedString(document)
+        textView.setSelectedRange(NSRange(location: document.length, length: 0))
+
+        controller.prepareFileAttachments(in: textView)
+
+        XCTAssertEqual(textView.string, "上方文字\n\u{FFFC}\n下方文字")
+        XCTAssertEqual(textView.selectedRange().location, textView.string.utf16.count)
+    }
+
     func testAudioAttachmentPreservesCompactSpacingAndFilename() throws {
         let controller = RichTextEditorController()
         var document = NSAttributedString(string: "")
@@ -778,6 +800,29 @@ final class NotePersistenceTests: XCTestCase {
 
         XCTAssertTrue(controller.continueListAfterNewline())
         XCTAssertEqual(document.string, "1. 第一项\n2. ")
+    }
+
+    func testNumberedLineRenumbersFollowingItemsAcrossAttachmentAfterNewline() throws {
+        let controller = RichTextEditorController()
+        let firstLine = "5. 当前事项"
+        let source = NSMutableAttributedString(string: "\(firstLine)\n")
+        source.append(NSAttributedString(attachment: NSTextAttachment()))
+        source.append(NSAttributedString(string: "\n6. 后续事项"))
+        var document = NSAttributedString(attributedString: source)
+        let editor = RichTextEditor(
+            document: document,
+            cursorLocation: (firstLine as NSString).length,
+            controller: controller,
+            onChange: { updated, _ in document = updated },
+            onActivate: {}
+        )
+        let host = NSHostingView(rootView: editor)
+        host.frame = NSRect(x: 0, y: 0, width: 320, height: 240)
+        host.layoutSubtreeIfNeeded()
+        _ = try XCTUnwrap(host.descendant(ofType: NSTextView.self))
+
+        XCTAssertTrue(controller.continueListAfterNewline())
+        XCTAssertEqual(document.string, "5. 当前事项\n6. \n\u{FFFC}\n7. 后续事项")
     }
 
     func testContinuedNumberedLinePreservesParagraphFont() throws {
