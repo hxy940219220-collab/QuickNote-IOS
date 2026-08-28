@@ -9,6 +9,7 @@ struct DoubleCommandDetector {
     let maxInterval: TimeInterval
     private var pressIsDown = false
     private var firstReleaseTime: TimeInterval?
+    private var suppressUntil: TimeInterval = -.infinity
 
     init(maxInterval: TimeInterval) {
         self.maxInterval = maxInterval
@@ -20,6 +21,10 @@ struct DoubleCommandDetector {
             reset()
             return false
         case let .commandChanged(isDown, time):
+            guard time >= suppressUntil else {
+                reset()
+                return false
+            }
             if isDown {
                 guard !pressIsDown else { return false }
                 pressIsDown = true
@@ -29,6 +34,7 @@ struct DoubleCommandDetector {
             pressIsDown = false
             if let firstReleaseTime, time - firstReleaseTime <= maxInterval {
                 reset()
+                suppressUntil = time + maxInterval
                 return true
             }
             firstReleaseTime = time

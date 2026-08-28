@@ -16,7 +16,6 @@ final class NotePanelController: NSObject, NSWindowDelegate {
 
     private let panel: NSPanel
     private var previousApp: NSRunningApplication?
-    private var transitionPanel: NSPanel?
     private var animationGeneration = 0
     private var hasBeenPositioned = false
     private var drawerOpen = false
@@ -47,8 +46,7 @@ final class NotePanelController: NSObject, NSWindowDelegate {
 
     func show(activate: Bool, on screen: NSScreen) {
         animationGeneration += 1
-        transitionPanel?.orderOut(nil)
-        transitionPanel = nil
+        let generation = animationGeneration
 
         let targetFrame = Self.presentationFrame(
             current: panel.frame,
@@ -62,6 +60,7 @@ final class NotePanelController: NSObject, NSWindowDelegate {
             && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
         panel.setFrame(targetFrame, display: true)
         if wasMiniaturized { panel.deminiaturize(nil) }
+        panel.alphaValue = shouldAnimate ? 0 : 1
 
         if activate {
             previousApp = NSWorkspace.shared.frontmostApplication
@@ -72,28 +71,15 @@ final class NotePanelController: NSObject, NSWindowDelegate {
             panel.orderFrontRegardless()
         }
 
-        guard shouldAnimate, let transition = makeTransitionPanel() else {
-            panel.alphaValue = 1
-            return
-        }
+        guard shouldAnimate else { return }
 
-        let generation = animationGeneration
-        panel.alphaValue = 0
-        transition.alphaValue = 0.2
-        transition.setFrame(Self.collapsedFrame(in: screen.visibleFrame), display: true)
-        transition.orderFrontRegardless()
-        transitionPanel = transition
         NSAnimationContext.runAnimationGroup { context in
-            context.duration = 0.2
+            context.duration = 0.16
             context.timingFunction = CAMediaTimingFunction(name: .easeOut)
-            transition.animator().alphaValue = 1
-            transition.animator().setFrame(targetFrame, display: true)
-        } completionHandler: { [weak self, weak transition] in
+            panel.animator().alphaValue = 1
+        } completionHandler: { [weak self] in
             Task { @MainActor in
-                guard let self, let transition else { return }
-                transition.orderOut(nil)
-                guard self.animationGeneration == generation else { return }
-                self.transitionPanel = nil
+                guard let self, self.animationGeneration == generation else { return }
                 self.panel.alphaValue = 1
                 if activate { self.panel.makeKey() }
             }
@@ -127,10 +113,6 @@ final class NotePanelController: NSObject, NSWindowDelegate {
         isLocked ? .statusBar : .normal
     }
 
-    static func collapsedFrame(in visibleFrame: NSRect) -> NSRect {
-        NSRect(x: visibleFrame.minX + 4, y: visibleFrame.midY - 9, width: 18, height: 18)
-    }
-
     func setDrawerOpen(_ open: Bool) {
         guard drawerOpen != open,
               let visibleFrame = panel.screen?.visibleFrame ?? NSScreen.main?.visibleFrame else { return }
@@ -154,8 +136,6 @@ final class NotePanelController: NSObject, NSWindowDelegate {
     func hideAndRestoreFocus() {
         CaptureLatencyProbe.cancel()
         animationGeneration += 1
-        transitionPanel?.orderOut(nil)
-        transitionPanel = nil
         let app = previousApp
         previousApp = nil
 
@@ -164,9 +144,7 @@ final class NotePanelController: NSObject, NSWindowDelegate {
             return
         }
         guard !panel.isMiniaturized,
-              !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion,
-              let screenFrame = panel.screen?.visibleFrame,
-              let transition = makeTransitionPanel() else {
+              !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else {
             if panel.isMiniaturized { panel.deminiaturize(nil) }
             panel.orderOut(nil)
             panel.alphaValue = 1
@@ -175,21 +153,16 @@ final class NotePanelController: NSObject, NSWindowDelegate {
         }
 
         let generation = animationGeneration
-        transition.setFrame(panel.frame, display: true)
-        transition.orderFrontRegardless()
-        transitionPanel = transition
-        panel.orderOut(nil)
-        app?.activate(options: [])
         NSAnimationContext.runAnimationGroup { context in
-            context.duration = 0.18
+            context.duration = 0.14
             context.timingFunction = CAMediaTimingFunction(name: .easeOut)
-            transition.animator().alphaValue = 0
-            transition.animator().setFrame(Self.collapsedFrame(in: screenFrame), display: true)
-        } completionHandler: { [weak self, weak transition] in
+            panel.animator().alphaValue = 0
+        } completionHandler: { [weak self] in
             Task { @MainActor in
-                transition?.orderOut(nil)
                 guard let self, self.animationGeneration == generation else { return }
-                self.transitionPanel = nil
+                self.panel.orderOut(nil)
+                self.panel.alphaValue = 1
+                app?.activate(options: [])
             }
         }
     }
@@ -220,36 +193,6 @@ final class NotePanelController: NSObject, NSWindowDelegate {
                 CaptureLatencyProbe.cancel()
             }
         }
-    }
-
-    private func makeTransitionPanel() -> NSPanel? {
-        guard let frameView = panel.contentView?.superview,
-              let representation = frameView.bitmapImageRepForCachingDisplay(in: frameView.bounds) else {
-            return nil
-        }
-        frameView.cacheDisplay(in: frameView.bounds, to: representation)
-        let image = NSImage(size: frameView.bounds.size)
-        image.addRepresentation(representation)
-
-        let transition = NSPanel(
-            contentRect: panel.frame,
-            styleMask: [.borderless, .nonactivatingPanel],
-            backing: .buffered,
-            defer: false
-        )
-        transition.isOpaque = false
-        transition.backgroundColor = .clear
-        transition.hasShadow = true
-        transition.hidesOnDeactivate = false
-        transition.level = panel.level
-        transition.collectionBehavior = panel.collectionBehavior
-        transition.ignoresMouseEvents = true
-        let imageView = NSImageView(frame: NSRect(origin: .zero, size: panel.frame.size))
-        imageView.image = image
-        imageView.imageScaling = .scaleAxesIndependently
-        imageView.autoresizingMask = [.width, .height]
-        transition.contentView = imageView
-        return transition
     }
 
     private func findTextView(in view: NSView) -> NSTextView? {
