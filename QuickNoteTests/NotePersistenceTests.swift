@@ -288,7 +288,11 @@ final class NotePersistenceTests: XCTestCase {
     func testEditorUsesCompactChineseContextMenu() {
         XCTAssertEqual(
             QuickNoteTextView.editingMenu().items.compactMap { $0.isSeparatorItem ? nil : $0.title },
-            ["剪切", "复制", "粘贴", "全选"]
+            ["剪切", "复制", "粘贴", "全选", "上下间距"]
+        )
+        XCTAssertEqual(
+            QuickNoteTextView.editingMenu().item(withTitle: "上下间距")?.submenu?.items.map(\.title),
+            ["紧凑", "标准", "宽松"]
         )
     }
 
@@ -763,6 +767,32 @@ final class NotePersistenceTests: XCTestCase {
         let second = document.attribute(.paragraphStyle, at: 4, effectiveRange: nil) as? NSParagraphStyle
         XCTAssertEqual(first?.lineHeightMultiple, 1.5)
         XCTAssertEqual(second?.lineHeightMultiple, 1.5)
+    }
+
+    func testSelectedParagraphSpacingCanBeChanged() throws {
+        let controller = RichTextEditorController()
+        var document = NSAttributedString(string: "第一段\n第二段")
+        let editor = RichTextEditor(
+            document: document,
+            cursorLocation: 0,
+            controller: controller,
+            onChange: { updated, _ in document = updated },
+            onActivate: {}
+        )
+        let host = NSHostingView(rootView: editor)
+        host.frame = NSRect(x: 0, y: 0, width: 320, height: 240)
+        host.layoutSubtreeIfNeeded()
+        let textView = try XCTUnwrap(host.descendant(ofType: NSTextView.self))
+        textView.setSelectedRange(NSRange(location: 0, length: document.length))
+
+        controller.applyParagraphSpacing(before: 4, after: 8)
+
+        for location in [0, 4] {
+            let style = document.attribute(.paragraphStyle, at: location, effectiveRange: nil)
+                as? NSParagraphStyle
+            XCTAssertEqual(style?.paragraphSpacingBefore, 4)
+            XCTAssertEqual(style?.paragraphSpacing, 8)
+        }
     }
 
     func testEditorEnablesAutomaticLinkDetection() throws {

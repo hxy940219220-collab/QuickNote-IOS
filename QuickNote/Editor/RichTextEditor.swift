@@ -3,9 +3,10 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 @MainActor
-private protocol ChecklistClickHandling: AnyObject {
+private protocol EditorInteractionHandling: AnyObject {
     func toggleChecklist(at location: Int) -> Bool
     func openFileAttachment(at location: Int) -> Bool
+    func applyParagraphSpacing(before: CGFloat, after: CGFloat)
 }
 
 private class InteractiveAttachmentCell: NSTextAttachmentCell {
@@ -21,7 +22,7 @@ private final class ChecklistAttachmentCell: InteractiveAttachmentCell {
         untilMouseUp flag: Bool
     ) -> Bool {
         guard let textView = controlView as? NSTextView,
-              let handler = textView.delegate as? ChecklistClickHandling else { return false }
+              let handler = textView.delegate as? EditorInteractionHandling else { return false }
         return handler.toggleChecklist(at: charIndex)
     }
 }
@@ -36,7 +37,7 @@ private final class FileAttachmentCell: InteractiveAttachmentCell {
     ) -> Bool {
         guard event.clickCount >= 2,
               let textView = controlView as? NSTextView,
-              let handler = textView.delegate as? ChecklistClickHandling else { return false }
+              let handler = textView.delegate as? EditorInteractionHandling else { return false }
         return handler.openFileAttachment(at: charIndex)
     }
 }
@@ -50,7 +51,7 @@ private final class ImageAttachmentCell: InteractiveAttachmentCell {
         untilMouseUp flag: Bool
     ) -> Bool {
         guard let textView = controlView as? NSTextView,
-              let handler = textView.delegate as? ChecklistClickHandling else { return false }
+              let handler = textView.delegate as? EditorInteractionHandling else { return false }
         return handler.openFileAttachment(at: charIndex)
     }
 }
@@ -206,10 +207,36 @@ final class QuickNoteTextView: NSTextView {
         }
         menu.addItem(.separator())
         menu.addItem(withTitle: "全选", action: #selector(NSText.selectAll(_:)), keyEquivalent: "")
+        menu.addItem(.separator())
+        let spacingItem = NSMenuItem(title: "上下间距", action: nil, keyEquivalent: "")
+        let spacingMenu = NSMenu(title: "上下间距")
+        for (title, tag) in [("紧凑", 0), ("标准", 1), ("宽松", 2)] {
+            let item = NSMenuItem(
+                title: title,
+                action: #selector(applyParagraphSpacingFromMenu(_:)),
+                keyEquivalent: ""
+            )
+            item.tag = tag
+            spacingMenu.addItem(item)
+        }
+        spacingItem.submenu = spacingMenu
+        menu.addItem(spacingItem)
         return menu
     }
 
     override func menu(for event: NSEvent) -> NSMenu? { Self.editingMenu() }
+
+    @objc private func applyParagraphSpacingFromMenu(_ sender: NSMenuItem) {
+        let spacing: (before: CGFloat, after: CGFloat) = switch sender.tag {
+        case 0: (0, 2)
+        case 2: (4, 8)
+        default: (0, 4)
+        }
+        (delegate as? EditorInteractionHandling)?.applyParagraphSpacing(
+            before: spacing.before,
+            after: spacing.after
+        )
+    }
 
     override func readSelection(from pasteboard: NSPasteboard) -> Bool {
         let richTypes: [NSPasteboard.PasteboardType] = [.rtfd, .rtf, .html]
@@ -517,6 +544,30 @@ final class RichTextEditorController: ObservableObject {
             let style = (storage.attribute(.paragraphStyle, at: range.location, effectiveRange: nil)
                 as? NSParagraphStyle)?.mutableCopy() as? NSMutableParagraphStyle ?? NSMutableParagraphStyle()
             style.lineHeightMultiple = value
+            storage.addAttribute(.paragraphStyle, value: style, range: range)
+        }
+        commit(textView, preserving: selection)
+    }
+
+    func applyParagraphSpacing(before: CGFloat, after: CGFloat) {
+        guard let textView, let storage = textView.textStorage else { return }
+        let selection = textView.selectedRange()
+        let target = paragraphRange(in: textView)
+        if target.length == 0 {
+            let style = (textView.typingAttributes[.paragraphStyle] as? NSParagraphStyle)?
+                .mutableCopy() as? NSMutableParagraphStyle ?? NSMutableParagraphStyle()
+            style.paragraphSpacingBefore = max(0, before)
+            style.paragraphSpacing = max(0, after)
+            registerUndoSnapshot(in: textView)
+            textView.typingAttributes[.paragraphStyle] = style
+            return
+        }
+        registerUndoSnapshot(in: textView)
+        enumerateParagraphs(in: target, text: storage.string) { range in
+            let style = (storage.attribute(.paragraphStyle, at: range.location, effectiveRange: nil)
+                as? NSParagraphStyle)?.mutableCopy() as? NSMutableParagraphStyle ?? NSMutableParagraphStyle()
+            style.paragraphSpacingBefore = max(0, before)
+            style.paragraphSpacing = max(0, after)
             storage.addAttribute(.paragraphStyle, value: style, range: range)
         }
         commit(textView, preserving: selection)
@@ -1490,7 +1541,7 @@ struct RichTextEditor: NSViewRepresentable {
     }
 
     @MainActor
-    final class Coordinator: NSObject, NSTextViewDelegate, ChecklistClickHandling {
+    final class Coordinator: NSObject, NSTextViewDelegate, EditorInteractionHandling {
         var owner: RichTextEditor
         private var attachmentCount = 0
 
@@ -1566,6 +1617,10 @@ struct RichTextEditor: NSViewRepresentable {
 
         func openFileAttachment(at location: Int) -> Bool {
             owner.controller.openFileAttachment(at: location)
+        }
+
+        func applyParagraphSpacing(before: CGFloat, after: CGFloat) {
+            owner.controller.applyParagraphSpacing(before: before, after: after)
         }
 
     }
