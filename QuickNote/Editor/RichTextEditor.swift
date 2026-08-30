@@ -43,6 +43,18 @@ private final class FileAttachmentCell: InteractiveAttachmentCell {
 }
 
 private final class ImageAttachmentCell: InteractiveAttachmentCell {
+    override func draw(withFrame cellFrame: NSRect, in controlView: NSView?) {
+        super.draw(withFrame: cellFrame, in: controlView)
+        let border = NSBezierPath(
+            roundedRect: cellFrame.insetBy(dx: 0.5, dy: 0.5),
+            xRadius: 6,
+            yRadius: 6
+        )
+        border.lineWidth = 1
+        NSColor.separatorColor.setStroke()
+        border.stroke()
+    }
+
     override func trackMouse(
         with event: NSEvent,
         in cellFrame: NSRect,

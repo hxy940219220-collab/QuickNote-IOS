@@ -511,6 +511,15 @@ final class NotePersistenceTests: XCTestCase {
         let cellImage = try XCTUnwrap((attachment.attachmentCell as? NSTextAttachmentCell)?.image)
         XCTAssertLessThanOrEqual(cellImage.size.width, 328)
         XCTAssertTrue(attachment.attachmentCell?.wantsToTrackMouse() == true)
+        let preview = NSImage(size: NSSize(width: 32, height: 32))
+        preview.lockFocus()
+        attachment.attachmentCell?.draw(
+            withFrame: NSRect(x: 0, y: 0, width: 32, height: 32),
+            in: textView
+        )
+        preview.unlockFocus()
+        let bitmap = try XCTUnwrap(preview.tiffRepresentation.flatMap(NSBitmapImageRep.init(data:)))
+        XCTAssertNotEqual(bitmap.colorAt(x: 0, y: 16), bitmap.colorAt(x: 16, y: 16))
         XCTAssertEqual(document.string, "\u{FFFC}\n")
         XCTAssertEqual(textView.selectedRange().location, 2)
     }
