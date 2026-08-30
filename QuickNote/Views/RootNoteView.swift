@@ -136,6 +136,7 @@ struct RootNoteView: View {
     @State private var themePresented = false
     @State private var formatPresented = false
     @State private var tablePresented = false
+    @State private var isAIFormatting = false
     @State private var selectedDate = Date()
     @State private var notes: [NoteRecord] = []
     @State private var folders: [NoteFolder] = []
@@ -214,6 +215,13 @@ struct RootNoteView: View {
                     }
 
                     toolbarButton("插入文件", systemImage: "paperclip", action: chooseFiles)
+
+                    toolbarButton(
+                        isAIFormatting ? "正在排版" : "AI 排版",
+                        systemImage: isAIFormatting ? "hourglass" : "wand.and.stars",
+                        action: formatWithAI
+                    )
+                    .disabled(isAIFormatting)
                 }
                 .padding(.horizontal, 4)
                 .frame(height: 30)
@@ -438,6 +446,30 @@ struct RootNoteView: View {
         guard panel.runModal() == .OK else { return }
         do {
             try editorController.insertFiles(panel.urls)
+        } catch {
+            NSAlert(error: error).runModal()
+        }
+    }
+
+    private func formatWithAI() {
+        guard !isAIFormatting else { return }
+        do {
+            let source = try editorController.aiFormattingSource()
+            isAIFormatting = true
+            Task {
+                defer { isAIFormatting = false }
+                do {
+                    let result = try await AITextAnalyzer.respond(
+                        instruction: AIFormattingPlan.instruction,
+                        text: source.material,
+                        store: .shared
+                    )
+                    let plan = try AIFormattingPlan.parse(result.text)
+                    try editorController.applyAIFormatting(plan, expectedText: source.documentText)
+                } catch {
+                    NSAlert(error: error).runModal()
+                }
+            }
         } catch {
             NSAlert(error: error).runModal()
         }

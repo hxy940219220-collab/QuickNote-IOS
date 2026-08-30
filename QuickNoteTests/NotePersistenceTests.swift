@@ -296,6 +296,61 @@ final class NotePersistenceTests: XCTestCase {
         )
     }
 
+    func testImageAttachmentCopiesAsStandardImageData() throws {
+        let image = testImage()
+        let data = try XCTUnwrap(
+            image.tiffRepresentation
+                .flatMap(NSBitmapImageRep.init(data:))?
+                .representation(using: .png, properties: [:])
+        )
+        let wrapper = FileWrapper(regularFileWithContents: data)
+        wrapper.preferredFilename = "截图.png"
+        let textView = QuickNoteTextView()
+        textView.textStorage?.setAttributedString(
+            NSAttributedString(attachment: NSTextAttachment(fileWrapper: wrapper))
+        )
+        let pasteboard = NSPasteboard(name: NSPasteboard.Name(UUID().uuidString))
+
+        XCTAssertTrue(textView.copyImageAttachment(at: 0, to: pasteboard))
+        XCTAssertNotNil(pasteboard.data(forType: .png))
+        XCTAssertNotNil(pasteboard.data(forType: .tiff))
+    }
+
+    func testAIFormattingChangesOnlyTypographyAndSpacing() throws {
+        let controller = RichTextEditorController()
+        let imageData = try XCTUnwrap(testImage().tiffRepresentation)
+        let wrapper = FileWrapper(regularFileWithContents: imageData)
+        wrapper.preferredFilename = "截图.tiff"
+        let document = NSMutableAttributedString(string: "产品方案\n核心能力\n正文内容\n")
+        document.append(NSAttributedString(attachment: NSTextAttachment(fileWrapper: wrapper)))
+        let textView = QuickNoteTextView()
+        textView.textStorage?.setAttributedString(document)
+        controller.connect(textView)
+        let source = try controller.aiFormattingSource()
+        let plan = try AIFormattingPlan.parse(
+            """
+            {"paragraphs":[
+              {"index":0,"style":"title"},
+              {"index":1,"style":"heading"},
+              {"index":2,"style":"body"}
+            ]}
+            """
+        )
+
+        XCTAssertTrue(try controller.applyAIFormatting(plan, expectedText: source.documentText))
+        XCTAssertEqual(textView.string, document.string)
+        XCTAssertEqual(textView.attributedString().attachmentCount, 1)
+        XCTAssertEqual(
+            (textView.textStorage?.attribute(.font, at: 0, effectiveRange: nil) as? NSFont)?.pointSize,
+            EditorTextStyle.title.font.pointSize
+        )
+        let headingLocation = (textView.string as NSString).range(of: "核心能力").location
+        XCTAssertEqual(
+            (textView.textStorage?.attribute(.font, at: headingLocation, effectiveRange: nil) as? NSFont)?.pointSize,
+            EditorTextStyle.heading.font.pointSize
+        )
+    }
+
     func testImageAttachmentCapsImportedParagraphSpacing() throws {
         let controller = RichTextEditorController()
         let wrapper = FileWrapper(regularFileWithContents: Data())
