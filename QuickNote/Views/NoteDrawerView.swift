@@ -1,7 +1,9 @@
 import SwiftUI
 
 enum NoteDrawerLayout {
-    static let noteLeadingIndent: CGFloat = 20
+    static let noteLeadingIndent: CGFloat = 24
+    static let noteRowHeight: CGFloat = 26
+    static let folderRowHeight: CGFloat = 28
 }
 
 struct NoteDrawerView: View {
@@ -28,10 +30,12 @@ struct NoteDrawerView: View {
     @State private var confirmingFolderDeletion = false
 
     var body: some View {
-        VStack(spacing: 10) {
+        VStack(spacing: 6) {
             header
 
             TextField("搜索便签标题", text: $query)
+                .font(.system(size: 12))
+                .controlSize(.small)
                 .textFieldStyle(.roundedBorder)
 
             if isSearching {
@@ -46,7 +50,8 @@ struct NoteDrawerView: View {
                 libraryList
             }
         }
-        .padding(10)
+        .padding(8)
+        .environment(\.defaultMinListRowHeight, 0)
         .background(Color(nsColor: theme.sidebarBackground))
         .onAppear(perform: expandSelectedFolder)
         .onChange(of: selectedID) { _, _ in expandSelectedFolder() }
@@ -89,9 +94,9 @@ struct NoteDrawerView: View {
     }
 
     private var header: some View {
-        HStack {
+        HStack(spacing: 4) {
             Text("全部便签")
-                .font(.headline)
+                .font(.system(size: 13, weight: .semibold))
 
             Text("\(notes.count)")
                 .font(.caption)
@@ -101,6 +106,7 @@ struct NoteDrawerView: View {
 
             Button { creatingFolder = true } label: {
                 Image(systemName: "folder.badge.plus")
+                    .frame(width: 24, height: 24)
             }
             .buttonStyle(.borderless)
             .quickNoteHoverHighlight()
@@ -109,6 +115,7 @@ struct NoteDrawerView: View {
 
             Button(action: create) {
                 Image(systemName: "square.and.pencil")
+                    .frame(width: 24, height: 24)
             }
             .buttonStyle(.borderless)
             .quickNoteHoverHighlight()
@@ -130,6 +137,7 @@ struct NoteDrawerView: View {
                 noteRow(note)
             }
             .listStyle(.plain)
+            .contentMargins(.all, 0, for: .scrollContent)
             .scrollContentBackground(.hidden)
         }
     }
@@ -148,9 +156,10 @@ struct NoteDrawerView: View {
 
             if !unfiledNotes.isEmpty {
                 Text("未分类")
-                    .font(.system(size: 12, weight: .medium))
+                    .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(.secondary)
-                    .listRowInsets(EdgeInsets(top: 6, leading: 8, bottom: 2, trailing: 8))
+                    .frame(height: 20, alignment: .leading)
+                    .listRowInsets(EdgeInsets(top: 4, leading: 4, bottom: 0, trailing: 4))
                     .listRowSeparator(.hidden)
 
                 ForEach(unfiledNotes) { note in
@@ -159,27 +168,31 @@ struct NoteDrawerView: View {
             }
         }
         .listStyle(.plain)
+        .contentMargins(.all, 0, for: .scrollContent)
         .scrollContentBackground(.hidden)
     }
 
     private func folderRow(_ folder: NoteFolder) -> some View {
-        HStack(spacing: 6) {
+        HStack(spacing: 0) {
             Button {
                 toggleFolder(folder)
             } label: {
                 HStack(spacing: 6) {
                     Image(systemName: "folder")
+                        .font(.system(size: 13))
+                        .frame(width: 14)
                         .foregroundStyle(.secondary)
                     Text(folder.name)
-                        .font(.system(size: 14, weight: .medium))
+                        .font(.system(size: 13, weight: .medium))
                         .lineLimit(1)
                     Spacer()
                 }
-                .frame(maxWidth: .infinity)
+                .frame(maxWidth: .infinity, minHeight: NoteDrawerLayout.folderRowHeight)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .quickNoteHoverHighlight(cornerRadius: 6)
+            .help(folder.name)
+            .accessibilityValue(expandedFolders.contains(folder.id) ? "已展开" : "已收起")
             .accessibilityLabel("\(expandedFolders.contains(folder.id) ? "收起" : "展开")文件夹 \(folder.name)")
 
             Menu {
@@ -197,7 +210,8 @@ struct NoteDrawerView: View {
                 }
             } label: {
                 Image(systemName: "ellipsis")
-                    .frame(width: 22, height: 22)
+                    .font(.system(size: 12))
+                    .frame(width: 24, height: NoteDrawerLayout.folderRowHeight)
                     .contentShape(Rectangle())
             }
             .menuStyle(.borderlessButton)
@@ -207,17 +221,18 @@ struct NoteDrawerView: View {
             .help("编辑文件夹")
             .accessibilityLabel("编辑文件夹 \(folder.name)")
         }
-        .frame(height: 40)
-        .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 8))
+        .frame(height: NoteDrawerLayout.folderRowHeight)
+        .quickNoteHoverHighlight(cornerRadius: 5)
+        .listRowInsets(EdgeInsets(top: 0, leading: 4, bottom: 0, trailing: 4))
         .listRowSeparator(.hidden)
     }
 
     private func noteRow(_ note: NoteRecord) -> some View {
-        HStack(spacing: 6) {
+        HStack(spacing: 0) {
             Button(action: { select(note) }) {
                 HStack(spacing: 4) {
                     Text(note.title)
-                        .font(.system(size: 14, weight: .regular))
+                        .font(.system(size: 13, weight: .regular))
                         .lineLimit(1)
                     if note.isPinned {
                         Image(systemName: "pin.fill")
@@ -226,11 +241,12 @@ struct NoteDrawerView: View {
                     }
                 }
                 .padding(.leading, NoteDrawerLayout.noteLeadingIndent)
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .frame(maxWidth: .infinity, minHeight: NoteDrawerLayout.noteRowHeight, alignment: .leading)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .quickNoteHoverHighlight(cornerRadius: 6, enabled: note.id != selectedID)
+            .help(note.title)
+            .accessibilityAddTraits(note.id == selectedID ? .isSelected : [])
 
             Menu {
                 Button(action: { togglePin(note) }) {
@@ -274,7 +290,8 @@ struct NoteDrawerView: View {
                 }
             } label: {
                 Image(systemName: "ellipsis")
-                    .frame(width: 22, height: 22)
+                    .font(.system(size: 12))
+                    .frame(width: 24, height: NoteDrawerLayout.noteRowHeight)
                     .contentShape(Rectangle())
             }
             .menuStyle(.borderlessButton)
@@ -284,10 +301,12 @@ struct NoteDrawerView: View {
             .help("编辑便签")
             .accessibilityLabel("编辑便签")
         }
-        .frame(height: 32)
-        .listRowInsets(EdgeInsets(top: 0, leading: 8, bottom: 0, trailing: 8))
+        .frame(height: NoteDrawerLayout.noteRowHeight)
+        .quickNoteHoverHighlight(cornerRadius: 5, enabled: note.id != selectedID)
+        .listRowInsets(EdgeInsets(top: 0, leading: 4, bottom: 0, trailing: 4))
         .listRowBackground(
-            note.id == selectedID ? Color(nsColor: theme.accentColor).opacity(0.12) : Color.clear
+            RoundedRectangle(cornerRadius: 5, style: .continuous)
+                .fill(note.id == selectedID ? Color(nsColor: theme.accentColor).opacity(0.12) : Color.clear)
         )
         .listRowSeparator(.hidden)
     }
