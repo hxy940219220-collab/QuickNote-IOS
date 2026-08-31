@@ -331,8 +331,7 @@ final class NotePersistenceTests: XCTestCase {
             """
             {"paragraphs":[
               {"index":0,"style":"title"},
-              {"index":1,"style":"heading"},
-              {"index":2,"style":"body"}
+              {"index":1,"style":"heading"}
             ]}
             """
         )
@@ -349,6 +348,18 @@ final class NotePersistenceTests: XCTestCase {
             (textView.textStorage?.attribute(.font, at: headingLocation, effectiveRange: nil) as? NSFont)?.pointSize,
             EditorTextStyle.heading.font.pointSize
         )
+        let bodyLocation = (textView.string as NSString).range(of: "正文内容").location
+        let bodyStyle = textView.textStorage?.attribute(
+            .paragraphStyle,
+            at: bodyLocation,
+            effectiveRange: nil
+        ) as? NSParagraphStyle
+        XCTAssertEqual(
+            (textView.textStorage?.attribute(.font, at: bodyLocation, effectiveRange: nil) as? NSFont)?.pointSize,
+            EditorTextStyle.body.font.pointSize
+        )
+        XCTAssertEqual(bodyStyle?.lineHeightMultiple, 1.18)
+        XCTAssertEqual(bodyStyle?.paragraphSpacing, 7)
     }
 
     func testAIFormattingFinishesForOriginalNoteAfterSwitch() throws {
