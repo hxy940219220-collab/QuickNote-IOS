@@ -351,6 +351,39 @@ final class NotePersistenceTests: XCTestCase {
         )
     }
 
+    func testAIFormattingFinishesForOriginalNoteAfterSwitch() throws {
+        let configuration = ModelConfiguration(isStoredInMemoryOnly: true)
+        let container = try ModelContainer(for: NoteRecord.self, configurations: configuration)
+        let repository = NoteRepository(context: container.mainContext)
+        let documents = NoteDocumentStore(
+            root: FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        )
+        let session = NoteSession(repository: repository, documents: documents)
+        try session.createAndOpen()
+        let originalNote = try XCTUnwrap(session.currentNote)
+        let original = NSAttributedString(string: "原始便签\n正文")
+        session.update(document: original, cursorLocation: original.length)
+        try session.flush()
+        try session.createAndOpen()
+        let currentNoteID = session.currentNote?.id
+        let replacement = NSMutableAttributedString(attributedString: original)
+        replacement.addAttribute(
+            .font,
+            value: EditorTextStyle.title.font,
+            range: NSRange(location: 0, length: 4)
+        )
+
+        try session.saveAIFormattedDocument(replacement, replacing: original, for: originalNote)
+
+        XCTAssertEqual(session.currentNote?.id, currentNoteID)
+        let reopened = try documents.load(id: originalNote.id)
+        XCTAssertEqual(reopened.string, original.string)
+        XCTAssertEqual(
+            (reopened.attribute(.font, at: 0, effectiveRange: nil) as? NSFont)?.pointSize,
+            EditorTextStyle.title.font.pointSize
+        )
+    }
+
     func testImageAttachmentCapsImportedParagraphSpacing() throws {
         let controller = RichTextEditorController()
         let wrapper = FileWrapper(regularFileWithContents: Data())

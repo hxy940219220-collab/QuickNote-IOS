@@ -110,6 +110,27 @@ final class NoteSession: ObservableObject {
         try appendAttributedText(content)
     }
 
+    func saveAIFormattedDocument(
+        _ replacement: NSAttributedString,
+        replacing original: NSAttributedString,
+        for note: NoteRecord
+    ) throws {
+        guard currentNote?.id != note.id,
+              try repository.allNotes().contains(where: { $0.id == note.id }),
+              try documents.load(id: note.id).string == original.string else {
+            throw AIFormattingError.documentChanged
+        }
+        try documents.save(replacement, id: note.id)
+        note.plainText = replacement.string
+        note.title = replacement.string
+            .components(separatedBy: .newlines)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .first(where: { !$0.isEmpty }) ?? "新便签"
+        note.updatedAt = .now
+        try saveRepository()
+        onSaved?()
+    }
+
     func setTags(_ values: [String]) {
         guard let note = currentNote else { return }
         let normalized = values.compactMap { value -> String? in

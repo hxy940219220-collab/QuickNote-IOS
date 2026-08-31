@@ -144,9 +144,11 @@ enum AIFormattingError: LocalizedError {
     }
 }
 
-struct AIFormattingSource: Sendable {
-    let documentText: String
+struct AIFormattingSource {
+    let document: NSAttributedString
     let material: String
+
+    var documentText: String { document.string }
 }
 
 struct AIFormattingPlan {
@@ -576,13 +578,30 @@ final class RichTextEditorController: ObservableObject {
         guard lines.contains(where: { !$0.hasSuffix("\t") && !$0.contains("〔图片或附件，保持原位〕") }) else {
             throw AIFormattingError.noContent
         }
-        return AIFormattingSource(documentText: storage.string, material: lines.joined(separator: "\n"))
+        return AIFormattingSource(
+            document: NSAttributedString(attributedString: storage),
+            material: lines.joined(separator: "\n")
+        )
+    }
+
+    func formattedDocument(_ plan: AIFormattingPlan, source: AIFormattingSource) throws -> NSAttributedString {
+        let storage = NSTextStorage(attributedString: source.document)
+        try applyAIFormatting(plan, to: storage)
+        return NSAttributedString(attributedString: storage)
     }
 
     @discardableResult
     func applyAIFormatting(_ plan: AIFormattingPlan, expectedText: String) throws -> Bool {
         guard let textView, let storage = textView.textStorage else { return false }
         guard storage.string == expectedText else { throw AIFormattingError.documentChanged }
+        let selection = textView.selectedRange()
+        registerUndoSnapshot(in: textView)
+        try applyAIFormatting(plan, to: storage)
+        commit(textView, preserving: selection)
+        return true
+    }
+
+    private func applyAIFormatting(_ plan: AIFormattingPlan, to storage: NSTextStorage) throws {
         var paragraphs: [NSRange] = []
         enumerateParagraphs(
             in: NSRange(location: 0, length: storage.length),
@@ -595,8 +614,6 @@ final class RichTextEditorController: ObservableObject {
         }
         guard !valid.isEmpty else { throw AIFormattingError.invalidResponse }
 
-        let selection = textView.selectedRange()
-        registerUndoSnapshot(in: textView)
         storage.beginEditing()
         for assignment in valid {
             let range = paragraphs[assignment.index]
@@ -637,8 +654,6 @@ final class RichTextEditorController: ObservableObject {
             storage.addAttribute(.paragraphStyle, value: paragraphStyle, range: range)
         }
         storage.endEditing()
-        commit(textView, preserving: selection)
-        return true
     }
 
     func prepareTitleForEmptyDocument(in textView: NSTextView) {

@@ -137,6 +137,9 @@ struct RootNoteView: View {
     @State private var formatPresented = false
     @State private var tablePresented = false
     @State private var isAIFormatting = false
+    @State private var aiFormattingTask: Task<Void, Never>?
+    @State private var aiFormattingID: UUID?
+    @State private var aiFormattingNoteTitle: String?
     @State private var selectedDate = Date()
     @State private var notes: [NoteRecord] = []
     @State private var folders: [NoteFolder] = []
@@ -217,11 +220,10 @@ struct RootNoteView: View {
                     toolbarButton("插入文件", systemImage: "paperclip", action: chooseFiles)
 
                     toolbarButton(
-                        isAIFormatting ? "正在排版" : "AI 排版",
-                        systemImage: isAIFormatting ? "hourglass" : "wand.and.stars",
-                        action: formatWithAI
+                        isAIFormatting ? "停止 AI 排版" : "AI 排版",
+                        systemImage: isAIFormatting ? "stop.circle" : "wand.and.stars",
+                        action: toggleAIFormatting
                     )
-                    .disabled(isAIFormatting)
                 }
                 .padding(.horizontal, 4)
                 .frame(height: 30)
@@ -230,6 +232,25 @@ struct RootNoteView: View {
             .frame(height: 38)
             .background(Color(nsColor: theme.toolbarBackground))
             .zIndex(1)
+
+            if let aiFormattingNoteTitle {
+                HStack(spacing: 7) {
+                    ProgressView()
+                        .controlSize(.small)
+                    Text("AI 正在排版：")
+                        .foregroundStyle(.secondary)
+                    Text(aiFormattingNoteTitle)
+                        .fontWeight(.medium)
+                        .lineLimit(1)
+                    Spacer()
+                    Button("停止", action: toggleAIFormatting)
+                        .buttonStyle(.borderless)
+                }
+                .font(.system(size: 11))
+                .padding(.horizontal, 12)
+                .frame(height: 28)
+                .background(Color.accentColor.opacity(0.07))
+            }
 
             if let error = session.saveError {
                 HStack {
@@ -327,7 +348,10 @@ struct RootNoteView: View {
             )
         }
         .onAppear { shortcutMonitor.start(action: performShortcut) }
-        .onDisappear { shortcutMonitor.stop() }
+        .onDisappear {
+            shortcutMonitor.stop()
+            aiFormattingTask?.cancel()
+        }
     }
 
     private var theme: NoteTheme {
@@ -451,22 +475,52 @@ struct RootNoteView: View {
         }
     }
 
-    private func formatWithAI() {
-        guard !isAIFormatting else { return }
+    private func toggleAIFormatting() {
+        if isAIFormatting {
+            aiFormattingTask?.cancel()
+            aiFormattingTask = nil
+            aiFormattingID = nil
+            aiFormattingNoteTitle = nil
+            isAIFormatting = false
+            return
+        }
         do {
+            guard let note = session.currentNote else { throw AIFormattingError.noContent }
             let source = try editorController.aiFormattingSource()
+            let requestID = UUID()
             isAIFormatting = true
-            Task {
-                defer { isAIFormatting = false }
+            aiFormattingID = requestID
+            aiFormattingNoteTitle = source.documentText
+                .components(separatedBy: .newlines)
+                .map { $0.trimmingCharacters(in: .whitespaces) }
+                .first(where: { !$0.isEmpty }) ?? note.title
+            aiFormattingTask = Task {
+                defer {
+                    if aiFormattingID == requestID {
+                        isAIFormatting = false
+                        aiFormattingTask = nil
+                        aiFormattingID = nil
+                        aiFormattingNoteTitle = nil
+                    }
+                }
                 do {
                     let result = try await AITextAnalyzer.respond(
                         instruction: AIFormattingPlan.instruction,
                         text: source.material,
                         store: .shared
                     )
+                    try Task.checkCancellation()
                     let plan = try AIFormattingPlan.parse(result.text)
-                    try editorController.applyAIFormatting(plan, expectedText: source.documentText)
+                    try Task.checkCancellation()
+                    if session.currentNote?.id == note.id {
+                        try editorController.applyAIFormatting(plan, expectedText: source.documentText)
+                    } else {
+                        let document = try editorController.formattedDocument(plan, source: source)
+                        try session.saveAIFormattedDocument(document, replacing: source.document, for: note)
+                        try reloadLibrary()
+                    }
                 } catch {
+                    guard !Task.isCancelled else { return }
                     NSAlert(error: error).runModal()
                 }
             }
