@@ -133,9 +133,7 @@ struct RootNoteView: View {
     @State private var settingsPresented = false
     @State private var settingsDestination: QuickNoteSettingsDestination?
     @State private var noteStorageLocations: [NoteStorageLocation] = []
-    @State private var themePresented = false
-    @State private var formatPresented = false
-    @State private var tablePresented = false
+    @State private var commandPresented = false
     @State private var isAIFormatting = false
     @State private var aiFormattingTask: Task<Void, Never>?
     @State private var aiFormattingID: UUID?
@@ -158,6 +156,8 @@ struct RootNoteView: View {
 
                     TimelineView(.periodic(from: .now, by: 60)) { context in
                         Button {
+                            commandPresented = false
+                            settingsPresented = false
                             selectedDate = context.date
                             calendarPresented.toggle()
                         } label: {
@@ -175,22 +175,23 @@ struct RootNoteView: View {
 
                     Spacer(minLength: 8)
 
-                    toolbarButton("切换便签主题", systemImage: "paintpalette") {
-                        themePresented.toggle()
+                    toolbarButton("新建便签（Command + N）", systemImage: "square.and.pencil") {
+                        commandPresented = false
+                        create()
                     }
-                    .popover(isPresented: $themePresented, arrowEdge: .top) {
-                        NoteThemePicker(selection: $selectedTheme)
-                    }
-
-                    toolbarButton("新建便签（Command + N）", systemImage: "square.and.pencil", action: create)
 
                     toolbarButton(
                         windowLocked ? "取消锁定" : "锁定在最前",
                         systemImage: windowLocked ? "lock.fill" : "lock.open",
-                        action: toggleWindowLock
+                        action: {
+                            commandPresented = false
+                            toggleWindowLock()
+                        }
                     )
 
                     toolbarButton("打开设置", systemImage: "gearshape", tooltipAlignment: .bottomTrailing) {
+                        commandPresented = false
+                        calendarPresented = false
                         settingsPresented.toggle()
                     }
                 }
@@ -198,31 +199,31 @@ struct RootNoteView: View {
                 .padding(.trailing, 10)
 
                 HStack(spacing: 2) {
-                    toolbarButton("格式", systemImage: "textformat") {
+                    toolbarButton("编辑命令", systemImage: "command") {
+                        calendarPresented = false
+                        settingsPresented = false
                         editorController.captureSelection()
-                        formatPresented.toggle()
+                        commandPresented.toggle()
                     }
-                    .popover(isPresented: $formatPresented, arrowEdge: .top) {
-                        NoteFormatPopover(controller: editorController)
+                    .background(
+                        commandPresented ? Color.primary.opacity(0.065) : Color.clear,
+                        in: RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    )
+                    .popover(isPresented: $commandPresented, arrowEdge: .top) {
+                        NoteFormatPopover(
+                            controller: editorController,
+                            insertChecklist: editorController.insertChecklistItem,
+                            chooseFiles: chooseFiles
+                        )
                     }
-
-                    toolbarButton("插入待办项", systemImage: "checklist") {
-                        editorController.insertChecklistItem()
-                    }
-
-                    toolbarButton("表格", systemImage: "tablecells") {
-                        tablePresented.toggle()
-                    }
-                    .popover(isPresented: $tablePresented, arrowEdge: .top) {
-                        TablePickerPopover(controller: editorController)
-                    }
-
-                    toolbarButton("插入文件", systemImage: "paperclip", action: chooseFiles)
 
                     toolbarButton(
                         isAIFormatting ? "停止 AI 排版" : "AI 排版",
                         systemImage: isAIFormatting ? "stop.circle" : "wand.and.stars",
-                        action: toggleAIFormatting
+                        action: {
+                            commandPresented = false
+                            toggleAIFormatting()
+                        }
                     )
                 }
                 .padding(.horizontal, 4)
@@ -324,6 +325,7 @@ struct RootNoteView: View {
                         .onTapGesture { settingsPresented = false }
 
                     QuickNoteSettingsView(
+                        selectedTheme: $selectedTheme,
                         open: showSettings,
                         openAISettings: {
                             settingsPresented = false
@@ -646,8 +648,11 @@ private struct NoteThemePicker: View {
 
 private struct NoteFormatPopover: View {
     let controller: RichTextEditorController
+    let insertChecklist: () -> Void
+    let chooseFiles: () -> Void
     @State private var colorsPresented = false
     @State private var paragraphPresented = false
+    @State private var tablePresented = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -719,6 +724,23 @@ private struct NoteFormatPopover: View {
             formatRow("短划线列表", image: "list.dash") { controller.applyList(.hyphen) }
             formatRow("编号列表", image: "list.number") { controller.applyList(.decimal) }
             formatRow("块引用", image: "text.quote", action: controller.applyBlockQuote)
+
+            Divider().padding(.vertical, 6)
+
+            Text("插入")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(.secondary)
+                .padding(.leading, 2)
+                .padding(.bottom, 5)
+
+            HStack(spacing: 5) {
+                insertButton("待办", image: "checklist", action: insertChecklist)
+                insertButton("表格", image: "tablecells") { tablePresented.toggle() }
+                    .popover(isPresented: $tablePresented, arrowEdge: .trailing) {
+                        TablePickerPopover(controller: controller)
+                    }
+                insertButton("附件", image: "paperclip", action: chooseFiles)
+            }
         }
         .padding(12)
         .frame(width: 240)
@@ -749,6 +771,27 @@ private struct NoteFormatPopover: View {
         }
         .buttonStyle(.plain)
         .quickNoteHoverHighlight(cornerRadius: 5)
+    }
+
+    private func insertButton(
+        _ title: String,
+        image: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Label(title, systemImage: image)
+                .font(.system(size: 11, weight: .medium))
+                .frame(maxWidth: .infinity)
+                .frame(height: 29)
+                .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 6))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 6)
+                        .stroke(Color.secondary.opacity(0.18), lineWidth: 1)
+                }
+        }
+        .buttonStyle(.plain)
+        .quickNoteHoverHighlight(cornerRadius: 6)
+        .accessibilityLabel(title)
     }
 
 }
@@ -1046,8 +1089,10 @@ private struct NoteStorageLocation: Identifiable {
 }
 
 private struct QuickNoteSettingsView: View {
+    @Binding var selectedTheme: String
     let open: (QuickNoteSettingsDestination) -> Void
     let openAISettings: () -> Void
+    @State private var themePresented = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -1056,6 +1101,7 @@ private struct QuickNoteSettingsView: View {
                 .padding(.horizontal, 6)
                 .padding(.bottom, 2)
 
+            themeButton
             settingsButton("AI 模型", systemImage: "sparkles", action: openAISettings)
             settingsButton(.localStorage)
             settingsButton(.shortcuts)
@@ -1063,6 +1109,32 @@ private struct QuickNoteSettingsView: View {
         }
         .padding(8)
         .frame(width: 176)
+    }
+
+    private var themeButton: some View {
+        Button { themePresented.toggle() } label: {
+            HStack(spacing: 10) {
+                Image(systemName: "paintpalette")
+                    .frame(width: 18)
+                Text("便签主题")
+                Spacer()
+                Text(NoteTheme.resolved(from: selectedTheme).name)
+                    .foregroundStyle(.secondary)
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(.tertiary)
+            }
+            .font(.system(size: 13, weight: .medium))
+            .padding(.horizontal, 6)
+            .frame(maxWidth: .infinity, minHeight: 30, alignment: .leading)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .quickNoteHoverHighlight(cornerRadius: 6)
+        .accessibilityLabel("便签主题")
+        .popover(isPresented: $themePresented, arrowEdge: .trailing) {
+            NoteThemePicker(selection: $selectedTheme)
+        }
     }
 
     private func settingsButton(_ destination: QuickNoteSettingsDestination) -> some View {
