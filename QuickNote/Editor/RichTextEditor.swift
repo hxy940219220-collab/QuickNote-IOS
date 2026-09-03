@@ -979,6 +979,17 @@ final class RichTextEditorController: ObservableObject {
         textView.typingAttributes[.paragraphStyle] = style
     }
 
+    func toggleChecklistItemAtSelection() {
+        guard let textView, let storage = textView.textStorage else { return }
+        let paragraph = (storage.string as NSString).paragraphRange(for: textView.selectedRange())
+        if paragraph.location < storage.length,
+           checklistState(at: paragraph.location, in: storage) != nil {
+            removeChecklistItem()
+        } else {
+            insertChecklistItem()
+        }
+    }
+
     func insertChecklistItem() {
         guard let textView, let storage = textView.textStorage else { return }
         let selection = textView.selectedRange()
@@ -1001,7 +1012,7 @@ final class RichTextEditorController: ObservableObject {
         )
     }
 
-    func removeChecklistItem() {
+    private func removeChecklistItem() {
         guard let textView, let storage = textView.textStorage else { return }
         let selection = textView.selectedRange()
         let paragraph = (storage.string as NSString).paragraphRange(for: selection)

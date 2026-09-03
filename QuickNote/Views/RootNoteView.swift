@@ -212,8 +212,7 @@ struct RootNoteView: View {
                     .popover(isPresented: $commandPresented, arrowEdge: .top) {
                         NoteFormatPopover(
                             controller: editorController,
-                            insertChecklist: editorController.insertChecklistItem,
-                            removeChecklist: editorController.removeChecklistItem,
+                            toggleChecklist: editorController.toggleChecklistItemAtSelection,
                             chooseFiles: chooseFiles
                         )
                     }
@@ -649,8 +648,7 @@ private struct NoteThemePicker: View {
 
 private struct NoteFormatPopover: View {
     let controller: RichTextEditorController
-    let insertChecklist: () -> Void
-    let removeChecklist: () -> Void
+    let toggleChecklist: () -> Void
     let chooseFiles: () -> Void
     @State private var colorsPresented = false
     @State private var paragraphPresented = false
@@ -736,14 +734,8 @@ private struct NoteFormatPopover: View {
                 .padding(.bottom, 4)
 
             HStack(spacing: 5) {
-                insertButton("待办", image: "checklist") {
-                    if (NSApp.currentEvent?.clickCount ?? 1) >= 2 {
-                        removeChecklist()
-                    } else {
-                        insertChecklist()
-                    }
-                }
-                .help("单击添加待办，双击取消待办")
+                insertButton("待办", image: "checklist", action: toggleChecklist)
+                    .help("点击添加或取消待办")
                 insertButton("表格", image: "tablecells") { tablePresented.toggle() }
                     .popover(isPresented: $tablePresented, arrowEdge: .trailing) {
                         TablePickerPopover(controller: controller)
