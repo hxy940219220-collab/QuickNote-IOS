@@ -1102,7 +1102,13 @@ private struct QuickNoteSettingsView: View {
                 .padding(.horizontal, 6)
                 .padding(.bottom, 2)
 
-            themeButton
+            settingsButton("便签主题", systemImage: "paintpalette") {
+                themePresented.toggle()
+            }
+            .accessibilityHint("选择便签主题")
+            .popover(isPresented: $themePresented, arrowEdge: .trailing) {
+                NoteThemePicker(selection: $selectedTheme)
+            }
             settingsButton("AI 模型", systemImage: "sparkles", action: openAISettings)
             settingsButton(.localStorage)
             settingsButton(.shortcuts)
@@ -1110,32 +1116,6 @@ private struct QuickNoteSettingsView: View {
         }
         .padding(8)
         .frame(width: 176)
-    }
-
-    private var themeButton: some View {
-        Button { themePresented.toggle() } label: {
-            HStack(spacing: 10) {
-                Image(systemName: "paintpalette")
-                    .frame(width: 18)
-                Text("便签主题")
-                Spacer()
-                Text(NoteTheme.resolved(from: selectedTheme).name)
-                    .foregroundStyle(.secondary)
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 9, weight: .semibold))
-                    .foregroundStyle(.tertiary)
-            }
-            .font(.system(size: 13, weight: .medium))
-            .padding(.horizontal, 6)
-            .frame(maxWidth: .infinity, minHeight: 30, alignment: .leading)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .quickNoteHoverHighlight(cornerRadius: 6)
-        .accessibilityLabel("便签主题")
-        .popover(isPresented: $themePresented, arrowEdge: .trailing) {
-            NoteThemePicker(selection: $selectedTheme)
-        }
     }
 
     private func settingsButton(_ destination: QuickNoteSettingsDestination) -> some View {
