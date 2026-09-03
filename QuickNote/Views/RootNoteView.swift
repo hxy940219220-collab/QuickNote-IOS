@@ -1125,7 +1125,7 @@ private struct QuickNoteSettingsDetailView: View {
     private var detailSize: CGSize {
         switch destination {
         case .localStorage: CGSize(width: 560, height: 420)
-        case .shortcuts: CGSize(width: 430, height: 410)
+        case .shortcuts: CGSize(width: 430, height: 500)
         case .help: CGSize(width: 500, height: 390)
         }
     }
@@ -1174,31 +1174,31 @@ private struct QuickNoteSettingsDetailView: View {
     }
 
     private var shortcutsDetail: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 6) {
-                Label("核心快捷键", systemImage: "bolt.fill")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(Color.accentColor)
+        VStack(alignment: .leading, spacing: 6) {
+            Label("核心快捷键", systemImage: "bolt.fill")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(Color.accentColor)
 
-                VStack(spacing: 0) {
-                    shortcutRow(keys: ["⌘", "⌘"], title: "双击 Command", detail: "打开或收起 QuickNote", emphasized: true)
-                    shortcutDivider
-                    shortcutRow(keys: ["⌥", "Space"], title: "Option + 空格", detail: "分析当前选中的文字", emphasized: true)
-                    shortcutDivider
-                    shortcutRow(keys: ["⌘", "⇧"], title: "Command + Shift", detail: "选择区域截图并使用 AI 分析", emphasized: true)
-                }
-                .padding(.horizontal, 6)
-                .background(Color.accentColor.opacity(0.07), in: RoundedRectangle(cornerRadius: 8))
-                .overlay {
-                    RoundedRectangle(cornerRadius: 8)
-                        .stroke(Color.accentColor.opacity(0.2), lineWidth: 1)
-                }
+            VStack(spacing: 0) {
+                shortcutRow(keys: ["⌘", "⌘"], title: "双击 Command", detail: "打开或收起 QuickNote", emphasized: true)
+                shortcutDivider
+                shortcutRow(keys: ["⌥", "Space"], title: "Option + 空格", detail: "分析当前选中的文字", emphasized: true)
+                shortcutDivider
+                shortcutRow(keys: ["⌘", "⇧"], title: "Command + Shift", detail: "选择区域截图并使用 AI 分析", emphasized: true)
+            }
+            .padding(.horizontal, 6)
+            .background(Color.accentColor.opacity(0.07), in: RoundedRectangle(cornerRadius: 8))
+            .overlay {
+                RoundedRectangle(cornerRadius: 8)
+                    .stroke(Color.accentColor.opacity(0.2), lineWidth: 1)
+            }
 
-                Text("其他快捷键")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(.secondary)
-                    .padding(.top, 4)
+            Text("其他快捷键")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(.secondary)
+                .padding(.top, 4)
 
+            VStack(spacing: 0) {
                 shortcutRow(keys: ["⌘", "+ / −"], title: "Command + / −", detail: "放大或缩小便签内容")
                 shortcutDivider
                 shortcutRow(keys: ["⌘", "B"], title: "Command + B", detail: "展开或收起侧边栏")
