@@ -112,7 +112,9 @@ final class ScreenshotActionController: NSObject, NSWindowDelegate {
         }
     }
 
-    private func present(_ image: NSImage) {
+    func present(_ image: NSImage) {
+        analysisTask?.cancel()
+        state.reset()
         guard let data = ScreenshotImageProcessor.pngData(from: image) else {
             present(error: ScreenshotCaptureError.encodingFailed)
             return
@@ -140,7 +142,7 @@ final class ScreenshotActionController: NSObject, NSWindowDelegate {
             backing: .buffered,
             defer: false
         )
-        panel.title = "截图识图"
+        panel.title = "图片识别"
         panel.isReleasedWhenClosed = false
         panel.minSize = NSSize(width: 620, height: 520)
         panel.delegate = self
@@ -208,7 +210,7 @@ private struct ScreenshotActionView: View {
                     .frame(width: 34, height: 34)
                     .background(Color.accentColor.opacity(0.1), in: RoundedRectangle(cornerRadius: 9))
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("截图识图").font(.system(size: 18, weight: .semibold))
+                    Text("图片识别").font(.system(size: 18, weight: .semibold))
                     Text(state.provider.isEmpty ? "选择问题，或直接输入你想了解的内容" : state.provider)
                         .font(.system(size: 10))
                         .foregroundStyle(.secondary)
@@ -303,6 +305,17 @@ private struct ScreenshotActionView: View {
 
 enum ScreenshotImageProcessor {
     static let maximumLongEdge: CGFloat = 2_200
+
+    static func image(from pasteboard: NSPasteboard) -> NSImage? {
+        if let image = NSImage(pasteboard: pasteboard) {
+            return image
+        }
+        guard let url = pasteboard.readObjects(
+            forClasses: [NSURL.self],
+            options: [.urlReadingFileURLsOnly: true]
+        )?.first as? URL else { return nil }
+        return NSImage(contentsOf: url)
+    }
 
     static func pngData(from image: NSImage) -> Data? {
         guard let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return nil }

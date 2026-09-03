@@ -293,6 +293,15 @@ final class AppShellTests: XCTestCase {
         XCTAssertEqual(bitmap.pixelsHigh, 1_100)
     }
 
+    func testScreenshotProcessorReadsImageFromServicePasteboard() throws {
+        let pasteboard = NSPasteboard(name: .init("QuickNoteTests.ImageService.\(UUID().uuidString)"))
+        let image = NSImage(size: NSSize(width: 32, height: 24))
+        pasteboard.clearContents()
+
+        XCTAssertTrue(pasteboard.writeObjects([image]))
+        XCTAssertNotNil(ScreenshotImageProcessor.image(from: pasteboard))
+    }
+
     func testSelectionResultPanelGrowsWithContentAndStopsBeforeClipping() {
         let short = SelectionPanelLayout.resultHeight(for: "简短解释")
         let medium = SelectionPanelLayout.resultHeight(for: String(repeating: "容器化部署说明。", count: 30))

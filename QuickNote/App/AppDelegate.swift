@@ -122,6 +122,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             edgeRail = rail
             self.selectionActions = selectionActions
             self.screenshotActions = screenshotActions
+            NSApp.servicesProvider = self
             self.aiSettings = aiSettings
             self.presentationLifecycle = presentationLifecycle
             presentationLifecycle.applicationDidLaunch()
@@ -145,5 +146,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             try? panelCoordinator?.presentCurrentNote()
             return .terminateCancel
         }
+    }
+
+    @objc func analyzeImage(
+        _ pasteboard: NSPasteboard,
+        userData: String,
+        error: AutoreleasingUnsafeMutablePointer<NSString>
+    ) {
+        guard let image = ScreenshotImageProcessor.image(from: pasteboard) else {
+            error.pointee = "QuickNote 无法读取所选图片。" as NSString
+            return
+        }
+        screenshotActions?.present(image)
     }
 }

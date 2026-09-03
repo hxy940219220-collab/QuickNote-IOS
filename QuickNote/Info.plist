@@ -26,5 +26,24 @@
 	<true/>
 	<key>NSScreenCaptureUsageDescription</key>
 	<string>QuickNote 需要截取你主动选择的屏幕区域，用于图片分析。</string>
+	<key>NSServices</key>
+	<array>
+		<dict>
+			<key>NSMenuItem</key>
+			<dict>
+				<key>default</key>
+				<string>用 QuickNote 识图</string>
+			</dict>
+			<key>NSMessage</key>
+			<string>analyzeImage</string>
+			<key>NSPortName</key>
+			<string>$(PRODUCT_NAME)</string>
+			<key>NSSendTypes</key>
+			<array>
+				<string>public.image</string>
+				<string>public.file-url</string>
+			</array>
+		</dict>
+	</array>
 </dict>
 </plist>
