@@ -1001,6 +1001,31 @@ final class RichTextEditorController: ObservableObject {
         )
     }
 
+    func removeChecklistItem() {
+        guard let textView, let storage = textView.textStorage else { return }
+        let selection = textView.selectedRange()
+        let paragraph = (storage.string as NSString).paragraphRange(for: selection)
+        guard paragraph.location < storage.length,
+              checklistState(at: paragraph.location, in: storage) != nil else { return }
+        var markerLength = 1
+        if paragraph.location + 1 < storage.length,
+           (storage.string as NSString).substring(
+               with: NSRange(location: paragraph.location + 1, length: 1)
+           ) == " " {
+            markerLength += 1
+        }
+        registerUndoSnapshot(in: textView)
+        storage.deleteCharacters(in: NSRange(location: paragraph.location, length: markerLength))
+        let location = min(storage.length, max(paragraph.location, selection.location - markerLength))
+        commit(
+            textView,
+            preserving: NSRange(
+                location: location,
+                length: min(selection.length, storage.length - location)
+            )
+        )
+    }
+
     @discardableResult
     func toggleChecklistItem(at location: Int) -> Bool {
         guard let textView,

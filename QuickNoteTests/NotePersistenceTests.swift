@@ -737,6 +737,27 @@ final class NotePersistenceTests: XCTestCase {
         XCTAssertNil(reopened.attribute(.link, at: itemRange.location, effectiveRange: nil))
     }
 
+    func testChecklistItemCanBeRemovedFromCurrentParagraph() throws {
+        let controller = RichTextEditorController()
+        var document = NSAttributedString(string: "完成这件事")
+        let host = NSHostingView(rootView: RichTextEditor(
+            document: document,
+            cursorLocation: document.length,
+            controller: controller,
+            onChange: { updated, _ in document = updated },
+            onActivate: {}
+        ))
+        host.frame = NSRect(x: 0, y: 0, width: 320, height: 240)
+        host.layoutSubtreeIfNeeded()
+        _ = try XCTUnwrap(host.descendant(ofType: NSTextView.self))
+
+        controller.insertChecklistItem()
+        controller.removeChecklistItem()
+
+        XCTAssertEqual(document.string, "完成这件事")
+        XCTAssertEqual(document.attachmentCount, 0)
+    }
+
     func testParagraphFormattingUsesVisiblePrefixes() throws {
         let controller = RichTextEditorController()
         var document = NSAttributedString(string: "第一项\n第二项")

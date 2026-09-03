@@ -199,7 +199,7 @@ struct RootNoteView: View {
                 .padding(.trailing, 10)
 
                 HStack(spacing: 2) {
-                    toolbarButton("编辑命令", systemImage: "command") {
+                    toolbarButton("编辑工具", systemImage: "slider.horizontal.3") {
                         calendarPresented = false
                         settingsPresented = false
                         editorController.captureSelection()
@@ -213,6 +213,7 @@ struct RootNoteView: View {
                         NoteFormatPopover(
                             controller: editorController,
                             insertChecklist: editorController.insertChecklistItem,
+                            removeChecklist: editorController.removeChecklistItem,
                             chooseFiles: chooseFiles
                         )
                     }
@@ -649,6 +650,7 @@ private struct NoteThemePicker: View {
 private struct NoteFormatPopover: View {
     let controller: RichTextEditorController
     let insertChecklist: () -> Void
+    let removeChecklist: () -> Void
     let chooseFiles: () -> Void
     @State private var colorsPresented = false
     @State private var paragraphPresented = false
@@ -656,7 +658,7 @@ private struct NoteFormatPopover: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 6) {
+            HStack(spacing: 5) {
                 formatButton("B", help: "粗体", action: controller.toggleBold)
                     .fontWeight(.bold)
                 formatButton("I", help: "斜体", action: controller.toggleItalic)
@@ -665,14 +667,14 @@ private struct NoteFormatPopover: View {
                     .underline()
                 formatButton("S", help: "删除线", action: controller.toggleStrikethrough)
                     .strikethrough()
-                Divider().frame(height: 24)
+                Divider().frame(height: 22)
                 Button {
                     colorsPresented.toggle()
                 } label: {
                     Text("A")
                         .font(.system(size: 17, weight: .medium))
                         .foregroundStyle(.primary)
-                        .frame(width: 28, height: 28)
+                        .frame(width: 26, height: 26)
                         .background(Color.yellow.opacity(0.48), in: RoundedRectangle(cornerRadius: 5))
                 }
                 .buttonStyle(.borderless)
@@ -691,7 +693,7 @@ private struct NoteFormatPopover: View {
                         Image(systemName: "chevron.down")
                             .font(.system(size: 8, weight: .semibold))
                     }
-                    .frame(width: 36, height: 28)
+                    .frame(width: 32, height: 26)
                 }
                 .buttonStyle(.borderless)
                 .quickNoteHoverHighlight(cornerRadius: 5)
@@ -701,7 +703,7 @@ private struct NoteFormatPopover: View {
                     ParagraphFormatPopover(controller: controller)
                 }
             }
-            .padding(.bottom, 10)
+            .padding(.bottom, 7)
 
             Divider()
 
@@ -712,29 +714,36 @@ private struct NoteFormatPopover: View {
                     Text(style.title)
                         .font(.system(size: min(style.font.pointSize, 18), weight: style == .body ? .regular : .semibold))
                         .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.vertical, 5)
+                        .padding(.vertical, 3)
                 }
                 .buttonStyle(.plain)
                 .quickNoteHoverHighlight(cornerRadius: 5)
             }
 
-            Divider().padding(.vertical, 6)
+            Divider().padding(.vertical, 4)
 
             formatRow("项目符号列表", image: "list.bullet") { controller.applyList(.disc) }
             formatRow("短划线列表", image: "list.dash") { controller.applyList(.hyphen) }
             formatRow("编号列表", image: "list.number") { controller.applyList(.decimal) }
             formatRow("块引用", image: "text.quote", action: controller.applyBlockQuote)
 
-            Divider().padding(.vertical, 6)
+            Divider().padding(.vertical, 4)
 
             Text("插入")
                 .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(.secondary)
                 .padding(.leading, 2)
-                .padding(.bottom, 5)
+                .padding(.bottom, 4)
 
             HStack(spacing: 5) {
-                insertButton("待办", image: "checklist", action: insertChecklist)
+                insertButton("待办", image: "checklist") {
+                    if (NSApp.currentEvent?.clickCount ?? 1) >= 2 {
+                        removeChecklist()
+                    } else {
+                        insertChecklist()
+                    }
+                }
+                .help("单击添加待办，双击取消待办")
                 insertButton("表格", image: "tablecells") { tablePresented.toggle() }
                     .popover(isPresented: $tablePresented, arrowEdge: .trailing) {
                         TablePickerPopover(controller: controller)
@@ -742,15 +751,15 @@ private struct NoteFormatPopover: View {
                 insertButton("附件", image: "paperclip", action: chooseFiles)
             }
         }
-        .padding(12)
-        .frame(width: 240)
+        .padding(10)
+        .frame(width: 220)
     }
 
     private func formatButton(_ title: String, help: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Text(title)
                 .font(.system(size: 17))
-                .frame(width: 28, height: 28)
+                .frame(width: 25, height: 26)
         }
         .buttonStyle(.borderless)
         .quickNoteHoverHighlight(cornerRadius: 5)
@@ -767,7 +776,7 @@ private struct NoteFormatPopover: View {
             Label(title, systemImage: image)
                 .font(.system(size: 12))
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.vertical, 5)
+                .padding(.vertical, 3)
         }
         .buttonStyle(.plain)
         .quickNoteHoverHighlight(cornerRadius: 5)
@@ -780,9 +789,9 @@ private struct NoteFormatPopover: View {
     ) -> some View {
         Button(action: action) {
             Label(title, systemImage: image)
-                .font(.system(size: 11, weight: .medium))
+                .font(.system(size: 10, weight: .medium))
                 .frame(maxWidth: .infinity)
-                .frame(height: 29)
+                .frame(height: 26)
                 .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 6))
                 .overlay {
                     RoundedRectangle(cornerRadius: 6)
