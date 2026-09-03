@@ -1175,11 +1175,30 @@ private struct QuickNoteSettingsDetailView: View {
 
     private var shortcutsDetail: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 0) {
-                shortcutRow(keys: ["⌘", "⌘"], title: "双击 Command", detail: "打开或收起 QuickNote")
-                shortcutDivider
-                shortcutRow(keys: ["⌥", "Space"], title: "Option + 空格", detail: "分析当前选中的文字")
-                shortcutDivider
+            VStack(alignment: .leading, spacing: 6) {
+                Label("核心快捷键", systemImage: "bolt.fill")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(Color.accentColor)
+
+                VStack(spacing: 0) {
+                    shortcutRow(keys: ["⌘", "⌘"], title: "双击 Command", detail: "打开或收起 QuickNote", emphasized: true)
+                    shortcutDivider
+                    shortcutRow(keys: ["⌥", "Space"], title: "Option + 空格", detail: "分析当前选中的文字", emphasized: true)
+                    shortcutDivider
+                    shortcutRow(keys: ["⌘", "⇧"], title: "Command + Shift", detail: "选择区域截图并使用 AI 分析", emphasized: true)
+                }
+                .padding(.horizontal, 6)
+                .background(Color.accentColor.opacity(0.07), in: RoundedRectangle(cornerRadius: 8))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(Color.accentColor.opacity(0.2), lineWidth: 1)
+                }
+
+                Text("其他快捷键")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .padding(.top, 4)
+
                 shortcutRow(keys: ["⌘", "+ / −"], title: "Command + / −", detail: "放大或缩小便签内容")
                 shortcutDivider
                 shortcutRow(keys: ["⌘", "B"], title: "Command + B", detail: "展开或收起侧边栏")
@@ -1189,8 +1208,6 @@ private struct QuickNoteSettingsDetailView: View {
                 shortcutRow(keys: ["⌘", "K"], title: "Command + K", detail: "为选中文字插入链接")
                 shortcutDivider
                 shortcutRow(keys: ["⌘", "Z"], title: "Command + Z", detail: "撤销最近一次文字或格式操作")
-                shortcutDivider
-                shortcutRow(keys: ["⌘", "⇧"], title: "Command + Shift", detail: "选择区域截图并使用 AI 分析")
             }
         }
     }
@@ -1267,17 +1284,28 @@ private struct QuickNoteSettingsDetailView: View {
         .help("在访达中显示")
     }
 
-    private func shortcutRow(keys: [String], title: String, detail: String) -> some View {
+    private func shortcutRow(
+        keys: [String],
+        title: String,
+        detail: String,
+        emphasized: Bool = false
+    ) -> some View {
         HStack(spacing: 20) {
             HStack(spacing: 5) {
                 ForEach(Array(keys.enumerated()), id: \.offset) { _, key in
                     Text(key)
                         .font(.system(size: key == "Space" ? 9 : 13, weight: .medium))
                         .frame(minWidth: key == "Space" || key == "+ / −" ? 44 : 24, minHeight: 24)
-                        .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 5))
+                        .background(
+                            emphasized ? Color.accentColor.opacity(0.12) : Color(nsColor: .controlBackgroundColor),
+                            in: RoundedRectangle(cornerRadius: 5)
+                        )
                         .overlay {
                             RoundedRectangle(cornerRadius: 5)
-                                .stroke(Color.secondary.opacity(0.25), lineWidth: 1)
+                                .stroke(
+                                    emphasized ? Color.accentColor.opacity(0.4) : Color.secondary.opacity(0.25),
+                                    lineWidth: 1
+                                )
                         }
                 }
             }
