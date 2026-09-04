@@ -1,9 +1,9 @@
 import SwiftUI
 
 enum NoteDrawerLayout {
-    static let noteLeadingIndent: CGFloat = 24
-    static let noteRowHeight: CGFloat = 26
-    static let folderRowHeight: CGFloat = 28
+    static let noteLeadingIndent: CGFloat = 8
+    static let noteRowHeight: CGFloat = 30
+    static let folderRowHeight: CGFloat = 32
 }
 
 struct NoteDrawerView: View {
@@ -33,10 +33,22 @@ struct NoteDrawerView: View {
         VStack(spacing: 6) {
             header
 
-            TextField("搜索便签标题", text: $query)
-                .font(.system(size: 12))
-                .controlSize(.small)
-                .textFieldStyle(.roundedBorder)
+            HStack(spacing: 6) {
+                Image(systemName: "magnifyingglass")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.tertiary)
+                TextField("搜索便签标题", text: $query)
+                    .font(.system(size: 12))
+                    .textFieldStyle(.plain)
+            }
+            .padding(.horizontal, 8)
+            .frame(height: 32)
+            .background(Color(nsColor: .controlBackgroundColor))
+            .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .stroke(Color(nsColor: .separatorColor).opacity(0.45), lineWidth: 1)
+            }
 
             if isSearching {
                 searchResults
@@ -173,53 +185,43 @@ struct NoteDrawerView: View {
     }
 
     private func folderRow(_ folder: NoteFolder) -> some View {
-        HStack(spacing: 0) {
-            Button {
-                toggleFolder(folder)
-            } label: {
-                HStack(spacing: 6) {
-                    Image(systemName: "folder")
-                        .font(.system(size: 13))
-                        .frame(width: 14)
-                        .foregroundStyle(.secondary)
-                    Text(folder.name)
-                        .font(.system(size: 13, weight: .medium))
-                        .lineLimit(1)
-                    Spacer()
-                }
-                .frame(maxWidth: .infinity, minHeight: NoteDrawerLayout.folderRowHeight)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .help(folder.name)
-            .accessibilityValue(expandedFolders.contains(folder.id) ? "已展开" : "已收起")
-            .accessibilityLabel("\(expandedFolders.contains(folder.id) ? "收起" : "展开")文件夹 \(folder.name)")
-
-            Menu {
-                Button {
-                    editingFolder = folder
-                } label: {
-                    Label("重命名", systemImage: "pencil")
-                }
-                Divider()
-                Button(role: .destructive) {
-                    pendingFolderDeletion = folder
-                    confirmingFolderDeletion = true
-                } label: {
-                    Label("删除文件夹", systemImage: "trash")
-                }
-            } label: {
-                Image(systemName: "ellipsis")
-                    .font(.system(size: 12))
+        Button {
+            toggleFolder(folder)
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "folder")
+                    .font(.system(size: 13))
+                    .frame(width: 14)
+                    .foregroundStyle(.secondary)
+                Text(folder.name)
+                    .font(.system(size: 13, weight: .medium))
+                    .lineLimit(1)
+                Spacer()
+                Image(systemName: expandedFolders.contains(folder.id) ? "chevron.down" : "chevron.right")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(.tertiary)
                     .frame(width: 24, height: NoteDrawerLayout.folderRowHeight)
-                    .contentShape(Rectangle())
             }
-            .menuStyle(.borderlessButton)
-            .menuIndicator(.hidden)
-            .fixedSize()
-            .quickNoteHoverHighlight(cornerRadius: 6)
-            .help("编辑文件夹")
-            .accessibilityLabel("编辑文件夹 \(folder.name)")
+            .frame(maxWidth: .infinity, minHeight: NoteDrawerLayout.folderRowHeight)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(folder.name)
+        .accessibilityValue(expandedFolders.contains(folder.id) ? "已展开" : "已收起")
+        .accessibilityLabel("\(expandedFolders.contains(folder.id) ? "收起" : "展开")文件夹 \(folder.name)")
+        .contextMenu {
+            Button {
+                editingFolder = folder
+            } label: {
+                Label("重命名", systemImage: "pencil")
+            }
+            Divider()
+            Button(role: .destructive) {
+                pendingFolderDeletion = folder
+                confirmingFolderDeletion = true
+            } label: {
+                Label("删除文件夹", systemImage: "trash")
+            }
         }
         .frame(height: NoteDrawerLayout.folderRowHeight)
         .quickNoteHoverHighlight(cornerRadius: 5)
@@ -230,9 +232,13 @@ struct NoteDrawerView: View {
     private func noteRow(_ note: NoteRecord) -> some View {
         HStack(spacing: 0) {
             Button(action: { select(note) }) {
-                HStack(spacing: 4) {
+                HStack(spacing: 6) {
+                    Image(systemName: "doc.text")
+                        .font(.system(size: 12))
+                        .frame(width: 14)
+                        .foregroundStyle(.secondary)
                     Text(note.title)
-                        .font(.system(size: 13, weight: .regular))
+                        .font(.system(size: 13, weight: note.id == selectedID ? .medium : .regular))
                         .lineLimit(1)
                     if note.isPinned {
                         Image(systemName: "pin.fill")
@@ -306,7 +312,7 @@ struct NoteDrawerView: View {
         .listRowInsets(EdgeInsets(top: 0, leading: 4, bottom: 0, trailing: 4))
         .listRowBackground(
             RoundedRectangle(cornerRadius: 5, style: .continuous)
-                .fill(note.id == selectedID ? Color(nsColor: theme.accentColor).opacity(0.12) : Color.clear)
+                .fill(note.id == selectedID ? Color.primary.opacity(0.065) : Color.clear)
         )
         .listRowSeparator(.hidden)
     }

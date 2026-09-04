@@ -317,9 +317,9 @@ final class AppShellTests: XCTestCase {
     }
 
     func testAllSidebarNotesUseTheSameLeadingIndent() {
-        XCTAssertEqual(NoteDrawerLayout.noteLeadingIndent, 24)
-        XCTAssertEqual(NoteDrawerLayout.noteRowHeight, 26)
-        XCTAssertEqual(NoteDrawerLayout.folderRowHeight, 28)
+        XCTAssertEqual(NoteDrawerLayout.noteLeadingIndent, 8)
+        XCTAssertEqual(NoteDrawerLayout.noteRowHeight, 30)
+        XCTAssertEqual(NoteDrawerLayout.folderRowHeight, 32)
     }
 
     func testNoteThemesOfferFiveChoicesAndFallBackToSystem() {
