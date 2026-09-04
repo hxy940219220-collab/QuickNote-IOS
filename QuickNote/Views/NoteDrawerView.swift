@@ -41,12 +41,12 @@ struct NoteDrawerView: View {
                     .font(.system(size: 12))
                     .textFieldStyle(.plain)
             }
-            .padding(.horizontal, 8)
-            .frame(height: 32)
+            .padding(.horizontal, 7)
+            .frame(height: 27)
             .background(Color(nsColor: .controlBackgroundColor))
-            .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
             .overlay {
-                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
                     .stroke(Color(nsColor: .separatorColor).opacity(0.45), lineWidth: 1)
             }
 
