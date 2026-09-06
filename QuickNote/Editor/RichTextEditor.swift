@@ -7,6 +7,9 @@ private protocol EditorInteractionHandling: AnyObject {
     func toggleChecklist(at location: Int) -> Bool
     func openFileAttachment(at location: Int) -> Bool
     func applyParagraphSpacing(before: CGFloat, after: CGFloat)
+    func deleteAttachment(at location: Int) -> Bool
+    func saveAttachment(at location: Int, to url: URL) throws
+    func replaceAttachment(at location: Int, with url: URL) throws
 }
 
 private class InteractiveAttachmentCell: NSTextAttachmentCell {
@@ -72,6 +75,23 @@ enum AttachmentPresentation {
     static let audioFilenamePrefix = "quicknote-audio--"
     static let audioFilenameSuffix = ".qnaudio"
 
+    /// Paragraph spacing survives RTFD saving without inserting empty lines or changing file bytes.
+    static func spaceMediaBlocks(in document: NSMutableAttributedString, onlyMissingSpacing: Bool = false) {
+        document.enumerateAttribute(.attachment, in: NSRange(location: 0, length: document.length)) { value, range, _ in
+            guard let attachment = value as? NSTextAttachment, let wrapper = attachment.fileWrapper else { return }
+            let filename = wrapper.preferredFilename ?? wrapper.filename ?? ""
+            guard !filename.hasPrefix("quicknote-checklist-") else { return }
+            let paragraph = (document.string as NSString).paragraphRange(for: range)
+            let existing = document.attribute(.paragraphStyle, at: paragraph.location, effectiveRange: nil) as? NSParagraphStyle
+            let hasSpacing = existing.map { $0.paragraphSpacing != 0 || $0.paragraphSpacingBefore != 0 } ?? false
+            guard (!onlyMissingSpacing || !hasSpacing), existing?.textBlocks.isEmpty != false else { return }
+            let style = existing?.mutableCopy() as? NSMutableParagraphStyle ?? NSMutableParagraphStyle()
+            style.paragraphSpacingBefore = 6
+            style.paragraphSpacing = 12
+            document.addAttribute(.paragraphStyle, value: style, range: paragraph)
+        }
+    }
+
     static func scaledSize(for original: NSSize, fitting maximum: NSSize) -> NSSize {
         guard original.width > 0, original.height > 0 else { return .zero }
         let scale = min(1, maximum.width / original.width, maximum.height / original.height)
@@ -100,6 +120,50 @@ enum AttachmentPresentation {
     }
 }
 
+enum AttachmentTemporaryCopies {
+    static func write(_ data: Data, filename: String,
+                      temporaryDirectory: URL = FileManager.default.temporaryDirectory) throws -> URL {
+        let manager = FileManager.default
+        let root = temporaryDirectory.appending(path: "QuickNote-Attachments", directoryHint: .isDirectory)
+        let keys: Set<URLResourceKey> = [.isDirectoryKey, .isSymbolicLinkKey, .contentModificationDateKey]
+        if manager.fileExists(atPath: root.path) {
+            let values = try root.resourceValues(forKeys: keys)
+            guard values.isDirectory == true, values.isSymbolicLink != true else { throw CocoaError(.fileWriteNoPermission) }
+        } else {
+            try manager.createDirectory(at: root, withIntermediateDirectories: true)
+        }
+        guard root.resolvingSymlinksInPath().standardizedFileURL == temporaryDirectory.resolvingSymlinksInPath()
+            .appending(path: "QuickNote-Attachments", directoryHint: .isDirectory).standardizedFileURL else {
+            throw CocoaError(.fileWriteNoPermission)
+        }
+        // Only UUID directories carrying our ownership marker are eligible; never follow a symlink.
+        let candidates = try manager.contentsOfDirectory(at: root, includingPropertiesForKeys: Array(keys))
+            .compactMap { url -> (URL, Date)? in
+                guard UUID(uuidString: url.lastPathComponent) != nil,
+                      let values = try? url.resourceValues(forKeys: keys), values.isDirectory == true,
+                      values.isSymbolicLink != true,
+                      (try? Data(contentsOf: url.appending(path: ".quicknote-copy"))) == Data("1".utf8) else { return nil }
+                return (url, values.contentModificationDate ?? .distantPast)
+            }.sorted { $0.1 > $1.1 }
+        for (index, entry) in candidates.enumerated() where index >= 19 || entry.1 < Date().addingTimeInterval(-7 * 86_400) {
+            try manager.removeItem(at: entry.0)
+        }
+        let directory = root.appending(path: UUID().uuidString, directoryHint: .isDirectory)
+        try manager.createDirectory(at: directory, withIntermediateDirectories: false)
+        do {
+            try Data("1".utf8).write(to: directory.appending(path: ".quicknote-copy"), options: .atomic)
+            let name = URL(fileURLWithPath: filename).lastPathComponent
+            let safeName = name.isEmpty || [".", "..", ".quicknote-copy", "/"].contains(name) ? "附件" : name
+            let url = directory.appending(path: safeName)
+            try data.write(to: url, options: .atomic)
+            return url
+        } catch {
+            try? manager.removeItem(at: directory)
+            throw error
+        }
+    }
+}
+
 enum EditorTextStyle: String, CaseIterable, Identifiable {
     case title
     case heading
@@ -121,10 +185,10 @@ enum EditorTextStyle: String, CaseIterable, Identifiable {
 
     var font: NSFont {
         switch self {
-        case .title: .systemFont(ofSize: 26, weight: .bold)
-        case .heading: .systemFont(ofSize: 20, weight: .bold)
-        case .subheading: .systemFont(ofSize: 17, weight: .semibold)
-        case .body: .systemFont(ofSize: 13)
+        case .title: .systemFont(ofSize: 24, weight: .medium)
+        case .heading: .systemFont(ofSize: 18, weight: .medium)
+        case .subheading: .systemFont(ofSize: 16, weight: .medium)
+        case .body: .systemFont(ofSize: 13, weight: .light)
         case .monospaced: .monospacedSystemFont(ofSize: 13, weight: .regular)
         }
     }
@@ -198,6 +262,7 @@ struct AIFormattingPlan {
     }
 }
 
+@MainActor
 enum NotePasteNormalizer {
     static func normalized(
         _ source: NSAttributedString,
@@ -207,20 +272,20 @@ enum NotePasteNormalizer {
         let result = NSMutableAttributedString(attributedString: source)
         let fullRange = NSRange(location: 0, length: source.length)
         guard fullRange.length > 0 else { return result }
-        let firstLineEnd = (source.string as NSString).range(of: "\n").location
-        let titleEnd = firstLineEnd == NSNotFound ? source.length : firstLineEnd
+        let titleEnd = NSMaxRange((source.string as NSString).paragraphRange(for: NSRange(location: 0, length: 0)))
         let bodyFont = editorFont(matching: destinationFont)
 
         source.enumerateAttributes(in: fullRange) { attributes, range, _ in
             guard attributes[.attachment] == nil else { return }
-            let base = replacesWholeDocument && range.location < titleEnd
-                ? EditorTextStyle.title.font
-                : (replacesWholeDocument ? EditorTextStyle.body.font : bodyFont)
-            result.addAttribute(
-                .font,
-                value: preservingTraits(from: attributes[.font] as? NSFont, on: base),
-                range: range
-            )
+            for segment in [NSIntersectionRange(range, NSRange(location: 0, length: titleEnd)),
+                            NSIntersectionRange(range, NSRange(location: titleEnd, length: source.length - titleEnd))]
+            where segment.length > 0 {
+                let startsWithTitle = replacesWholeDocument || destinationFont.pointSize == EditorTextStyle.title.font.pointSize
+                let base = startsWithTitle
+                    ? (segment.location < titleEnd ? EditorTextStyle.title.font : EditorTextStyle.body.font)
+                    : bodyFont
+                result.addAttribute(.font, value: preservingTraits(from: attributes[.font] as? NSFont, on: base), range: segment)
+            }
         }
 
         for key: NSAttributedString.Key in [
@@ -252,7 +317,7 @@ enum NotePasteNormalizer {
             style.headIndent = min(max(style.headIndent, 0), 56)
             result.addAttribute(.paragraphStyle, value: style, range: range)
         }
-        return result
+        return NoteHeadingNormalizer.normalized(result, promoteFirstLine: false)
     }
 
     private static func editorFont(matching font: NSFont) -> NSFont {
@@ -268,15 +333,202 @@ enum NotePasteNormalizer {
     fileprivate static func preservingTraits(from source: NSFont?, on base: NSFont) -> NSFont {
         guard let source else { return base }
         let sourceTraits = source.fontDescriptor.symbolicTraits
-        var traits = base.fontDescriptor.symbolicTraits
-        if sourceTraits.contains(.bold) { traits.insert(.bold) }
-        if sourceTraits.contains(.italic) { traits.insert(.italic) }
-        return NSFont(descriptor: base.fontDescriptor.withSymbolicTraits(traits), size: base.pointSize) ?? base
+        var result = base
+        if sourceTraits.contains(.bold) {
+            result = base.fontDescriptor.symbolicTraits.contains(.monoSpace)
+                ? .monospacedSystemFont(ofSize: base.pointSize, weight: .bold)
+                : .systemFont(ofSize: base.pointSize, weight: .bold)
+        }
+        if sourceTraits.contains(.italic) {
+            result = NSFontManager.shared.convert(result, toHaveTrait: .italicFontMask)
+        }
+        return result
     }
 }
 
+@MainActor
+enum NoteMarkdownImporter {
+    static func richText(from text: String, asDocumentStart: Bool = true) -> NSAttributedString {
+        let lines = text.replacingOccurrences(of: "\r\n", with: "\n").components(separatedBy: "\n")
+        let first = lines.firstIndex { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+        let result = NSMutableAttributedString()
+        let checklist = RichTextEditorController()
+        var index = 0
+        while index < lines.count {
+            if index > 0 { result.append(NSAttributedString(string: "\n", attributes: [.font: EditorTextStyle.body.font])) }
+            let line = lines[index]
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if trimmed.hasPrefix("```"), let end = lines.indices.dropFirst(index + 1).first(where: {
+                lines[$0].trimmingCharacters(in: .whitespaces) == "```"
+            }) {
+                result.append(NSAttributedString(string: lines[(index + 1)..<end].joined(separator: "\n"),
+                    attributes: [.font: EditorTextStyle.monospaced.font]))
+                index = end + 1
+                continue
+            }
+            if trimmed.hasPrefix("```") {
+                result.append(NSAttributedString(string: lines[index...].joined(separator: "\n"),
+                    attributes: [.font: EditorTextStyle.body.font]))
+                break
+            }
+            if index + 1 < lines.count, let header = pipeCells(line),
+               let divider = pipeCells(lines[index + 1]), divider.count == header.count,
+               divider.allSatisfy({ $0.range(of: #"^:?-{3,}:?$"#, options: .regularExpression) != nil }) {
+                var rows = [header]
+                var end = index + 2
+                var valid = true
+                while end < lines.count, let cells = pipeCells(lines[end]) {
+                    if cells.count != header.count { valid = false }
+                    rows.append(cells)
+                    end += 1
+                }
+                if valid {
+                    let table = NSTextTable()
+                    table.numberOfColumns = header.count
+                    table.collapsesBorders = true
+                    table.setContentWidth(100, type: .percentageValueType)
+                    for (row, cells) in rows.enumerated() {
+                        for (column, value) in cells.enumerated() {
+                            let block = NSTextTableBlock(table: table, startingRow: row, rowSpan: 1,
+                                startingColumn: column, columnSpan: 1)
+                            block.setWidth(0.5, type: .absoluteValueType, for: .border)
+                            block.setWidth(6, type: .absoluteValueType, for: .padding)
+                            block.setBorderColor(.separatorColor)
+                            let style = NSMutableParagraphStyle()
+                            style.textBlocks = [block]
+                            let alignment = divider[column]
+                            style.alignment = alignment.hasSuffix(":") ? (alignment.hasPrefix(":") ? .center : .right) : .left
+                            let cell = NSMutableAttributedString(attributedString: inline(value, font: EditorTextStyle.body.font))
+                            cell.append(NSAttributedString(string: "\n", attributes: [.font: EditorTextStyle.body.font]))
+                            cell.addAttribute(.paragraphStyle, value: style, range: NSRange(location: 0, length: cell.length))
+                            result.append(cell)
+                        }
+                    }
+                } else {
+                    result.append(NSAttributedString(string: lines[index..<end].joined(separator: "\n"),
+                        attributes: [.font: EditorTextStyle.body.font]))
+                }
+                index = end
+                continue
+            }
+            // Pipe-shaped/fence-shaped malformed blocks remain literal, including their markers.
+            if pipeCells(line) != nil || trimmed.hasPrefix("```") {
+                result.append(NSAttributedString(string: line, attributes: [.font: EditorTextStyle.body.font]))
+                index += 1
+                continue
+            }
+            var content = line
+            var font = EditorTextStyle.body.font
+            var checked: Bool?
+            let task = trimmed.replacingOccurrences(of: #"^[-*+] "#, with: "", options: .regularExpression)
+            if task.hasPrefix("[ ] ") || task.hasPrefix("[x] ") || task.hasPrefix("[X] ") {
+                checked = !task.hasPrefix("[ ]")
+                content = String(task.dropFirst(4))
+                font = EditorTextStyle.body.font
+            } else {
+                let hashes = trimmed.prefix { $0 == "#" }.count
+                if (1...6).contains(hashes), trimmed.dropFirst(hashes).first == " " {
+                    content = String(trimmed.dropFirst(hashes + 1))
+                    font = asDocumentStart && index == first ? EditorTextStyle.title.font
+                        : (hashes <= 2 ? EditorTextStyle.heading.font : EditorTextStyle.subheading.font)
+                } else if trimmed.hasPrefix("- ") || trimmed.hasPrefix("* ") || trimmed.hasPrefix("+ ") {
+                    let item = String(trimmed.dropFirst(2))
+                    let indentation = line.prefix { $0 == " " || $0 == "\t" }.reduce(0) { $0 + ($1 == "\t" ? 4 : 1) }
+                    if indentation == 0, let colon = item.firstIndex(where: { $0 == ":" || $0 == "：" }),
+                       item.distance(from: item.startIndex, to: colon) <= 12 {
+                        content = item
+                    } else {
+                        content = "\(indentation >= 4 ? "◦" : "•") \(item)"
+                    }
+                    font = EditorTextStyle.body.font
+                }
+            }
+            let paragraph = NSMutableAttributedString()
+            if let checked {
+                paragraph.append(checklist.checklistMarker(checked: checked, font: font))
+                paragraph.append(NSAttributedString(string: " ", attributes: [.font: font]))
+            }
+            paragraph.append(inline(content, font: font))
+            let style = NSMutableParagraphStyle()
+            style.lineSpacing = 1
+            style.paragraphSpacing = 4
+            paragraph.addAttribute(.paragraphStyle, value: style, range: NSRange(location: 0, length: paragraph.length))
+            result.append(paragraph)
+            index += 1
+        }
+        return NoteHeadingNormalizer.normalized(result, promoteFirstLine: asDocumentStart)
+    }
+
+    private static func inline(_ text: String, font: NSFont) -> NSAttributedString {
+        let options = AttributedString.MarkdownParsingOptions(interpretedSyntax: .inlineOnlyPreservingWhitespace)
+        let parsed = (try? AttributedString(markdown: text, options: options)) ?? AttributedString(text)
+        let result = NSMutableAttributedString()
+        for run in parsed.runs {
+            let intent = run.inlinePresentationIntent
+            var sourceFont = intent?.contains(.code) == true ? EditorTextStyle.monospaced.font : font
+            if intent?.contains(.stronglyEmphasized) == true {
+                sourceFont = sourceFont.fontDescriptor.symbolicTraits.contains(.monoSpace)
+                    ? .monospacedSystemFont(ofSize: sourceFont.pointSize, weight: .bold)
+                    : .systemFont(ofSize: sourceFont.pointSize, weight: .bold)
+            }
+            if intent?.contains(.emphasized) == true {
+                sourceFont = NSFontManager.shared.convert(sourceFont, toHaveTrait: .italicFontMask)
+            }
+            let base = intent?.contains(.code) == true ? EditorTextStyle.monospaced.font : font
+            var attributes: [NSAttributedString.Key: Any] = [.font: NotePasteNormalizer.preservingTraits(from: sourceFont, on: base)]
+            if intent?.contains(.strikethrough) == true { attributes[.strikethroughStyle] = NSUnderlineStyle.single.rawValue }
+            if let link = run.link { attributes[.link] = link }
+            result.append(NSAttributedString(string: String(parsed[run.range].characters), attributes: attributes))
+        }
+        return result
+    }
+
+    private static func pipeCells(_ line: String) -> [String]? {
+        var text = line.trimmingCharacters(in: .whitespaces)
+        guard text.contains("|") else { return nil }
+        if text.hasPrefix("|") { text.removeFirst() }
+        if text.hasSuffix("|"), !text.hasSuffix("\\|") { text.removeLast() }
+        var cells = [String]()
+        var cell = ""
+        var escaped = false
+        var inCode = false
+        for character in text {
+            if escaped {
+                cell.append(character == "|" ? "|" : "\\\(character)")
+                escaped = false
+            } else if character == "\\" {
+                escaped = true
+            } else if character == "`" {
+                inCode.toggle()
+                cell.append(character)
+            } else if character == "|", !inCode {
+                cells.append(cell.trimmingCharacters(in: .whitespaces))
+                cell = ""
+            } else { cell.append(character) }
+        }
+        if escaped { cell.append("\\") }
+        cells.append(cell.trimmingCharacters(in: .whitespaces))
+        return cells.count > 1 ? cells : nil
+    }
+}
+
+enum EditorToggleState: Equatable { case off, on, mixed }
+
+struct EditorSelectionState: Equatable {
+    var bold: EditorToggleState = .off
+    var italic: EditorToggleState = .off
+    var underline: EditorToggleState = .off
+    var strike: EditorToggleState = .off
+    var checklist: EditorToggleState = .off
+    var textStyle: EditorTextStyle? = .body
+    var alignment: NSTextAlignment? = .natural
+    var isInTable = false
+}
+
 final class QuickNoteTextView: NSTextView {
+    weak var editorController: RichTextEditorController?
     private var contextImageLocation: Int?
+    private weak var contextAttachment: NSTextAttachment?
 
     static func editingMenu() -> NSMenu {
         let menu = NSMenu()
@@ -309,19 +561,81 @@ final class QuickNoteTextView: NSTextView {
     override func menu(for event: NSEvent) -> NSMenu? {
         guard let location = imageAttachmentLocation(for: event) else {
             contextImageLocation = nil
+            contextAttachment = nil
             return Self.editingMenu()
         }
+        return attachmentMenu(at: location)
+    }
+
+    func attachmentMenu(at location: Int) -> NSMenu? {
+        guard let attachment = attachment(at: location), let data = attachment.fileWrapper?.regularFileContents else { return nil }
+        let filename = attachment.fileWrapper?.preferredFilename ?? attachment.fileWrapper?.filename ?? ""
+        guard !filename.hasPrefix("quicknote-checklist-") else { return nil }
         contextImageLocation = location
-        let menu = NSMenu()
-        let copy = menu.addItem(
-            withTitle: "复制图片",
-            action: #selector(copyImageFromMenu(_:)),
-            keyEquivalent: ""
-        )
-        copy.target = self
+        contextAttachment = attachment
+        setSelectedRange(NSRange(location: location, length: 1))
+        let isImage = NSImage(data: data) != nil
+        let menu = Self.editingMenu()
+        if let copy = menu.item(withTitle: "复制"), isImage {
+            copy.title = "复制图片"
+            copy.action = #selector(copyImageFromMenu(_:))
+            copy.target = self
+        }
         menu.addItem(.separator())
-        menu.addItem(withTitle: "粘贴", action: #selector(NSText.paste(_:)), keyEquivalent: "")
+        if !isImage {
+            let open = menu.addItem(withTitle: "打开副本（外部修改不同步）…", action: #selector(openAttachmentFromMenu(_:)), keyEquivalent: "")
+            open.target = self
+        }
+        let save = menu.addItem(withTitle: isImage ? "图片另存为…" : "附件另存为…", action: #selector(saveAttachmentFromMenu(_:)), keyEquivalent: "")
+        save.target = self
+        if !isImage {
+            let replace = menu.addItem(withTitle: "替换附件…", action: #selector(replaceAttachmentFromMenu(_:)), keyEquivalent: "")
+            replace.target = self
+        }
+        let delete = menu.addItem(withTitle: isImage ? "删除图片" : "删除附件", action: #selector(deleteAttachmentFromMenu(_:)), keyEquivalent: "")
+        delete.target = self
         return menu
+    }
+
+    private func attachment(at location: Int) -> NSTextAttachment? {
+        guard let storage = textStorage, location >= 0, location < storage.length else { return nil }
+        return storage.attribute(.attachment, at: location, effectiveRange: nil) as? NSTextAttachment
+    }
+
+    private var validContextLocation: Int? {
+        guard let location = contextImageLocation, let contextAttachment,
+              attachment(at: location) === contextAttachment else { return nil }
+        return location
+    }
+
+    @objc private func deleteAttachmentFromMenu(_ sender: Any?) {
+        guard let location = validContextLocation else { return }
+        _ = (delegate as? EditorInteractionHandling)?.deleteAttachment(at: location)
+    }
+
+    @objc private func openAttachmentFromMenu(_ sender: Any?) {
+        guard let location = validContextLocation else { return }
+        _ = (delegate as? EditorInteractionHandling)?.openFileAttachment(at: location)
+    }
+
+    @objc private func saveAttachmentFromMenu(_ sender: Any?) {
+        guard validContextLocation != nil, let wrapper = contextAttachment?.fileWrapper else { return }
+        let panel = NSSavePanel()
+        let stored = wrapper.preferredFilename ?? wrapper.filename ?? "附件"
+        panel.nameFieldStringValue = URL(fileURLWithPath: AttachmentPresentation.originalAudioFilename(from: stored) ?? stored).lastPathComponent
+        guard panel.runModal() == .OK, let url = panel.url, let location = validContextLocation else { return }
+        do { try (delegate as? EditorInteractionHandling)?.saveAttachment(at: location, to: url) }
+        catch { NSAlert(error: error).runModal() }
+    }
+
+    @objc private func replaceAttachmentFromMenu(_ sender: Any?) {
+        guard validContextLocation != nil else { return }
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        guard panel.runModal() == .OK, let url = panel.url, let location = validContextLocation else { return }
+        do { try (delegate as? EditorInteractionHandling)?.replaceAttachment(at: location, with: url) }
+        catch { NSAlert(error: error).runModal() }
     }
 
     @discardableResult
@@ -343,8 +657,8 @@ final class QuickNoteTextView: NSTextView {
     }
 
     @objc private func copyImageFromMenu(_ sender: Any?) {
-        guard let contextImageLocation else { return }
-        _ = copyImageAttachment(at: contextImageLocation)
+        guard let location = validContextLocation else { return }
+        _ = copyImageAttachment(at: location)
     }
 
     private func imageAttachmentLocation(for event: NSEvent) -> Int? {
@@ -355,12 +669,12 @@ final class QuickNoteTextView: NSTextView {
             y: localPoint.y - textContainerOrigin.y
         )
         let glyph = layoutManager.glyphIndex(for: containerPoint, in: textContainer)
+        guard glyph < layoutManager.numberOfGlyphs else { return nil }
         let character = layoutManager.characterIndexForGlyph(at: glyph)
         guard character < storage.length,
               let attachment = storage.attribute(.attachment, at: character, effectiveRange: nil)
                 as? NSTextAttachment,
-              let data = attachment.fileWrapper?.regularFileContents,
-              NSImage(data: data) != nil else {
+              attachment.fileWrapper?.regularFileContents != nil else {
             return nil
         }
         let rect = layoutManager.boundingRect(
@@ -385,6 +699,10 @@ final class QuickNoteTextView: NSTextView {
     override func readSelection(from pasteboard: NSPasteboard) -> Bool {
         let richTypes: [NSPasteboard.PasteboardType] = [.rtfd, .rtf, .html]
         guard richTypes.contains(where: { pasteboard.availableType(from: [$0]) != nil }) else {
+            if pasteboard.availableType(from: [.png, .tiff, .fileURL]) == nil,
+               let string = pasteboard.string(forType: .string) {
+                return insertNormalizedRichText(from: pasteboard, plainText: string)
+            }
             return super.readSelection(from: pasteboard)
         }
         return insertNormalizedRichText(from: pasteboard)
@@ -395,17 +713,20 @@ final class QuickNoteTextView: NSTextView {
         type: NSPasteboard.PasteboardType
     ) -> Bool {
         let richTypes: Set<NSPasteboard.PasteboardType> = [.rtf, .rtfd, .html]
+        if type == .string, let string = pasteboard.string(forType: .string) {
+            return insertNormalizedRichText(from: pasteboard, plainText: string)
+        }
         guard richTypes.contains(type) else {
             return super.readSelection(from: pasteboard, type: type)
         }
         return insertNormalizedRichText(from: pasteboard)
     }
 
-    private func insertNormalizedRichText(from pasteboard: NSPasteboard) -> Bool {
-        guard let source = pasteboard.readObjects(
+    private func insertNormalizedRichText(from pasteboard: NSPasteboard, plainText: String? = nil) -> Bool {
+        guard let source = plainText.map({ NSAttributedString(string: $0) }) ?? (pasteboard.readObjects(
             forClasses: [NSAttributedString.self],
             options: nil
-        )?.first as? NSAttributedString else { return false }
+        )?.first as? NSAttributedString) else { return false }
         let selection = selectedRange()
         let replacesWholeDocument = selection.location == 0
             && selection.length == (textStorage?.length ?? 0)
@@ -426,9 +747,19 @@ final class QuickNoteTextView: NSTextView {
         guard shouldChangeText(in: selection, replacementString: normalized.string) else { return false }
         textStorage?.replaceCharacters(in: selection, with: normalized)
         setSelectedRange(NSRange(location: selection.location + normalized.length, length: 0))
-        typingAttributes[.font] = destinationFont
+        typingAttributes[.font] = normalized.length > 0
+            ? normalized.attribute(.font, at: normalized.length - 1, effectiveRange: nil) as? NSFont ?? destinationFont
+            : destinationFont
         didChangeText()
         return true
+    }
+
+    override func changeFont(_ sender: Any?) {
+        guard let manager = sender as? NSFontManager, let editorController else {
+            super.changeFont(sender)
+            return
+        }
+        editorController.changeFont(using: manager)
     }
 }
 
@@ -448,8 +779,11 @@ enum EditorLink {
 @MainActor
 final class RichTextEditorController: ObservableObject {
     private weak var textView: NSTextView?
+    var window: NSWindow? { textView?.window }
     private var capturedSelection: NSRange?
+    private(set) var isRestoringDocument = false
     @Published private(set) var canUndo = false
+    @Published private(set) var selectionState = EditorSelectionState()
     private var imagePreviewPanel: NSPanel?
     private var preparedAttachmentWidth: CGFloat?
     private static let linkDetector = try? NSDataDetector(
@@ -480,11 +814,70 @@ final class RichTextEditorController: ObservableObject {
 
     func connect(_ textView: NSTextView) {
         self.textView = textView
+        (textView as? QuickNoteTextView)?.editorController = self
         refreshUndoAvailability()
+        refreshSelectionState()
+    }
+
+    func refreshSelectionState() {
+        guard let textView, let storage = textView.textStorage else { return }
+        let selection = textView.selectedRange()
+        var runs: [[NSAttributedString.Key: Any]] = []
+        if selection.length == 0 { runs = [textView.typingAttributes] }
+        else {
+            storage.enumerateAttributes(in: selection) { attributes, _, _ in
+                if attributes[.attachment] == nil { runs.append(attributes) }
+            }
+        }
+        func toggle(_ test: ([NSAttributedString.Key: Any]) -> Bool) -> EditorToggleState {
+            let values = runs.map(test)
+            if values.isEmpty || values.allSatisfy({ !$0 }) { return .off }
+            return values.allSatisfy({ $0 }) ? .on : .mixed
+        }
+        func font(_ attributes: [NSAttributedString.Key: Any]) -> NSFont {
+            attributes[.font] as? NSFont ?? EditorTextStyle.body.font
+        }
+        let styles = runs.map { attributes -> EditorTextStyle? in
+            let font = font(attributes)
+            if font.fontDescriptor.symbolicTraits.contains(.monoSpace) { return .monospaced }
+            return EditorTextStyle.allCases.first { $0 != .monospaced && $0.font.pointSize == font.pointSize }
+        }
+        let alignments = runs.map { ($0[.paragraphStyle] as? NSParagraphStyle)?.alignment ?? .natural }
+        var markers: [Bool] = []
+        let target = paragraphRange(in: textView)
+        enumerateParagraphs(in: target, text: storage.string) { markers.append(checklistState(at: $0.location, in: storage) != nil) }
+        var state = EditorSelectionState()
+        state.bold = toggle { font($0).fontDescriptor.symbolicTraits.contains(.bold) }
+        state.italic = toggle { font($0).fontDescriptor.symbolicTraits.contains(.italic) }
+        state.underline = toggle { ($0[.underlineStyle] as? NSNumber)?.intValue ?? 0 != 0 }
+        state.strike = toggle { ($0[.strikethroughStyle] as? NSNumber)?.intValue ?? 0 != 0 }
+        state.textStyle = styles.allSatisfy { $0 == styles.first ?? nil } ? styles.first ?? nil : nil
+        state.alignment = alignments.allSatisfy { $0 == alignments.first } ? alignments.first : nil
+        state.checklist = markers.contains(true) ? (markers.allSatisfy { $0 } ? .on : .mixed) : .off
+        state.isInTable = isSelectionInTable
+        if selectionState != state { selectionState = state }
     }
 
     func captureSelection() {
         capturedSelection = textView?.selectedRange()
+    }
+
+    @discardableResult
+    func findText(_ query: String) -> Bool {
+        guard let textView, !query.isEmpty else { return false }
+        let range = (textView.string as NSString).range(of: query,
+            options: [.caseInsensitive, .diacriticInsensitive], range: NSRange(location: 0, length: textView.string.utf16.count),
+            locale: .current)
+        guard range.location != NSNotFound else { return false }
+        textView.setSelectedRange(range)
+        textView.scrollRangeToVisible(range)
+        refreshSelectionState()
+        return true
+    }
+
+    func prepareForExternalDocumentReplacement(in textView: NSTextView) {
+        textView.breakUndoCoalescing()
+        registerUndoSnapshot(in: textView)
     }
 
     func undo() {
@@ -493,12 +886,15 @@ final class RichTextEditorController: ObservableObject {
     }
 
     func clearUndoHistory() {
+        capturedSelection = nil
+        textView?.breakUndoCoalescing()
         textView?.undoManager?.removeAllActions()
         refreshUndoAvailability()
     }
 
     func refreshUndoAvailability() {
-        canUndo = textView?.undoManager?.canUndo == true
+        let available = textView?.undoManager?.canUndo == true
+        if canUndo != available { canUndo = available }
     }
 
     var selectedLinkSuggestion: String {
@@ -544,8 +940,37 @@ final class RichTextEditorController: ObservableObject {
     func toggleUnderline() { toggleDecoration(.underlineStyle) }
     func toggleStrikethrough() { toggleDecoration(.strikethroughStyle) }
 
+    func changeFont(using manager: NSFontManager) {
+        guard let textView, let storage = textView.textStorage else { return }
+        let selection = textView.selectedRange()
+        func convert(_ font: NSFont) -> NSFont {
+            let converted = manager.convert(font)
+            guard converted == font, !font.fontDescriptor.symbolicTraits.contains(.monoSpace) else { return converted }
+            // NSFontManager cannot promote SF Light directly to bold. Probe its native command on Regular.
+            var regular = NSFont.systemFont(ofSize: font.pointSize, weight: .regular)
+            if font.fontDescriptor.symbolicTraits.contains(.italic) {
+                regular = manager.convert(regular, toHaveTrait: .italicFontMask)
+            }
+            let requested = manager.convert(regular)
+            return requested.fontDescriptor.symbolicTraits.contains(.bold) ? requested : converted
+        }
+        registerUndoSnapshot(in: textView)
+        if selection.length == 0 {
+            textView.typingAttributes[.font] = convert(textView.typingAttributes[.font] as? NSFont ?? EditorTextStyle.body.font)
+        } else {
+            var fonts: [(NSRange, NSFont)] = []
+            storage.enumerateAttributes(in: selection) { attributes, range, _ in
+                if attributes[.attachment] == nil { fonts.append((range, convert(attributes[.font] as? NSFont ?? EditorTextStyle.body.font))) }
+            }
+            for (range, font) in fonts { storage.addAttribute(.font, value: font, range: range) }
+            commit(textView, preserving: selection)
+        }
+        refreshSelectionState()
+    }
+
     func applyTextStyle(_ style: EditorTextStyle) {
         guard let textView else { return }
+        defer { refreshSelectionState() }
         let selection = textView.selectedRange().length > 0
             ? textView.selectedRange()
             : capturedSelection ?? textView.selectedRange()
@@ -563,9 +988,14 @@ final class RichTextEditorController: ObservableObject {
     }
 
     func aiFormattingSource() throws -> AIFormattingSource {
-        guard let storage = textView?.textStorage, storage.length > 0 else {
+        guard let storage = textView?.textStorage else {
             throw AIFormattingError.noContent
         }
+        return try aiFormattingSource(document: storage)
+    }
+
+    func aiFormattingSource(document storage: NSAttributedString) throws -> AIFormattingSource {
+        guard storage.length > 0 else { throw AIFormattingError.noContent }
         var lines: [String] = []
         enumerateParagraphs(
             in: NSRange(location: 0, length: storage.length),
@@ -592,9 +1022,9 @@ final class RichTextEditorController: ObservableObject {
     }
 
     @discardableResult
-    func applyAIFormatting(_ plan: AIFormattingPlan, expectedText: String) throws -> Bool {
+    func applyAIFormatting(_ plan: AIFormattingPlan, expectedDocument: NSAttributedString) throws -> Bool {
         guard let textView, let storage = textView.textStorage else { return false }
-        guard storage.string == expectedText else { throw AIFormattingError.documentChanged }
+        guard storage.isEqual(to: expectedDocument) else { throw AIFormattingError.documentChanged }
         let selection = textView.selectedRange()
         registerUndoSnapshot(in: textView)
         try applyAIFormatting(plan, to: storage)
@@ -620,13 +1050,13 @@ final class RichTextEditorController: ObservableObject {
         guard let firstTextParagraph = textParagraphs.first else { throw AIFormattingError.invalidResponse }
         var styles = [Int: EditorTextStyle]()
         for assignment in plan.assignments where textParagraphs.contains(assignment.index) {
+            guard styles[assignment.index] == nil else { throw AIFormattingError.invalidResponse }
             styles[assignment.index] = assignment.style
         }
+        // Never replace unclassified paragraphs with a guessed body style after a partial AI response.
+        guard styles.count == textParagraphs.count else { throw AIFormattingError.invalidResponse }
         if !styles.values.contains(.title) {
             styles[firstTextParagraph] = .title
-        }
-        for index in textParagraphs where styles[index] == nil {
-            styles[index] = .body
         }
 
         storage.beginEditing()
@@ -745,6 +1175,7 @@ final class RichTextEditorController: ObservableObject {
 
     func applyAlignment(_ alignment: NSTextAlignment) {
         guard let textView, let storage = textView.textStorage else { return }
+        defer { refreshSelectionState() }
         let selection = textView.selectedRange()
         let target = paragraphRange(in: textView)
         if target.length == 0 {
@@ -850,10 +1281,15 @@ final class RichTextEditorController: ObservableObject {
             items.append((range.location, checked, checklistFont(at: range.location, in: textView)))
         }
         for (location, checked, font) in items.reversed() {
-            storage.replaceCharacters(
-                in: NSRange(location: location, length: 1),
-                with: checklistMarker(checked: checked, font: font)
-            )
+            let marker = checklistMarker(checked: checked, font: font)
+            let range = NSRange(location: location, length: 1)
+            if let attachment = marker.attribute(.attachment, at: 0, effectiveRange: nil) {
+                storage.addAttribute(.attachment, value: attachment, range: range)
+            }
+            if let link = storage.attribute(.link, at: location, effectiveRange: nil) as? URL,
+               link.scheme == "quicknote-checklist" {
+                storage.removeAttribute(.link, range: range)
+            }
         }
     }
 
@@ -863,6 +1299,27 @@ final class RichTextEditorController: ObservableObject {
         let selection = textView.selectedRange()
         guard selection.length == 0 else { return false }
         let paragraph = (storage.string as NSString).paragraphRange(for: selection)
+        if checklistState(at: paragraph.location, in: storage) != nil {
+            var attributes = storage.attributes(at: paragraph.location, effectiveRange: nil)
+            attributes.removeValue(forKey: .attachment)
+            attributes.removeValue(forKey: .link)
+            attributes[.font] = checklistFont(at: paragraph.location, in: textView)
+            let body = (storage.string as NSString).substring(with: paragraph).dropFirst()
+            registerUndoSnapshot(in: textView)
+            if body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                let markerLength = (storage.string as NSString).substring(with: paragraph).hasPrefix("\u{FFFC} ") ? 2 : 1
+                storage.deleteCharacters(in: NSRange(location: paragraph.location, length: markerLength))
+                commit(textView, preserving: NSRange(location: paragraph.location, length: 0))
+            } else {
+                let content = NSMutableAttributedString(string: "\n", attributes: attributes)
+                content.append(checklistMarker(checked: false, font: attributes[.font] as! NSFont))
+                content.append(NSAttributedString(string: " ", attributes: attributes))
+                storage.replaceCharacters(in: selection, with: content)
+                commit(textView, preserving: NSRange(location: selection.location + content.length, length: 0))
+            }
+            textView.typingAttributes = attributes
+            return true
+        }
         let beforeCursor = NSRange(
             location: paragraph.location,
             length: selection.location - paragraph.location
@@ -959,35 +1416,60 @@ final class RichTextEditorController: ObservableObject {
         guard let storage = textView.textStorage else { return }
         let fullRange = NSRange(location: 0, length: storage.length)
         enumerateParagraphs(in: fullRange, text: storage.string) { range in
-            let style = (storage.attribute(.paragraphStyle, at: range.location, effectiveRange: nil)
-                as? NSParagraphStyle)?.mutableCopy() as? NSMutableParagraphStyle ?? NSMutableParagraphStyle()
-            guard style.textBlocks.isEmpty,
-                  style.lineSpacing == 0 || style.paragraphSpacing == 0 else { return }
-            if style.lineSpacing == 0 { style.lineSpacing = 1 }
-            if style.paragraphSpacing == 0 { style.paragraphSpacing = 4 }
+            guard storage.attribute(.paragraphStyle, at: range.location, effectiveRange: nil) == nil else { return }
+            let style = NSMutableParagraphStyle()
+            style.lineSpacing = 1
+            style.paragraphSpacing = 4
             storage.addAttribute(.paragraphStyle, value: style, range: range)
         }
         let cursor = textView.selectedRange().location
-        let style = (cursor < storage.length
+        let existing = cursor < storage.length
             ? storage.attribute(.paragraphStyle, at: cursor, effectiveRange: nil) as? NSParagraphStyle
-            : textView.typingAttributes[.paragraphStyle] as? NSParagraphStyle)?
-            .mutableCopy() as? NSMutableParagraphStyle ?? NSMutableParagraphStyle()
-        if style.textBlocks.isEmpty {
-            if style.lineSpacing == 0 { style.lineSpacing = 1 }
-            if style.paragraphSpacing == 0 { style.paragraphSpacing = 4 }
+            : textView.typingAttributes[.paragraphStyle] as? NSParagraphStyle
+        let style = existing?.mutableCopy() as? NSMutableParagraphStyle ?? NSMutableParagraphStyle()
+        if existing == nil {
+            style.lineSpacing = 1
+            style.paragraphSpacing = 4
         }
         textView.typingAttributes[.paragraphStyle] = style
     }
 
     func toggleChecklistItemAtSelection() {
         guard let textView, let storage = textView.textStorage else { return }
-        let paragraph = (storage.string as NSString).paragraphRange(for: textView.selectedRange())
-        if paragraph.location < storage.length,
-           checklistState(at: paragraph.location, in: storage) != nil {
-            removeChecklistItem()
-        } else {
-            insertChecklistItem()
+        let target = paragraphRange(in: textView)
+        var paragraphs: [NSRange] = []
+        enumerateParagraphs(in: target, text: storage.string) { paragraphs.append($0) }
+        if paragraphs.isEmpty { paragraphs = [target] }
+        let removing = paragraphs.allSatisfy { checklistState(at: $0.location, in: storage) != nil }
+        var selection = textView.selectedRange()
+        registerUndoSnapshot(in: textView)
+        for paragraph in paragraphs.reversed() {
+            let hasMarker = checklistState(at: paragraph.location, in: storage) != nil
+            guard removing || !hasMarker else { continue }
+            let oldLength = hasMarker
+                ? ((storage.string as NSString).substring(with: paragraph).hasPrefix("\u{FFFC} ") ? 2 : 1) : 0
+            let content = NSMutableAttributedString()
+            if !removing {
+                let font = checklistFont(at: paragraph.location, in: textView)
+                content.append(checklistMarker(checked: false, font: font))
+                var attributes = paragraph.location < storage.length
+                    ? storage.attributes(at: paragraph.location, effectiveRange: nil) : textView.typingAttributes
+                attributes.removeValue(forKey: .attachment)
+                attributes.removeValue(forKey: .link)
+                content.addAttributes(attributes, range: NSRange(location: 0, length: content.length))
+                content.append(NSAttributedString(string: " ", attributes: attributes))
+            }
+            let delta = content.length - oldLength
+            if paragraph.location <= selection.location {
+                selection.location = max(paragraph.location, selection.location + delta)
+            } else if paragraph.location < NSMaxRange(selection) {
+                selection.length = max(0, selection.length + delta)
+            }
+            storage.replaceCharacters(in: NSRange(location: paragraph.location, length: oldLength), with: content)
         }
+        selection.location = min(selection.location, storage.length)
+        selection.length = min(selection.length, storage.length - selection.location)
+        commit(textView, preserving: selection)
     }
 
     func insertChecklistItem() {
@@ -1133,7 +1615,7 @@ final class RichTextEditorController: ObservableObject {
     }
 
     func insertTable(rows: Int = 2, columns: Int = 2) {
-        guard let textView else { return }
+        guard let textView, rows > 0, columns > 0, rows <= 100, columns <= 100 else { return }
         let table = NSTextTable()
         table.numberOfColumns = columns
         table.collapsesBorders = true
@@ -1185,26 +1667,8 @@ final class RichTextEditorController: ObservableObject {
 
     @discardableResult
     func deleteCurrentTable() -> Bool {
-        guard let textView, let storage = textView.textStorage, storage.length > 0 else { return false }
-        let cursor = min(textView.selectedRange().location, storage.length - 1)
-        let style = storage.attribute(.paragraphStyle, at: cursor, effectiveRange: nil) as? NSParagraphStyle
-        var table = style?.textBlocks.compactMap({ $0 as? NSTextTableBlock }).first?.table
-        var nearestDistance = Int.max
-        if table == nil {
-            storage.enumerateAttribute(.paragraphStyle, in: NSRange(location: 0, length: storage.length)) {
-                value, range, _ in
-                guard let candidate = (value as? NSParagraphStyle)?.textBlocks
-                    .compactMap({ $0 as? NSTextTableBlock }).first else { return }
-                let distance = cursor < range.location
-                    ? range.location - cursor
-                    : max(0, cursor - NSMaxRange(range))
-                if distance < nearestDistance {
-                    nearestDistance = distance
-                    table = candidate.table
-                }
-            }
-        }
-        guard let table else { return false }
+        guard let textView, let storage = textView.textStorage,
+              let table = selectedTableBlock?.table else { return false }
         var tableRange = NSRange(location: NSNotFound, length: 0)
         storage.enumerateAttribute(.paragraphStyle, in: NSRange(location: 0, length: storage.length)) {
             value, range, _ in
@@ -1216,6 +1680,103 @@ final class RichTextEditorController: ObservableObject {
         registerUndoSnapshot(in: textView)
         storage.deleteCharacters(in: tableRange)
         commit(textView, preserving: NSRange(location: min(tableRange.location, storage.length), length: 0))
+        return true
+    }
+
+    var isSelectionInTable: Bool { selectedTableBlock != nil }
+
+    private var selectedTableBlock: NSTextTableBlock? {
+        guard let textView, let storage = textView.textStorage else { return nil }
+        let selection = textView.selectedRange()
+        guard selection.location < storage.length,
+              let style = storage.attribute(.paragraphStyle, at: selection.location, effectiveRange: nil) as? NSParagraphStyle,
+              let block = style.textBlocks.last as? NSTextTableBlock else { return nil }
+        var sameTable = true
+        if selection.length > 0 {
+            storage.enumerateAttribute(.paragraphStyle, in: selection) { value, _, _ in
+                if ((value as? NSParagraphStyle)?.textBlocks.last as? NSTextTableBlock)?.table !== block.table {
+                    sameTable = false
+                }
+            }
+        }
+        return sameTable ? block : nil
+    }
+
+    @discardableResult func insertTableRow() -> Bool { editTable(row: true, inserting: true) }
+    @discardableResult func deleteTableRow() -> Bool { editTable(row: true, inserting: false) }
+    @discardableResult func insertTableColumn() -> Bool { editTable(row: false, inserting: true) }
+    @discardableResult func deleteTableColumn() -> Bool { editTable(row: false, inserting: false) }
+
+    private func editTable(row editingRow: Bool, inserting: Bool) -> Bool {
+        guard let textView, let storage = textView.textStorage, let selected = selectedTableBlock else { return false }
+        var cells: [(block: NSTextTableBlock, range: NSRange)] = []
+        var supported = true
+        storage.enumerateAttribute(.paragraphStyle, in: NSRange(location: 0, length: storage.length)) { value, range, _ in
+            guard let style = value as? NSParagraphStyle,
+                  let block = style.textBlocks.compactMap({ $0 as? NSTextTableBlock }).first(where: { $0.table === selected.table }) else { return }
+            // ponytail: only rectangular, unmerged native tables; add span-aware edits before supporting merged/nested tables.
+            if style.textBlocks.count != 1 || block.rowSpan != 1 || block.columnSpan != 1 { supported = false }
+            if let last = cells.last, last.block === block, NSMaxRange(last.range) == range.location {
+                cells[cells.count - 1].range = NSUnionRange(last.range, range)
+            } else { cells.append((block, range)) }
+        }
+        let rows = (cells.map { $0.block.startingRow }.max() ?? -1) + 1
+        let columns = selected.table.numberOfColumns
+        guard supported, rows > 0, columns > 0, rows <= 100, columns <= 100,
+              cells.count == rows * columns, let first = cells.first, let last = cells.last else { return false }
+        for (index, cell) in cells.enumerated() {
+            guard cell.block.startingRow == index / columns, cell.block.startingColumn == index % columns,
+                  index == 0 || NSMaxRange(cells[index - 1].range) == cell.range.location else { return false }
+        }
+        if !inserting && (editingRow ? rows : columns) == 1 { return deleteCurrentTable() }
+        let newRows = rows + (editingRow ? (inserting ? 1 : -1) : 0)
+        let newColumns = columns + (!editingRow ? (inserting ? 1 : -1) : 0)
+        guard newRows <= 100, newColumns <= 100 else { return false }
+        let pivot = (editingRow ? selected.startingRow : selected.startingColumn) + (inserting ? 1 : 0)
+        let table = selected.table.copy() as! NSTextTable
+        table.numberOfColumns = newColumns
+        let replacement = NSMutableAttributedString()
+        var caret = 0
+        for row in 0..<newRows {
+            for column in 0..<newColumns {
+                let coordinate = editingRow ? row : column
+                let added = inserting && coordinate == pivot
+                let sourceCoordinate = coordinate < pivot ? coordinate : coordinate + (inserting ? -1 : 1)
+                let oldRow = editingRow ? sourceCoordinate : row
+                let oldColumn = editingRow ? column : sourceCoordinate
+                let sourceCell = added ? nil : cells[oldRow * columns + oldColumn]
+                let original = sourceCell?.block ?? selected
+                let block = NSTextTableBlock(table: table, startingRow: row, rowSpan: 1,
+                    startingColumn: column, columnSpan: 1)
+                block.backgroundColor = original.backgroundColor
+                block.verticalAlignment = original.verticalAlignment
+                for dimension: NSTextBlock.Dimension in [.width, .minimumWidth, .maximumWidth, .height, .minimumHeight, .maximumHeight] {
+                    block.setValue(original.value(for: dimension), type: original.valueType(for: dimension), for: dimension)
+                }
+                for edge: NSRectEdge in [.minX, .minY, .maxX, .maxY] {
+                    block.setBorderColor(original.borderColor(for: edge), for: edge)
+                    for layer: NSTextBlock.Layer in [.border, .padding, .margin] {
+                        block.setWidth(original.width(for: layer, edge: edge), type: original.widthValueType(for: layer, edge: edge), for: layer, edge: edge)
+                    }
+                }
+                let content = sourceCell.map { NSMutableAttributedString(attributedString: storage.attributedSubstring(from: $0.range)) }
+                    ?? NSMutableAttributedString(string: " \n", attributes: [.font: EditorTextStyle.body.font])
+                content.enumerateAttribute(.paragraphStyle, in: NSRange(location: 0, length: content.length)) { value, range, _ in
+                    let style = (value as? NSParagraphStyle)?.mutableCopy() as? NSMutableParagraphStyle ?? NSMutableParagraphStyle()
+                    style.textBlocks = [block]
+                    content.addAttribute(.paragraphStyle, value: style, range: range)
+                }
+                if row == min(newRows - 1, editingRow ? pivot : selected.startingRow),
+                   column == min(newColumns - 1, editingRow ? selected.startingColumn : pivot) {
+                    caret = replacement.length
+                }
+                replacement.append(content)
+            }
+        }
+        let range = NSRange(location: first.range.location, length: NSMaxRange(last.range) - first.range.location)
+        registerUndoSnapshot(in: textView)
+        storage.replaceCharacters(in: range, with: replacement)
+        commit(textView, preserving: NSRange(location: range.location + caret, length: 0))
         return true
     }
 
@@ -1239,12 +1800,7 @@ final class RichTextEditorController: ObservableObject {
                     maximumWidth: maximumWidth
                 )
             }
-            let storedFilename = attachment.fileWrapper?.preferredFilename
-                ?? attachment.fileWrapper?.filename
-                ?? ""
-            let paragraph = attachmentParagraphStyle(
-                compact: AttachmentPresentation.originalAudioFilename(from: storedFilename) != nil
-            )
+            let paragraph = attachmentParagraphStyle()
             let item = NSMutableAttributedString(attachment: attachment)
             item.addAttribute(.paragraphStyle, value: paragraph, range: NSRange(location: 0, length: 1))
             content.append(item)
@@ -1253,13 +1809,15 @@ final class RichTextEditorController: ObservableObject {
         replaceSelection(with: content, in: textView)
     }
 
-    func prepareFileAttachments(in textView: NSTextView, force: Bool = true) {
+    func prepareFileAttachments(in textView: NSTextView, force: Bool = true, normalizeImportedContent: Bool = true) {
         guard let storage = textView.textStorage else { return }
-        separateFileAttachments(in: textView)
+        if normalizeImportedContent { separateFileAttachments(in: textView) }
+        // RTFD turns missing styles into zero spacing. Fill that gap, preserving nonzero manual spacing.
+        AttachmentPresentation.spaceMediaBlocks(in: storage, onlyMissingSpacing: true)
         let maximumWidth = attachmentWidth(in: textView)
         guard force || abs((preparedAttachmentWidth ?? 0) - maximumWidth) > 1 else { return }
         preparedAttachmentWidth = maximumWidth
-        var attachmentParagraphs: [(range: NSRange, compact: Bool)] = []
+        var attachmentParagraphs: [NSRange] = []
         var replacements: [(range: NSRange, attachment: NSTextAttachment)] = []
         storage.enumerateAttribute(.attachment, in: NSRange(location: 0, length: storage.length)) {
             value, range, _ in
@@ -1267,12 +1825,7 @@ final class RichTextEditorController: ObservableObject {
                   let wrapper = attachment.fileWrapper else { return }
             let filename = wrapper.preferredFilename ?? wrapper.filename ?? "附件"
             guard !filename.hasPrefix("quicknote-checklist-") else { return }
-            let compact = AttachmentPresentation.originalAudioFilename(from: filename) != nil
-                || UTType(filenameExtension: URL(fileURLWithPath: filename).pathExtension)?
-                    .conforms(to: .audio) == true
-            attachmentParagraphs.append(
-                ((storage.string as NSString).paragraphRange(for: range), compact)
-            )
+            attachmentParagraphs.append((storage.string as NSString).paragraphRange(for: range))
             let type = UTType(filenameExtension: URL(fileURLWithPath: filename).pathExtension)
             if type?.conforms(to: .image) == true,
                let data = wrapper.regularFileContents,
@@ -1296,15 +1849,15 @@ final class RichTextEditorController: ObservableObject {
         for replacement in replacements {
             storage.addAttribute(.attachment, value: replacement.attachment, range: replacement.range)
         }
-        for item in attachmentParagraphs {
-            let existing = storage.attribute(.paragraphStyle, at: item.range.location, effectiveRange: nil)
+        for item in attachmentParagraphs where normalizeImportedContent {
+            let existing = storage.attribute(.paragraphStyle, at: item.location, effectiveRange: nil)
                 as? NSParagraphStyle
             storage.addAttribute(
                 .paragraphStyle,
-                value: attachmentParagraphStyle(from: existing, compact: item.compact),
-                range: item.range
+                value: attachmentParagraphStyle(from: existing),
+                range: item
             )
-            normalizeSpacingAdjacentToAttachment(item.range, in: storage)
+            normalizeSpacingAdjacentToAttachment(item, in: storage)
         }
     }
 
@@ -1351,16 +1904,15 @@ final class RichTextEditorController: ObservableObject {
     }
 
     private func attachmentParagraphStyle(
-        from existing: NSParagraphStyle? = nil,
-        compact: Bool = false
+        from existing: NSParagraphStyle? = nil
     ) -> NSParagraphStyle {
         let style = existing?.mutableCopy() as? NSMutableParagraphStyle ?? NSMutableParagraphStyle()
         style.lineSpacing = 0
         style.lineHeightMultiple = 0
         style.minimumLineHeight = 0
         style.maximumLineHeight = 0
-        style.paragraphSpacingBefore = compact ? 3 : 4
-        style.paragraphSpacing = compact ? 5 : 6
+        style.paragraphSpacingBefore = 6
+        style.paragraphSpacing = 12
         return style
     }
 
@@ -1373,7 +1925,8 @@ final class RichTextEditorController: ObservableObject {
             let previousRange = string.paragraphRange(
                 for: NSRange(location: attachmentParagraph.location - 1, length: 0)
             )
-            if previousRange.location < attachmentParagraph.location {
+            if previousRange.location < attachmentParagraph.location,
+               storage.attribute(.attachment, at: previousRange.location, effectiveRange: nil) == nil {
                 let style = (storage.attribute(
                     .paragraphStyle,
                     at: previousRange.location,
@@ -1388,6 +1941,7 @@ final class RichTextEditorController: ObservableObject {
         let nextLocation = NSMaxRange(attachmentParagraph)
         guard nextLocation < storage.length else { return }
         let nextRange = string.paragraphRange(for: NSRange(location: nextLocation, length: 0))
+        guard storage.attribute(.attachment, at: nextRange.location, effectiveRange: nil) == nil else { return }
         let style = (storage.attribute(
             .paragraphStyle,
             at: nextRange.location,
@@ -1412,17 +1966,57 @@ final class RichTextEditorController: ObservableObject {
             showImagePreview(image, title: filename)
             return true
         }
+        let alert = NSAlert()
+        alert.messageText = "打开附件副本？"
+        alert.informativeText = "外部应用中的修改不会同步回便签。修改后请使用“替换附件…”重新导入。临时副本会定期清理，请另存重要修改。"
+        alert.addButton(withTitle: "打开副本")
+        alert.addButton(withTitle: "取消")
+        guard alert.runModal() == .alertFirstButtonReturn else { return false }
         do {
-            let directory = FileManager.default.temporaryDirectory
-                .appending(path: "QuickNote-Attachments")
-                .appending(path: UUID().uuidString)
-            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-            let url = directory.appending(path: filename)
-            try data.write(to: url, options: .atomic)
+            let url = try AttachmentTemporaryCopies.write(data, filename: filename)
             return NSWorkspace.shared.open(url)
         } catch {
+            NSAlert(error: error).runModal()
             return false
         }
+    }
+
+    private func fileAttachment(at location: Int) -> NSTextAttachment? {
+        guard let storage = textView?.textStorage, location >= 0, location < storage.length,
+              let attachment = storage.attribute(.attachment, at: location, effectiveRange: nil) as? NSTextAttachment,
+              attachment.fileWrapper?.regularFileContents != nil else { return nil }
+        let name = attachment.fileWrapper?.preferredFilename ?? attachment.fileWrapper?.filename ?? ""
+        return name.hasPrefix("quicknote-checklist-") ? nil : attachment
+    }
+
+    func saveAttachment(at location: Int, to url: URL) throws {
+        guard let data = fileAttachment(at: location)?.fileWrapper?.regularFileContents else { throw CocoaError(.fileReadNoSuchFile) }
+        try data.write(to: url, options: .atomic)
+    }
+
+    @discardableResult
+    func deleteAttachment(at location: Int) -> Bool {
+        guard let textView, fileAttachment(at: location) != nil else { return false }
+        registerUndoSnapshot(in: textView)
+        stopAudioAttachments(in: textView, range: NSRange(location: location, length: 1))
+        textView.textStorage?.deleteCharacters(in: NSRange(location: location, length: 1))
+        commit(textView, preserving: NSRange(location: location, length: 0))
+        return true
+    }
+
+    func replaceAttachment(at location: Int, with url: URL) throws {
+        guard let textView, let storage = textView.textStorage, fileAttachment(at: location) != nil else {
+            throw CocoaError(.fileReadNoSuchFile)
+        }
+        let wrapper = try FileWrapper(url: url, options: .immediate)
+        guard wrapper.isRegularFile else { throw CocoaError(.fileReadUnsupportedScheme) }
+        wrapper.preferredFilename = url.lastPathComponent
+        let attachment = NSTextAttachment(fileWrapper: wrapper)
+        registerUndoSnapshot(in: textView)
+        stopAudioAttachments(in: textView, range: NSRange(location: location, length: 1))
+        storage.addAttribute(.attachment, value: attachment, range: NSRange(location: location, length: 1))
+        prepareFileAttachments(in: textView, normalizeImportedContent: false)
+        commit(textView, preserving: NSRange(location: location, length: 1))
     }
 
     private func showImagePreview(_ image: NSImage, title: String) {
@@ -1543,7 +2137,7 @@ final class RichTextEditorController: ObservableObject {
                 .foregroundColor: NSColor.labelColor,
             ]
         )
-        ("\(kind) · 双击打开" as NSString).draw(
+        ("\(kind) · 双击打开副本" as NSString).draw(
             in: NSRect(x: 56, y: 11, width: size.width - 68, height: 16),
             withAttributes: [
                 .font: NSFont.systemFont(ofSize: 10),
@@ -1567,15 +2161,34 @@ final class RichTextEditorController: ObservableObject {
 
     private func toggleFontTrait(_ trait: NSFontTraitMask) {
         guard let textView, let storage = textView.textStorage else { return }
+        defer { refreshSelectionState() }
         let range = textView.selectedRange()
         let manager = NSFontManager.shared
-        let reference = font(at: range.location, in: textView)
-        let removing = manager.traits(of: reference).contains(trait)
+        let reference = range.length == 0
+            ? textView.typingAttributes[.font] as? NSFont ?? EditorTextStyle.body.font
+            : font(at: range.location, in: textView)
+        var removing = manager.traits(of: reference).contains(trait)
+        if range.length > 0 {
+            storage.enumerateAttribute(.font, in: range) { value, _, _ in
+                if !manager.traits(of: value as? NSFont ?? EditorTextStyle.body.font).contains(trait) { removing = false }
+            }
+        }
+        func converted(_ font: NSFont) -> NSFont {
+            guard trait == .boldFontMask else {
+                return removing ? manager.convert(font, toNotHaveTrait: trait) : manager.convert(font, toHaveTrait: trait)
+            }
+            let mono = font.fontDescriptor.symbolicTraits.contains(.monoSpace)
+            var result: NSFont = mono
+                ? .monospacedSystemFont(ofSize: font.pointSize, weight: removing ? .regular : .bold)
+                : .systemFont(ofSize: font.pointSize, weight: removing ? .light : .bold)
+            if font.fontDescriptor.symbolicTraits.contains(.italic) {
+                result = manager.convert(result, toHaveTrait: .italicFontMask)
+            }
+            return result
+        }
         if range.length == 0 {
             registerUndoSnapshot(in: textView)
-            textView.typingAttributes[.font] = removing
-                ? manager.convert(reference, toNotHaveTrait: trait)
-                : manager.convert(reference, toHaveTrait: trait)
+            textView.typingAttributes[.font] = converted(reference)
             return
         }
         var runs: [(NSFont, NSRange)] = []
@@ -1586,9 +2199,7 @@ final class RichTextEditorController: ObservableObject {
         for (font, run) in runs {
             storage.addAttribute(
                 .font,
-                value: removing
-                    ? manager.convert(font, toNotHaveTrait: trait)
-                    : manager.convert(font, toHaveTrait: trait),
+                value: converted(font),
                 range: run
             )
         }
@@ -1597,8 +2208,15 @@ final class RichTextEditorController: ObservableObject {
 
     private func toggleDecoration(_ key: NSAttributedString.Key) {
         guard let textView, let storage = textView.textStorage else { return }
+        defer { refreshSelectionState() }
         let range = textView.selectedRange()
-        let active = ((attribute(key, at: range.location, in: textView) as? NSNumber)?.intValue ?? 0) != 0
+        let reference = range.length == 0 ? textView.typingAttributes[key] : attribute(key, at: range.location, in: textView)
+        var active = ((reference as? NSNumber)?.intValue ?? 0) != 0
+        if range.length > 0 {
+            storage.enumerateAttribute(key, in: range) { value, _, _ in
+                if (value as? NSNumber)?.intValue ?? 0 == 0 { active = false }
+            }
+        }
         if range.length == 0 {
             registerUndoSnapshot(in: textView)
             textView.typingAttributes[key] = active ? 0 : NSUnderlineStyle.single.rawValue
@@ -1620,7 +2238,7 @@ final class RichTextEditorController: ObservableObject {
             ?? EditorTextStyle.body.font
     }
 
-    private func checklistMarker(checked: Bool, font: NSFont) -> NSAttributedString {
+    fileprivate func checklistMarker(checked: Bool, font: NSFont) -> NSAttributedString {
         let image = NSImage(size: NSSize(width: 11, height: 11))
         image.lockFocus()
         let circle = NSBezierPath(ovalIn: NSRect(x: 1, y: 1, width: 9, height: 9))
@@ -1729,6 +2347,7 @@ final class RichTextEditorController: ObservableObject {
         textView.setSelectedRange(selection)
         textView.didChangeText()
         textView.window?.makeFirstResponder(textView)
+        refreshSelectionState()
     }
 
     private func registerUndoSnapshot(in textView: NSTextView) {
@@ -1738,10 +2357,13 @@ final class RichTextEditorController: ObservableObject {
         textView.undoManager?.registerUndo(withTarget: self) { [weak textView] controller in
             guard let textView else { return }
             controller.registerUndoSnapshot(in: textView)
+            controller.isRestoringDocument = true
+            defer { controller.isRestoringDocument = false }
             controller.stopAudioAttachments(in: textView)
             textView.textStorage?.setAttributedString(document)
             controller.commit(textView, preserving: selection)
             textView.typingAttributes = typingAttributes
+            controller.refreshSelectionState()
         }
         textView.undoManager?.setActionName("编辑")
         refreshUndoAvailability()
@@ -1754,6 +2376,9 @@ struct RichTextEditor: NSViewRepresentable {
     let controller: RichTextEditorController
     let onChange: (NSAttributedString, Int) -> Void
     let onActivate: () -> Void
+    var noteID: UUID? = nil
+    var externalEditRevision: Int = 0
+    var onSelectionChange: (Int) -> Void = { _ in }
     var backgroundColor: NSColor = .textBackgroundColor
     var textColor: NSColor = .textColor
     var overridesDocumentTextColor = false
@@ -1773,46 +2398,59 @@ struct RichTextEditor: NSViewRepresentable {
         textView.isAutomaticLinkDetectionEnabled = true
         textView.font = EditorTextStyle.body.font
         textView.textContainerInset = NSSize(width: 12, height: 12)
-        textView.delegate = context.coordinator
-        controller.connect(textView)
         textView.textStorage?.setAttributedString(document)
         controller.prepareChecklistAttachments(in: textView)
-        controller.prepareFileAttachments(in: textView)
+        controller.prepareFileAttachments(in: textView, normalizeImportedContent: false)
         controller.detectLinks(in: textView)
         textView.setSelectedRange(NSRange(location: clampedCursorLocation, length: 0))
         controller.applyDefaultParagraphSpacing(in: textView)
         applyTheme(to: scroll, textView: textView)
         controller.prepareTitleForEmptyDocument(in: textView)
+        controller.connect(textView)
+        textView.delegate = context.coordinator
         context.coordinator.recordAttachmentCount(in: textView)
         DispatchQueue.main.async { [weak textView] in
             guard let textView else { return }
-            controller.prepareFileAttachments(in: textView, force: false)
+            controller.prepareFileAttachments(in: textView, force: false, normalizeImportedContent: false)
         }
         scroll.hasVerticalScroller = true
         return scroll
     }
 
     func updateNSView(_ scroll: NSScrollView, context: Context) {
+        let noteChanged = context.coordinator.owner.noteID != noteID
+        let externalEditChanged = context.coordinator.owner.externalEditRevision != externalEditRevision
+        let documentChanged = !context.coordinator.owner.document.isEqual(to: document)
         context.coordinator.owner = self
         guard let textView = scroll.documentView as? NSTextView else { return }
+        // Restoring model state is not user input: transient selection changes must not write back.
+        textView.delegate = nil
+        defer { textView.delegate = context.coordinator }
         applyTheme(to: scroll, textView: textView)
-        controller.connect(textView)
-        if !textView.attributedString().isEqual(to: document) {
+        if noteChanged {
+            controller.clearUndoHistory()
+            textView.typingAttributes = [.font: EditorTextStyle.body.font]
+        } else if externalEditChanged {
+            controller.prepareForExternalDocumentReplacement(in: textView)
+        }
+        // Link/attachment presentation can differ from the model without the document changing.
+        if noteChanged || ((documentChanged || externalEditChanged) && !textView.attributedString().isEqual(to: document)) {
             controller.stopAudioAttachments(in: textView)
             textView.textStorage?.setAttributedString(document)
             controller.prepareChecklistAttachments(in: textView)
-            controller.prepareFileAttachments(in: textView)
+            controller.prepareFileAttachments(in: textView, normalizeImportedContent: false)
             controller.detectLinks(in: textView)
             controller.applyDefaultParagraphSpacing(in: textView)
             controller.prepareTitleForEmptyDocument(in: textView)
             context.coordinator.recordAttachmentCount(in: textView)
         } else {
-            controller.prepareFileAttachments(in: textView, force: false)
+            controller.prepareFileAttachments(in: textView, force: false, normalizeImportedContent: false)
             controller.prepareTitleForEmptyDocument(in: textView)
         }
         if textView.selectedRange().location != clampedCursorLocation {
             textView.setSelectedRange(NSRange(location: clampedCursorLocation, length: 0))
         }
+        controller.connect(textView)
     }
 
     private func applyTheme(to scroll: NSScrollView, textView: NSTextView) {
@@ -1850,11 +2488,13 @@ struct RichTextEditor: NSViewRepresentable {
             if newCount != attachmentCount {
                 let insertedAttachment = newCount > attachmentCount
                 attachmentCount = newCount
-                owner.controller.prepareFileAttachments(in: textView)
-                if insertedAttachment { moveCaretOutsideAttachment(in: textView) }
+                let restoring = owner.controller.isRestoringDocument
+                owner.controller.prepareFileAttachments(in: textView, normalizeImportedContent: !restoring)
+                if insertedAttachment && !restoring { moveCaretOutsideAttachment(in: textView) }
             }
             owner.controller.prepareTitleForEmptyDocument(in: textView)
             owner.controller.refreshUndoAvailability()
+            owner.controller.refreshSelectionState()
             owner.onChange(textView.attributedString(), textView.selectedRange().location)
         }
 
@@ -1904,6 +2544,17 @@ struct RichTextEditor: NSViewRepresentable {
                 || owner.controller.insertBodyParagraphAfterTitle()
         }
 
+        func textViewDidChangeSelection(_ notification: Notification) {
+            owner.controller.refreshSelectionState()
+            if let textView = notification.object as? NSTextView {
+                owner.onSelectionChange(textView.selectedRange().location)
+            }
+        }
+
+        func textViewDidChangeTypingAttributes(_ notification: Notification) {
+            owner.controller.refreshSelectionState()
+        }
+
         func toggleChecklist(at location: Int) -> Bool {
             owner.controller.toggleChecklistItem(at: location)
         }
@@ -1915,6 +2566,10 @@ struct RichTextEditor: NSViewRepresentable {
         func applyParagraphSpacing(before: CGFloat, after: CGFloat) {
             owner.controller.applyParagraphSpacing(before: before, after: after)
         }
+
+        func deleteAttachment(at location: Int) -> Bool { owner.controller.deleteAttachment(at: location) }
+        func saveAttachment(at location: Int, to url: URL) throws { try owner.controller.saveAttachment(at: location, to: url) }
+        func replaceAttachment(at location: Int, with url: URL) throws { try owner.controller.replaceAttachment(at: location, with: url) }
 
     }
 }

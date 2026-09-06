@@ -1,0 +1,300 @@
+{
+  "version": 1,
+  "format": "RGBA PNG",
+  "frameSize": [
+    256,
+    256
+  ],
+  "displayedCanvasPoints": 100,
+  "displayScaleRange": [0.5, 1.5],
+  "anchor": {
+    "right": [
+      128,
+      220
+    ],
+    "left": [
+      127,
+      220
+    ]
+  },
+  "idle": {
+    "intervalSeconds": [
+      0.8,
+      1.4
+    ],
+    "choices": [
+      "idle_look",
+      "idle_blink",
+      "idle_stretch"
+    ],
+    "selection": "round-robin",
+    "suppressWhileTyping": false,
+    "suppressWhileBusy": true,
+    "stopWhenHidden": true
+  },
+  "directions": {
+    "rule": "Face the note or pointer; choose before a clip and keep that direction until it ends.",
+    "changeAt": "idle-neutral",
+    "hysteresisPoints": 24
+  },
+  "clips": [
+    {
+      "id": "greeting",
+      "label": "登场招手",
+      "frameCount": 9,
+      "sourceFrames": [
+        0,
+        1,
+        3,
+        4,
+        3,
+        4,
+        5,
+        6,
+        0
+      ],
+      "frameDurationsMs": [
+        500,
+        100,
+        100,
+        140,
+        100,
+        140,
+        100,
+        100,
+        800
+      ],
+      "playback": "once-then-idle",
+      "directions": {
+        "left": "frames/left/greeting",
+        "right": "frames/right/greeting"
+      }
+    },
+    {
+      "id": "receive",
+      "label": "接收素材",
+      "frameCount": 9,
+      "sourceFrames": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        0
+      ],
+      "frameDurationsMs": [
+        500,
+        120,
+        120,
+        120,
+        200,
+        180,
+        120,
+        120,
+        900
+      ],
+      "playback": "once-then-idle",
+      "directions": {
+        "left": "frames/left/receive",
+        "right": "frames/right/receive"
+      }
+    },
+    {
+      "id": "working",
+      "label": "AI 思考",
+      "frameCount": 9,
+      "sourceFrames": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        0
+      ],
+      "frameDurationsMs": [
+        450,
+        180,
+        180,
+        200,
+        140,
+        160,
+        180,
+        180,
+        450
+      ],
+      "playback": "loop-while-task-running",
+      "directions": {
+        "left": "frames/left/working",
+        "right": "frames/right/working"
+      }
+    },
+    {
+      "id": "complete",
+      "label": "任务完成",
+      "frameCount": 9,
+      "sourceFrames": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        0
+      ],
+      "frameDurationsMs": [
+        500,
+        120,
+        120,
+        140,
+        650,
+        180,
+        120,
+        120,
+        900
+      ],
+      "playback": "once-then-idle",
+      "directions": {
+        "left": "frames/left/complete",
+        "right": "frames/right/complete"
+      }
+    },
+    {
+      "id": "attention",
+      "label": "需要处理",
+      "frameCount": 9,
+      "sourceFrames": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        0
+      ],
+      "frameDurationsMs": [
+        500,
+        130,
+        150,
+        180,
+        300,
+        250,
+        140,
+        130,
+        900
+      ],
+      "playback": "once-then-idle",
+      "directions": {
+        "left": "frames/left/attention",
+        "right": "frames/right/attention"
+      }
+    },
+    {
+      "id": "idle_blink",
+      "label": "待机眨眼",
+      "frameCount": 9,
+      "sourceFrames": [
+        0,
+        0,
+        0,
+        3,
+        4,
+        3,
+        0,
+        0,
+        0
+      ],
+      "frameDurationsMs": [
+        1400,
+        100,
+        100,
+        70,
+        130,
+        70,
+        100,
+        100,
+        1300
+      ],
+      "playback": "once-then-idle",
+      "directions": {
+        "left": "frames/left/idle_blink",
+        "right": "frames/right/idle_blink"
+      }
+    },
+    {
+      "id": "idle_look",
+      "label": "待机张望",
+      "frameCount": 9,
+      "sourceFrames": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        3,
+        2,
+        1,
+        0
+      ],
+      "frameDurationsMs": [
+        1000,
+        120,
+        120,
+        170,
+        500,
+        170,
+        120,
+        120,
+        1200
+      ],
+      "playback": "once-then-idle",
+      "directions": {
+        "left": "frames/left/idle_look",
+        "right": "frames/right/idle_look"
+      }
+    },
+    {
+      "id": "idle_stretch",
+      "label": "待机伸展",
+      "frameCount": 9,
+      "sourceFrames": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        3,
+        2,
+        1,
+        0
+      ],
+      "frameDurationsMs": [
+        1000,
+        130,
+        130,
+        180,
+        550,
+        180,
+        130,
+        130,
+        1200
+      ],
+      "playback": "once-then-idle",
+      "directions": {
+        "left": "frames/left/idle_stretch",
+        "right": "frames/right/idle_stretch"
+      }
+    }
+  ],
+  "generation": "built-in image_gen",
+  "caveat": "AI-generated keyframes, locally matted and aligned. App uses transparent PNGs; the controller caps idle first/last holds at 200ms. GIFs are preview-only."
+}

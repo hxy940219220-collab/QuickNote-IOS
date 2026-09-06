@@ -65,12 +65,18 @@ enum QuickNoteShortcut: Equatable {
     case toggleSidebar
     case newNote
     case insertLink
+    case previousNote
+    case nextNote
 
     static func resolve(
         characters: String?,
         modifiers: NSEvent.ModifierFlags
     ) -> QuickNoteShortcut? {
         let modifiers = modifiers.intersection(.deviceIndependentFlagsMask)
+        if modifiers == [.command, .option] {
+            if characters == String(UnicodeScalar(NSLeftArrowFunctionKey)!) { return .previousNote }
+            if characters == String(UnicodeScalar(NSRightArrowFunctionKey)!) { return .nextNote }
+        }
         guard modifiers.contains(.command),
               !modifiers.contains(.control),
               !modifiers.contains(.option) else { return nil }
@@ -92,10 +98,12 @@ private final class QuickNoteShortcutMonitor: ObservableObject {
     private var monitor: Any?
     private var action: ((QuickNoteShortcut) -> Void)?
 
-    func start(action: @escaping (QuickNoteShortcut) -> Void) {
+    func start(window: @escaping () -> NSWindow?, action: @escaping (QuickNoteShortcut) -> Void) {
         self.action = action
         guard monitor == nil else { return }
         monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard let owner = window(), event.window === owner, owner.isKeyWindow,
+                  owner.attachedSheet == nil, NSApp.modalWindow == nil else { return event }
             guard let shortcut = QuickNoteShortcut.resolve(
                 characters: event.charactersIgnoringModifiers,
                 modifiers: event.modifierFlags
@@ -112,9 +120,88 @@ private final class QuickNoteShortcutMonitor: ObservableObject {
     }
 }
 
+/// Keep traversal stable while autosave changes recency; opening the library resets to its visible order.
+struct NoteNavigationOrder {
+    private(set) var ids: [UUID] = []
+
+    mutating func refresh(notes: [NoteRecord], folders: [NoteFolder], reset: Bool) {
+        let folderIDs = Set(folders.map(\.id))
+        let ordered = folders.flatMap { folder in notes.filter { $0.folderID == folder.id } }
+            + notes.filter { $0.folderID == nil || !folderIDs.contains($0.folderID!) }
+        let fresh = ordered.filter { $0.deletedAt == nil }.map(\.id)
+        let live = Set(fresh), old = Set(ids)
+        ids = reset ? fresh : ids.filter { live.contains($0) } + fresh.filter { !old.contains($0) }
+    }
+
+    func neighbor(of current: UUID?, offset: Int) -> UUID? {
+        guard offset == -1 || offset == 1, let current, let index = ids.firstIndex(of: current),
+              ids.indices.contains(index + offset) else { return nil }
+        return ids[index + offset]
+    }
+}
+
+struct NoteNavigationControls: View {
+    let previousTitle: String?
+    let nextTitle: String?
+    let navigate: (Int) -> Void
+    @State private var hovering = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        HStack(spacing: 0) {
+            navigationButton(offset: -1, title: previousTitle)
+            navigationButton(offset: 1, title: nextTitle)
+        }
+        .foregroundStyle(hovering ? .primary : .secondary)
+        .onHover { value in
+            withAnimation(reduceMotion ? nil : .easeOut(duration: 0.16)) { hovering = value }
+        }
+    }
+
+    private func navigationButton(offset: Int, title: String?) -> some View {
+        let previous = offset < 0
+        let label = previous ? "上一条便签" : "下一条便签"
+        let keys = previous ? "⌘⌥←" : "⌘⌥→"
+        return Button { navigate(offset) } label: {
+            Image(systemName: previous ? "chevron.left" : "chevron.right")
+                .font(.system(size: 10, weight: .regular))
+                .frame(width: 24, height: 26).contentShape(Rectangle())
+        }
+        .buttonStyle(.plain).quickNoteHoverHighlight()
+        .disabled(title == nil)
+        .help(title.map { "\(label)：\($0)（\(keys)）" } ?? (previous ? "已是第一条便签" : "已是最后一条便签"))
+        .accessibilityLabel(label).accessibilityValue(title ?? "没有更多便签")
+    }
+}
+
+enum AIFormattingComparison {
+    static func changedParagraphCount(before: NSAttributedString, after: NSAttributedString) -> Int {
+        guard before.string == after.string else { return 0 }
+        let text = before.string as NSString
+        var location = 0
+        var count = 0
+        while location < text.length {
+            let range = text.paragraphRange(for: NSRange(location: location, length: 0))
+            if !before.attributedSubstring(from: range).isEqual(to: after.attributedSubstring(from: range)) { count += 1 }
+            location = NSMaxRange(range)
+        }
+        return count
+    }
+}
+
+private struct AIFormattingPreview {
+    let noteID: UUID
+    let revision: Int
+    let title: String
+    let baseline: NSAttributedString
+    let original: NSAttributedString
+    let formatted: NSAttributedString
+}
+
 struct RootNoteView: View {
     @ObservedObject var session: NoteSession
     let allNotes: () throws -> [NoteRecord]
+    let searchNotes: (String) throws -> [NoteRecord]
     let allFolders: () throws -> [NoteFolder]
     let createFolderAction: (String) throws -> Void
     let renameFolderAction: (NoteFolder, String) throws -> Void
@@ -124,6 +211,8 @@ struct RootNoteView: View {
     let drawerVisibilityChanged: (Bool) -> Void
     let setWindowLocked: (Bool) -> Void
     let showAISettings: () -> Void
+    var desktopPet: DesktopPetController? = nil
+    @AppStorage(DesktopPetController.enabledKey) private var petEnabled = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @StateObject private var editorController = RichTextEditorController()
     @StateObject private var shortcutMonitor = QuickNoteShortcutMonitor()
@@ -138,12 +227,17 @@ struct RootNoteView: View {
     @State private var aiFormattingTask: Task<Void, Never>?
     @State private var aiFormattingID: UUID?
     @State private var aiFormattingNoteTitle: String?
+    @State private var formattingPreview: AIFormattingPreview?
+    @State private var previewPresented = false
+    @State private var tagsPresented = false
     @State private var selectedDate = Date()
     @State private var notes: [NoteRecord] = []
     @State private var folders: [NoteFolder] = []
+    @State private var navigationOrder = NoteNavigationOrder()
     @AppStorage("appearance.noteTheme") private var selectedTheme = NoteTheme.system.rawValue
 
     var body: some View {
+        let noteID = session.currentNote?.id
         VStack(spacing: 0) {
             ZStack {
                 HStack(spacing: 8) {
@@ -162,7 +256,7 @@ struct RootNoteView: View {
                             calendarPresented.toggle()
                         } label: {
                             Text(CalendarText.toolbarDate(for: context.date))
-                                .font(.system(size: 12, weight: .medium))
+                                .font(.system(size: 12, weight: .regular))
                         }
                         .buttonStyle(.borderless)
                         .quickNoteHoverHighlight()
@@ -173,6 +267,11 @@ struct RootNoteView: View {
                         }
                     }
 
+                    if notes.count > 1 {
+                        NoteNavigationControls(previousTitle: neighboringNote(-1)?.title,
+                                               nextTitle: neighboringNote(1)?.title, navigate: navigateNote)
+                    }
+
                     Spacer(minLength: 8)
 
                     toolbarButton("新建便签（Command + N）", systemImage: "square.and.pencil") {
@@ -181,8 +280,8 @@ struct RootNoteView: View {
                     }
 
                     toolbarButton(
-                        windowLocked ? "取消锁定" : "锁定在最前",
-                        systemImage: windowLocked ? "lock.fill" : "lock.open",
+                        windowLocked ? "取消窗口置顶（不是加密）" : "窗口置顶（不是加密）",
+                        systemImage: windowLocked ? "pin.fill" : "pin",
                         action: {
                             commandPresented = false
                             toggleWindowLock()
@@ -253,6 +352,19 @@ struct RootNoteView: View {
                 .background(Color.accentColor.opacity(0.07))
             }
 
+            if let preview = formattingPreview {
+                HStack(spacing: 8) {
+                    Text("排版待确认：\(preview.title)").lineLimit(1)
+                    Spacer()
+                    Button("查看预览") { previewPresented = true }
+                    Button("放弃") { formattingPreview = nil }
+                }
+                .font(.system(size: 11))
+                .padding(.horizontal, 12)
+                .frame(height: 30)
+                .background(Color.accentColor.opacity(0.06))
+            }
+
             if let error = session.saveError {
                 HStack {
                     Image(systemName: "exclamationmark.triangle.fill")
@@ -264,6 +376,22 @@ struct RootNoteView: View {
                 .padding(8)
                 .foregroundStyle(.white)
                 .background(Color.red)
+            }
+
+            if let error = session.readError {
+                HStack(alignment: .top, spacing: 8) {
+                    Image(systemName: "exclamationmark.triangle")
+                    Text("\(error.localizedDescription)\n未覆盖原记录，可在列表中选择其他便签。")
+                        .font(.system(size: 11))
+                        .lineLimit(3)
+                    Spacer()
+                    Button("存储位置") {
+                        NSWorkspace.shared.open(error.url.deletingLastPathComponent())
+                    }
+                    Button("关闭", action: session.dismissReadError)
+                }
+                .padding(8)
+                .background(Color.orange.opacity(0.12))
             }
 
             Divider()
@@ -282,7 +410,12 @@ struct RootNoteView: View {
                         move: move,
                         togglePin: togglePin,
                         delete: delete,
-                        theme: theme
+                        theme: theme,
+                        search: searchNotes,
+                        selectMatch: openSearchMatch,
+                        editTags: { note in
+                            if session.openRecovering(note) { tagsPresented = true }
+                        }
                     )
                     .frame(width: 210)
                     .transition(.move(edge: .leading).combined(with: .opacity))
@@ -295,8 +428,18 @@ struct RootNoteView: View {
                         document: session.document,
                         cursorLocation: session.currentNote?.cursorLocation ?? 0,
                         controller: editorController,
-                        onChange: session.update,
+                        onChange: { document, cursor in
+                            guard session.currentNote?.id == noteID else { return }
+                            session.update(document: document, cursorLocation: cursor)
+                        },
                         onActivate: activateEditor,
+                        noteID: noteID,
+                        externalEditRevision: session.externalEditRevision,
+                        onSelectionChange: { cursor in
+                            guard let note = session.currentNote, note.id == noteID,
+                                  note.cursorLocation != cursor else { return }
+                            note.cursorLocation = cursor
+                        },
                         backgroundColor: theme.editorBackground,
                         textColor: theme.textColor,
                         overridesDocumentTextColor: theme.overridesDocumentTextColor
@@ -304,7 +447,7 @@ struct RootNoteView: View {
 
                     if session.document.string.isEmpty {
                         Text("开始记录…")
-                            .font(.system(size: 15))
+                            .font(.system(size: 15, weight: .light))
                             .foregroundStyle(Color(nsColor: theme.textColor).opacity(0.35))
                             .padding(.leading, 17)
                             .padding(.top, 13)
@@ -326,6 +469,7 @@ struct RootNoteView: View {
 
                     QuickNoteSettingsView(
                         selectedTheme: $selectedTheme,
+                        petEnabled: $petEnabled,
                         open: showSettings,
                         openAISettings: {
                             settingsPresented = false
@@ -346,13 +490,38 @@ struct RootNoteView: View {
         .sheet(item: $settingsDestination) { destination in
             QuickNoteSettingsDetailView(
                 destination: destination,
-                locations: noteStorageLocations
+                locations: noteStorageLocations,
+                session: session,
+                allNotes: allNotes,
+                didChangeLibrary: reloadLibraryRecovering
             )
         }
-        .onAppear { shortcutMonitor.start(action: performShortcut) }
+        .sheet(isPresented: $previewPresented) {
+            if let preview = formattingPreview {
+                AIFormattingPreviewView(preview: preview, apply: applyFormattingPreview) {
+                    previewPresented = false
+                }
+            }
+        }
+        .sheet(isPresented: $tagsPresented) {
+            VStack(alignment: .trailing, spacing: 0) {
+                Button("完成") { tagsPresented = false }.padding([.top, .trailing], 12)
+                NoteTagsPopover(session: session)
+            }
+        }
+        .onChange(of: session.currentNote?.id) { _, _ in
+            do { try reloadLibrary(resetNavigation: false) }
+            catch { NSAlert(error: error).runModal() }
+        }
+        .onChange(of: petEnabled) { _, enabled in desktopPet?.setEnabled(enabled) }
+        .onAppear {
+            reloadLibraryRecovering()
+            shortcutMonitor.start(window: { editorController.window }, action: performShortcut)
+        }
         .onDisappear {
             shortcutMonitor.stop()
             aiFormattingTask?.cancel()
+            if let id = aiFormattingID { desktopPet?.finish(id, message: "已停止排版", clip: "attention") }
         }
     }
 
@@ -366,18 +535,36 @@ struct RootNoteView: View {
     }
 
     private func open(_ note: NoteRecord) {
-        let previousNoteID = session.currentNote?.id
-        if session.openRecovering(note) {
-            if session.currentNote?.id != previousNoteID {
-                editorController.clearUndoHistory()
-            }
+        navigationOrder.refresh(notes: notes, folders: folders, reset: true)
+        session.openRecovering(note)
+    }
+
+    private func neighboringNote(_ offset: Int) -> NoteRecord? {
+        guard let id = navigationOrder.neighbor(of: session.currentNote?.id, offset: offset) else { return nil }
+        return notes.first { $0.id == id }
+    }
+
+    private func navigateNote(_ offset: Int) {
+        do {
+            try reloadLibrary(resetNavigation: false)
+            guard let note = neighboringNote(offset) else { return }
+            commandPresented = false
+            calendarPresented = false
+            settingsPresented = false
+            _ = session.openRecovering(note) // Existing save/read recovery must succeed before switching.
+        } catch { NSAlert(error: error).runModal() }
+    }
+
+    private func openSearchMatch(_ note: NoteRecord, query: String) {
+        guard session.openRecovering(note) else { return }
+        DispatchQueue.main.async {
+            guard session.currentNote?.id == note.id else { return }
+            _ = editorController.findText(query)
         }
     }
 
     private func create() {
-        if session.createAndOpenRecovering() {
-            editorController.clearUndoHistory()
-        }
+        session.createAndOpenRecovering()
     }
 
     private func togglePin(_ note: NoteRecord) {
@@ -387,11 +574,7 @@ struct RootNoteView: View {
     }
 
     private func delete(_ note: NoteRecord) {
-        let deletingCurrentNote = session.currentNote?.id == note.id
         if session.deleteRecovering(note) {
-            if deletingCurrentNote {
-                editorController.clearUndoHistory()
-            }
             reloadLibraryRecovering()
         }
     }
@@ -432,11 +615,12 @@ struct RootNoteView: View {
         }
     }
 
-    private func reloadLibrary() throws {
+    private func reloadLibrary(resetNavigation: Bool = true) throws {
         let refreshedNotes = try allNotes()
         let refreshedFolders = try allFolders()
         notes = refreshedNotes
         folders = refreshedFolders
+        navigationOrder.refresh(notes: refreshedNotes, folders: refreshedFolders, reset: resetNavigation)
     }
 
     private func toggleWindowLock() {
@@ -479,6 +663,7 @@ struct RootNoteView: View {
 
     private func toggleAIFormatting() {
         if isAIFormatting {
+            if let id = aiFormattingID { desktopPet?.finish(id, message: "已停止排版", clip: "attention") }
             aiFormattingTask?.cancel()
             aiFormattingTask = nil
             aiFormattingID = nil
@@ -486,9 +671,18 @@ struct RootNoteView: View {
             isAIFormatting = false
             return
         }
+        if formattingPreview != nil {
+            previewPresented = true
+            return
+        }
         do {
             guard let note = session.currentNote else { throw AIFormattingError.noContent }
+            guard AIConfigurationStore.shared.confirmSending(.text, content: "发送“\(note.title)”的文字用于排版，不发送附件原文件。") else { return }
+            let noteID = note.id
+            let revision = session.contentRevision(for: noteID)
             let source = try editorController.aiFormattingSource()
+            let baseline = NSAttributedString(attributedString: session.document)
+            guard baseline.string == source.document.string else { throw AIFormattingError.documentChanged }
             let requestID = UUID()
             isAIFormatting = true
             aiFormattingID = requestID
@@ -496,6 +690,7 @@ struct RootNoteView: View {
                 .components(separatedBy: .newlines)
                 .map { $0.trimmingCharacters(in: .whitespaces) }
                 .first(where: { !$0.isEmpty }) ?? note.title
+            desktopPet?.begin(id: requestID, message: "正在排版…", detail: aiFormattingNoteTitle ?? note.title)
             aiFormattingTask = Task {
                 defer {
                     if aiFormattingID == requestID {
@@ -514,21 +709,41 @@ struct RootNoteView: View {
                     try Task.checkCancellation()
                     let plan = try AIFormattingPlan.parse(result.text)
                     try Task.checkCancellation()
-                    if session.currentNote?.id == note.id {
-                        try editorController.applyAIFormatting(plan, expectedText: source.documentText)
-                    } else {
-                        let document = try editorController.formattedDocument(plan, source: source)
-                        try session.saveAIFormattedDocument(document, replacing: source.document, for: note)
-                        try reloadLibrary()
+                    guard session.contentRevision(for: noteID) == revision else {
+                        throw AIFormattingError.documentChanged
                     }
+                    let document = try editorController.formattedDocument(plan, source: source)
+                    formattingPreview = AIFormattingPreview(noteID: noteID, revision: revision,
+                        title: aiFormattingNoteTitle ?? note.title, baseline: baseline,
+                        original: source.document, formatted: document)
+                    desktopPet?.finish(requestID, message: "排版好了，等你确认")
                 } catch {
-                    guard !Task.isCancelled else { return }
+                    guard !Task.isCancelled else {
+                        desktopPet?.finish(requestID, message: "已停止排版", clip: "attention")
+                        return
+                    }
+                    desktopPet?.finish(requestID, message: "排版遇到问题", clip: "attention")
                     NSAlert(error: error).runModal()
                 }
             }
         } catch {
             NSAlert(error: error).runModal()
         }
+    }
+
+    private func applyFormattingPreview() throws {
+        guard let preview = formattingPreview else { return }
+        do {
+            try session.applyAIFormattedDocument(preview.formatted, original: preview.baseline,
+                expectedRevision: preview.revision, noteID: preview.noteID)
+        } catch let error as NoteContentAppliedError {
+            formattingPreview = nil
+            previewPresented = false
+            throw error
+        }
+        formattingPreview = nil
+        previewPresented = false
+        try reloadLibrary()
     }
 
     private func performShortcut(_ shortcut: QuickNoteShortcut) {
@@ -543,6 +758,10 @@ struct RootNoteView: View {
             create()
         case .insertLink:
             promptForLink()
+        case .previousNote:
+            navigateNote(-1)
+        case .nextNote:
+            navigateNote(1)
         }
     }
 
@@ -590,6 +809,69 @@ struct RootNoteView: View {
         .quickNoteHoverHighlight()
         .quickNoteTooltip(label, alignment: tooltipAlignment)
         .accessibilityLabel(label)
+    }
+}
+
+private struct AIFormattingPreviewView: View {
+    let preview: AIFormattingPreview
+    let apply: () throws -> Void
+    let close: () -> Void
+    @State private var showingOriginal = false
+    @State private var error: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("AI 排版预览").font(.system(size: 18, weight: .medium))
+            Text(preview.title).font(.system(size: 13)).lineLimit(1)
+            let count = AIFormattingComparison.changedParagraphCount(before: preview.original, after: preview.formatted)
+            Text(count == 0 ? "未发现排版变化，原便签未改动。" : "调整了 \(count) 个段落的样式。文字和附件保持不变；应用后可在版本记录中恢复。")
+                .font(.system(size: 11)).foregroundStyle(.secondary)
+            Picker("对比", selection: $showingOriginal) {
+                Text("排版后").tag(false)
+                Text("排版前").tag(true)
+            }
+            .pickerStyle(.segmented)
+            ReadOnlyNotePreview(document: showingOriginal ? preview.original : preview.formatted)
+                .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.secondary.opacity(0.2)))
+            if let error { Text(error).font(.caption).foregroundStyle(.red).lineLimit(3) }
+            HStack {
+                Button("稍后处理", action: close)
+                Spacer()
+                Button("应用排版") {
+                    do { try apply() } catch { self.error = error.localizedDescription }
+                }
+                .keyboardShortcut(.defaultAction)
+                .disabled(count == 0)
+            }
+        }
+        .padding(18)
+        .frame(width: min(620, (NSScreen.main?.visibleFrame.width ?? 900) - 80), height: 500)
+    }
+}
+
+struct ReadOnlyNotePreview: NSViewRepresentable {
+    let document: NSAttributedString
+
+    func makeNSView(context: Context) -> NSScrollView {
+        let scroll = NSScrollView()
+        scroll.hasVerticalScroller = true
+        let text = NSTextView()
+        text.isEditable = false
+        text.isSelectable = true
+        text.isRichText = true
+        text.isVerticallyResizable = true
+        text.autoresizingMask = [.width]
+        text.textContainer?.widthTracksTextView = true
+        text.textContainerInset = NSSize(width: 14, height: 14)
+        scroll.documentView = text
+        return scroll
+    }
+
+    func updateNSView(_ scroll: NSScrollView, context: Context) {
+        guard let text = scroll.documentView as? NSTextView else { return }
+        if !text.attributedString().isEqual(to: document) {
+            text.textStorage?.setAttributedString(document)
+        }
     }
 }
 
@@ -647,7 +929,7 @@ private struct NoteThemePicker: View {
 }
 
 private struct NoteFormatPopover: View {
-    let controller: RichTextEditorController
+    @ObservedObject var controller: RichTextEditorController
     let toggleChecklist: () -> Void
     let chooseFiles: () -> Void
     @State private var colorsPresented = false
@@ -657,13 +939,13 @@ private struct NoteFormatPopover: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 5) {
-                formatButton("B", help: "粗体", action: controller.toggleBold)
+                formatButton("B", help: "粗体", state: controller.selectionState.bold, action: controller.toggleBold)
                     .fontWeight(.bold)
-                formatButton("I", help: "斜体", action: controller.toggleItalic)
+                formatButton("I", help: "斜体", state: controller.selectionState.italic, action: controller.toggleItalic)
                     .italic()
-                formatButton("U", help: "下划线", action: controller.toggleUnderline)
+                formatButton("U", help: "下划线", state: controller.selectionState.underline, action: controller.toggleUnderline)
                     .underline()
-                formatButton("S", help: "删除线", action: controller.toggleStrikethrough)
+                formatButton("S", help: "删除线", state: controller.selectionState.strike, action: controller.toggleStrikethrough)
                     .strikethrough()
                 Divider().frame(height: 22)
                 Button {
@@ -709,13 +991,23 @@ private struct NoteFormatPopover: View {
                 Button {
                     controller.applyTextStyle(style)
                 } label: {
-                    Text(style.title)
-                        .font(.system(size: min(style.font.pointSize, 18), weight: style == .body ? .regular : .semibold))
+                    HStack {
+                        Text(style.title)
+                            .font(.system(size: min(style.font.pointSize, 18), weight: .regular))
+                        Spacer()
+                        if controller.selectionState.textStyle == style {
+                            Image(systemName: "checkmark").font(.system(size: 10)).foregroundStyle(Color.accentColor)
+                        }
+                    }
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.vertical, 3)
                 }
                 .buttonStyle(.plain)
                 .quickNoteHoverHighlight(cornerRadius: 5)
+                .accessibilityValue(controller.selectionState.textStyle == style ? "当前样式" : "")
+            }
+            if controller.selectionState.textStyle == nil {
+                Text("混合或自定义样式").font(.system(size: 10)).foregroundStyle(.secondary)
             }
 
             Divider().padding(.vertical, 4)
@@ -736,6 +1028,8 @@ private struct NoteFormatPopover: View {
             HStack(spacing: 5) {
                 insertButton("待办", image: "checklist", action: toggleChecklist)
                     .help("点击添加或取消待办")
+                    .background(controller.selectionState.checklist == .off ? Color.clear : Color.accentColor.opacity(0.12), in: RoundedRectangle(cornerRadius: 6))
+                    .accessibilityValue(controller.selectionState.checklist == .mixed ? "混合待办" : (controller.selectionState.checklist == .on ? "已添加待办" : "未添加待办"))
                 insertButton("表格", image: "tablecells") { tablePresented.toggle() }
                     .popover(isPresented: $tablePresented, arrowEdge: .trailing) {
                         TablePickerPopover(controller: controller)
@@ -747,16 +1041,21 @@ private struct NoteFormatPopover: View {
         .frame(width: 220)
     }
 
-    private func formatButton(_ title: String, help: String, action: @escaping () -> Void) -> some View {
+    private func formatButton(_ title: String, help: String, state: EditorToggleState, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Text(title)
                 .font(.system(size: 17))
                 .frame(width: 25, height: 26)
+                .background(state == .off ? Color.clear : Color.accentColor.opacity(0.13), in: RoundedRectangle(cornerRadius: 5))
+                .overlay(alignment: .bottomTrailing) {
+                    if state == .mixed { Text("−").font(.system(size: 9)).foregroundStyle(Color.accentColor) }
+                }
         }
         .buttonStyle(.borderless)
         .quickNoteHoverHighlight(cornerRadius: 5)
         .help(help)
         .accessibilityLabel(help)
+        .accessibilityValue(state == .mixed ? "混合" : (state == .on ? "已启用" : "未启用"))
     }
 
     private func formatRow(
@@ -798,13 +1097,16 @@ private struct NoteFormatPopover: View {
 }
 
 private struct ParagraphFormatPopover: View {
-    let controller: RichTextEditorController
+    @ObservedObject var controller: RichTextEditorController
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
-            paragraphRow("左对齐", image: "text.alignleft") { controller.applyAlignment(.left) }
-            paragraphRow("居中对齐", image: "text.aligncenter") { controller.applyAlignment(.center) }
-            paragraphRow("右对齐", image: "text.alignright") { controller.applyAlignment(.right) }
+            if controller.selectionState.alignment == nil {
+                Text("混合对齐").font(.system(size: 10)).foregroundStyle(.secondary)
+            }
+            paragraphRow("左对齐", image: "text.alignleft", selected: controller.selectionState.alignment == .left || controller.selectionState.alignment == .natural) { controller.applyAlignment(.left) }
+            paragraphRow("居中对齐", image: "text.aligncenter", selected: controller.selectionState.alignment == .center) { controller.applyAlignment(.center) }
+            paragraphRow("右对齐", image: "text.alignright", selected: controller.selectionState.alignment == .right) { controller.applyAlignment(.right) }
             Divider().padding(.vertical, 4)
             Menu {
                 lineSpacingButton("单倍", value: 1)
@@ -829,10 +1131,15 @@ private struct ParagraphFormatPopover: View {
     private func paragraphRow(
         _ title: String,
         image: String,
+        selected: Bool = false,
         action: @escaping () -> Void
     ) -> some View {
         Button(action: action) {
-            Label(title, systemImage: image)
+            HStack {
+                Label(title, systemImage: image)
+                Spacer()
+                if selected { Image(systemName: "checkmark").font(.system(size: 10)) }
+            }
                 .font(.system(size: 12))
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 6)
@@ -931,7 +1238,7 @@ private struct EditorColorPopover: View {
 }
 
 private struct TablePickerPopover: View {
-    let controller: RichTextEditorController
+    @ObservedObject var controller: RichTextEditorController
     @Environment(\.dismiss) private var dismiss
     @State private var rows = 2
     @State private var columns = 2
@@ -961,6 +1268,18 @@ private struct TablePickerPopover: View {
             Divider()
                 .padding(.vertical, 10)
 
+            HStack {
+                Button("增加行") { controller.insertTableRow() }
+                Button("删除行") { controller.deleteTableRow() }
+            }
+            .disabled(!controller.isSelectionInTable)
+            HStack {
+                Button("增加列") { controller.insertTableColumn() }
+                Button("删除列") { controller.deleteTableColumn() }
+            }
+            .disabled(!controller.isSelectionInTable)
+            .padding(.top, 4)
+
             Button("删除表格", systemImage: "trash", role: .destructive) {
                 if controller.deleteCurrentTable() {
                     dismiss()
@@ -969,6 +1288,7 @@ private struct TablePickerPopover: View {
                 }
             }
             .buttonStyle(.borderless)
+            .disabled(!controller.isSelectionInTable)
         }
         .padding(12)
         .frame(width: 228)
@@ -1090,7 +1410,9 @@ private struct NoteStorageLocation: Identifiable {
 }
 
 private struct QuickNoteSettingsView: View {
+    @AppStorage(VoiceOfflineRecognition.enabledKey) private var enhancedVoice = true
     @Binding var selectedTheme: String
+    @Binding var petEnabled: Bool
     let open: (QuickNoteSettingsDestination) -> Void
     let openAISettings: () -> Void
     @State private var themePresented = false
@@ -1110,6 +1432,23 @@ private struct QuickNoteSettingsView: View {
                 NoteThemePicker(selection: $selectedTheme)
             }
             settingsButton("AI 模型", systemImage: "sparkles", action: openAISettings)
+            Toggle(isOn: $enhancedVoice) {
+                Label("本机增强识别", systemImage: "waveform")
+                    .font(.system(size: 13, weight: .regular))
+            }
+            .toggleStyle(.switch).controlSize(.mini)
+            .padding(.horizontal, 6).frame(height: 30)
+            .help("录音结束后使用 SenseVoice 在本机复核；关闭后仅使用系统实时转写，下次录音生效")
+            Toggle(isOn: $petEnabled) {
+                Label("桌宠陪伴", systemImage: "bird")
+                    .font(.system(size: 13, weight: .regular))
+            }
+            .toggleStyle(.switch)
+            .controlSize(.mini)
+            .padding(.horizontal, 6)
+            .frame(height: 30)
+            .help("桌面常驻，可拖动与右键操作；退出 QuickNote 时消失")
+            .accessibilityHint("显示或隐藏独立桌宠；收起便签不影响桌宠，关闭桌宠不影响 AI 功能")
             settingsButton(.localStorage)
             settingsButton(.shortcuts)
             settingsButton(.help)
@@ -1153,7 +1492,16 @@ private struct QuickNoteSettingsView: View {
 private struct QuickNoteSettingsDetailView: View {
     @Environment(\.dismiss) private var dismiss
     let destination: QuickNoteSettingsDestination
-    let locations: [NoteStorageLocation]
+    @State var locations: [NoteStorageLocation]
+    @ObservedObject var session: NoteSession
+    let allNotes: () throws -> [NoteRecord]
+    let didChangeLibrary: () -> Void
+    @State private var storageTab = 0
+    @State private var deletedNotes: [NoteRecord] = []
+    @State private var historyNoteID: UUID?
+    @State private var versions: [NoteVersion] = []
+    @State private var storageNotice = ""
+    @State private var storageError = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -1173,11 +1521,18 @@ private struct QuickNoteSettingsDetailView: View {
         }
         .padding(16)
         .frame(width: detailSize.width, height: detailSize.height)
+        .onAppear {
+            if destination == .localStorage {
+                historyNoteID = session.currentNote?.id
+                refreshStorage()
+            }
+        }
+        .onChange(of: historyNoteID) { _, _ in loadVersions() }
     }
 
     private var detailSize: CGSize {
         switch destination {
-        case .localStorage: CGSize(width: 560, height: 420)
+        case .localStorage: CGSize(width: 560, height: 480)
         case .shortcuts: CGSize(width: 430, height: 500)
         case .help: CGSize(width: 500, height: 390)
         }
@@ -1197,6 +1552,28 @@ private struct QuickNoteSettingsDetailView: View {
 
     private var localStorageDetail: some View {
         VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Button("导出整库备份", action: exportBackup)
+                Button("导入备份副本", action: importBackup)
+                Spacer()
+            }
+            .controlSize(.small)
+            Text("备份含便签、素材、目录和非密钥设置，不含 API Key。文件未加密；导入不会覆盖现有便签。单文件上限 64 MB，整库上限 512 MB。")
+                .font(.system(size: 11)).foregroundStyle(.secondary)
+            Picker("存储管理", selection: $storageTab) {
+                Text("便签文件").tag(0)
+                Text("最近删除（\(deletedNotes.count)）").tag(1)
+                Text("版本记录").tag(2)
+            }
+            .pickerStyle(.segmented)
+            if !storageNotice.isEmpty {
+                Text(storageNotice).font(.caption).foregroundStyle(storageError ? Color.red : Color.secondary).lineLimit(3)
+            }
+            if storageTab == 1 {
+                deletedNotesList
+            } else if storageTab == 2 {
+                versionList
+            } else {
             HStack {
                 Text("每条便签保存为独立的 RTFD 文档。")
                     .font(.system(size: 12))
@@ -1223,6 +1600,151 @@ private struct QuickNoteSettingsDetailView: View {
                     }
                 }
             }
+            }
+        }
+    }
+
+    private var deletedNotesList: some View {
+        VStack(alignment: .leading) {
+            Text("已删除的便签保留在本机，不会自动清空。")
+                .font(.caption).foregroundStyle(.secondary)
+            if deletedNotes.isEmpty {
+                Text("最近删除为空").foregroundStyle(.secondary).padding(.top, 20)
+            }
+            ScrollView {
+                LazyVStack(spacing: 8) {
+                    ForEach(deletedNotes) { note in
+                        HStack {
+                            Text(note.title).lineLimit(1)
+                            Spacer()
+                            Button("恢复") {
+                                storageOperation {
+                                    try session.restoreDeleted(note)
+                                    return "已恢复“\(note.title)”"
+                                }
+                            }
+                            .controlSize(.small)
+                        }
+                        .font(.system(size: 12))
+                        .padding(.vertical, 4)
+                    }
+                }
+            }
+        }
+    }
+
+    private var versionList: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Picker("便签", selection: $historyNoteID) {
+                Text("选择便签").tag(Optional<UUID>.none)
+                ForEach(locations) { note in Text(note.title).tag(Optional(note.id)) }
+            }
+            Text("每篇保留最近 20 个版本。恢复前也会保留当前内容，方便返回。")
+                .font(.caption).foregroundStyle(.secondary)
+            if versions.isEmpty { Text("暂无历史版本").font(.caption).foregroundStyle(.secondary) }
+            ScrollView {
+                LazyVStack(spacing: 8) {
+                    ForEach(versions) { version in
+                        HStack {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(version.date.formatted(date: .abbreviated, time: .standard))
+                                Text(versionReason(version.reason)).font(.caption).foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            Button("恢复此版本") { restoreVersion(version) }.controlSize(.small)
+                        }
+                        .font(.system(size: 12))
+                        .padding(.vertical, 3)
+                    }
+                }
+            }
+        }
+    }
+
+    private func versionReason(_ reason: String) -> String {
+        switch reason {
+        case "import": "导入前"
+        case "aiFormatting": "AI 排版前"
+        case "restore": "恢复历史前"
+        case "delete": "删除前"
+        default: "编辑前"
+        }
+    }
+
+    private func restoreVersion(_ version: NoteVersion) {
+        guard let noteID = historyNoteID else { return }
+        let alert = NSAlert()
+        alert.messageText = "恢复这个版本？"
+        alert.informativeText = "将替换该便签的当前内容。替换前会保存当前版本；其他便签不会改变。"
+        alert.addButton(withTitle: "恢复")
+        alert.addButton(withTitle: "取消")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        storageOperation {
+            try session.restoreVersion(version, for: noteID)
+            return "已恢复，可关闭设置查看便签。"
+        }
+    }
+
+    private func exportBackup() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.prompt = "选择备份位置"
+        guard panel.runModal() == .OK, let folder = panel.url else { return }
+        let name = "QuickNote-\(Date().formatted(.iso8601.year().month().day()))-\(UUID().uuidString.prefix(8)).quicknotebackup"
+        let destination = folder.appending(path: name)
+        storageOperation {
+            try session.exportBackup(to: destination)
+            NSWorkspace.shared.activateFileViewerSelecting([destination])
+            return "整库备份已导出。API Key 仍只保存在钥匙串。"
+        }
+    }
+
+    private func importBackup() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.prompt = "导入备份副本"
+        panel.message = "选择完整的 QuickNote 备份文件夹。将添加副本，不覆盖现有便签。"
+        guard panel.runModal() == .OK, let folder = panel.url else { return }
+        storageOperation {
+            let count = try session.importBackup(from: folder)
+            return "已导入 \(count) 篇便签副本。AI 密钥需在新机器上重新填写。"
+        }
+    }
+
+    private func storageOperation(_ action: () throws -> String) {
+        do {
+            storageNotice = try action()
+            storageError = false
+            refreshStorage()
+            didChangeLibrary()
+        } catch {
+            storageNotice = error.localizedDescription
+            storageError = true
+        }
+    }
+
+    private func refreshStorage() {
+        do {
+            deletedNotes = try session.deletedNotes()
+            locations = try allNotes().map { note in
+                NoteStorageLocation(id: note.id, title: note.title, url: session.documentURL(for: note),
+                    isCurrent: note.id == session.currentNote?.id)
+            }
+            loadVersions()
+        } catch {
+            storageNotice = error.localizedDescription
+            storageError = true
+        }
+    }
+
+    private func loadVersions() {
+        do { versions = try historyNoteID.map(session.versions) ?? [] }
+        catch {
+            versions = []
+            storageNotice = error.localizedDescription
+            storageError = true
         }
     }
 
@@ -1255,6 +1777,8 @@ private struct QuickNoteSettingsDetailView: View {
                 shortcutRow(keys: ["⌘", "+ / −"], title: "Command + / −", detail: "放大或缩小便签内容")
                 shortcutDivider
                 shortcutRow(keys: ["⌘", "B"], title: "Command + B", detail: "展开或收起侧边栏")
+                shortcutDivider
+                shortcutRow(keys: ["⌘", "⌥", "← / →"], title: "Command + Option + 方向键", detail: "上一条或下一条便签，无需展开侧栏")
                 shortcutDivider
                 shortcutRow(keys: ["⌘", "N"], title: "Command + N", detail: "新建便签")
                 shortcutDivider

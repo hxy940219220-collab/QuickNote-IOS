@@ -5,13 +5,11 @@ final class PanelCoordinator {
     private var machine = PanelStateMachine()
     private let panel: NotePanelController
     private let session: NoteSession
-    private let repository: NoteRepository
     private var dismissTask: Task<Void, Never>?
 
-    init(panel: NotePanelController, session: NoteSession, repository: NoteRepository) {
+    init(panel: NotePanelController, session: NoteSession) {
         self.panel = panel
         self.session = session
-        self.repository = repository
         panel.onDismiss = { [weak self] in self?.dismissFromWindow() }
         panel.onMiniaturize = { [weak self] in self?.miniaturizeFromWindow() }
     }
@@ -23,12 +21,8 @@ final class PanelCoordinator {
             CaptureLatencyProbe.begin()
         }
         do {
-            let note: NoteRecord
-            if let currentNote = session.currentNote {
-                note = currentNote
-            } else {
-                note = try repository.recentNotes(limit: 1).first ?? repository.createNote()
-            }
+            if session.currentNote == nil { try session.openMostRecentReadableNote() }
+            guard let note = session.currentNote else { return }
             machine.send(.toggleCommand(noteID: note.id))
             try render(note: note, activate: true)
         } catch {

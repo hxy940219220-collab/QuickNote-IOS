@@ -24,6 +24,8 @@
 	<string>public.app-category.productivity</string>
 	<key>NSHighResolutionCapable</key>
 	<true/>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>仅在你点击录音时使用麦克风，将口述内容在本机转为便签文字；录音不会上传或保存。</string>
 	<key>NSScreenCaptureUsageDescription</key>
 	<string>QuickNote 需要截取你主动选择的屏幕区域，用于图片分析。</string>
 	<key>NSServices</key>
@@ -45,5 +47,7 @@
 			</array>
 		</dict>
 	</array>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>将你主动录制的中文语音在本机转成可编辑文字，确认后再写入便签。</string>
 </dict>
 </plist>

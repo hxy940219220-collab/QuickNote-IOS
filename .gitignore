@@ -2,3 +2,7 @@
 QuickNote.xcodeproj/
 DerivedData/
 build/
+output/
+.swiftpm/
+QuickNote/Resources/Speech/*.onnx
+QuickNote/Resources/Speech/tokens.txt

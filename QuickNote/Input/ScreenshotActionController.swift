@@ -5,26 +5,36 @@ import SwiftUI
 final class ScreenshotActionController: NSObject, NSWindowDelegate {
     private let session: NoteSession
     private let aiStore: AIConfigurationStore
+    private let allNotes: () throws -> [NoteRecord]
+    private var targetNoteID: UUID?
+    private var targetRevision: Int?
+    private var targetCursor: Int?
     private let showSettings: () -> Void
     private let state = ScreenshotActionState()
     private var analysisTask: Task<Void, Never>?
+    private let desktopPet: DesktopPetController?
+    private var petTaskID: UUID?
     private var captureTask: Task<Void, Never>?
     private lazy var panel = makePanel()
 
     init(
         session: NoteSession,
+        allNotes: @escaping () throws -> [NoteRecord],
         aiStore: AIConfigurationStore = .shared,
-        showSettings: @escaping () -> Void
+        showSettings: @escaping () -> Void,
+        desktopPet: DesktopPetController? = nil
     ) {
         self.session = session
+        self.allNotes = allNotes
         self.aiStore = aiStore
         self.showSettings = showSettings
+        self.desktopPet = desktopPet
         super.init()
     }
 
     func capture() {
         guard captureTask == nil else { return }
-        analysisTask?.cancel()
+        stopAnalysis()
         panel.orderOut(nil)
         state.reset()
         captureTask = Task { [weak self] in
@@ -43,13 +53,16 @@ final class ScreenshotActionController: NSObject, NSWindowDelegate {
     }
 
     func windowWillClose(_ notification: Notification) {
-        analysisTask?.cancel()
+        stopAnalysis()
         state.reset()
     }
 
     private func analyze() {
         guard let imageData = state.imageData else { return }
-        analysisTask?.cancel()
+        guard aiStore.confirmSending(.image, content: "仅发送面板中的图片与问题，用于图片分析。") else { return }
+        stopAnalysis()
+        let petID = desktopPet?.begin(message: "正在看图片…", detail: "图片识别 · 目标：\(state.targetTitle)")
+        petTaskID = petID
         state.result = ""
         state.resultImported = false
         state.provider = ""
@@ -68,14 +81,20 @@ final class ScreenshotActionController: NSObject, NSWindowDelegate {
                 state.result = result.text
                 state.provider = result.providerName
                 state.isLoading = false
+                if let petID { desktopPet?.finish(petID, message: "图片分析好了") }
             } catch is CancellationError {
+                if let petID { desktopPet?.finish(petID, message: "已停止分析", clip: "attention") }
             } catch let error as AIAnalyzerError {
+                guard !Task.isCancelled else { return }
+                if let petID { desktopPet?.finish(petID, message: "识别遇到问题", clip: "attention") }
                 state.isLoading = false
                 if case .configurationRequired = error {
                     state.needsConfiguration = true
                 }
                 state.notice = error.localizedDescription
             } catch {
+                guard !Task.isCancelled else { return }
+                if let petID { desktopPet?.finish(petID, message: "识别遇到问题", clip: "attention") }
                 state.isLoading = false
                 state.notice = error.localizedDescription
             }
@@ -90,9 +109,22 @@ final class ScreenshotActionController: NSObject, NSWindowDelegate {
     private func importImage() {
         guard let data = state.imageData else { return }
         do {
-            try session.appendImage(data)
+            guard let choice = NoteImportPicker.choose(notes: try allNotes(), defaultID: targetNoteID,
+                revision: targetRevision) else { return }
+            let wrapper = FileWrapper(regularFileWithContents: data)
+            wrapper.preferredFilename = "截图.png"
+            let content = NSMutableAttributedString()
+            if choice.startsDocument {
+                content.append(NSAttributedString(string: "图片\n", attributes: [.font: EditorTextStyle.title.font]))
+            }
+            content.append(NSAttributedString(attachment: NSTextAttachment(fileWrapper: wrapper)))
+            try choice.insert(content, session: session, originalCursor: targetCursor)
+            desktopPet?.received()
             state.imageImported = true
             state.notice = ""
+        } catch let error as NoteContentAppliedError {
+            state.imageImported = true
+            state.notice = error.localizedDescription
         } catch {
             state.notice = "导入失败：\(error.localizedDescription)"
         }
@@ -101,20 +133,28 @@ final class ScreenshotActionController: NSObject, NSWindowDelegate {
     private func importResult() {
         guard !state.result.isEmpty else { return }
         do {
-            try session.appendAttributedText(SelectionResultFormatter.richText(
-                from: state.result,
-                asDocumentStart: session.document.string.isEmpty
-            ))
+            guard let choice = NoteImportPicker.choose(notes: try allNotes(), defaultID: targetNoteID,
+                revision: targetRevision) else { return }
+            let content = SelectionResultFormatter.richText(from: state.result, asDocumentStart: choice.startsDocument)
+            try choice.insert(content, session: session, originalCursor: targetCursor)
+            desktopPet?.received()
             state.resultImported = true
             state.notice = ""
+        } catch let error as NoteContentAppliedError {
+            state.resultImported = true
+            state.notice = error.localizedDescription
         } catch {
             state.notice = "导入失败：\(error.localizedDescription)"
         }
     }
 
     func present(_ image: NSImage) {
-        analysisTask?.cancel()
+        stopAnalysis()
         state.reset()
+        targetNoteID = session.currentNote?.id
+        targetRevision = targetNoteID.map(session.contentRevision)
+        targetCursor = session.currentNote?.cursorLocation
+        state.targetTitle = session.currentNote?.title ?? "新便签"
         guard let data = ScreenshotImageProcessor.pngData(from: image) else {
             present(error: ScreenshotCaptureError.encodingFailed)
             return
@@ -152,9 +192,18 @@ final class ScreenshotActionController: NSObject, NSWindowDelegate {
             quickAnalyze: { [weak self] prompt in self?.setPromptAndAnalyze(prompt) },
             importImage: { [weak self] in self?.importImage() },
             importResult: { [weak self] in self?.importResult() },
-            settings: showSettings
+            settings: showSettings,
+            stop: { [weak self] in self?.stopAnalysis() }
         ))
         return panel
+    }
+
+    private func stopAnalysis() {
+        analysisTask?.cancel()
+        analysisTask = nil
+        state.isLoading = false
+        if let petTaskID { desktopPet?.finish(petTaskID, message: "已停止分析", clip: "attention") }
+        petTaskID = nil
     }
 }
 
@@ -170,6 +219,7 @@ private final class ScreenshotActionState: ObservableObject {
     @Published var needsConfiguration = false
     @Published var imageImported = false
     @Published var resultImported = false
+    @Published var targetTitle = ""
 
     func reset() {
         image = nil
@@ -192,12 +242,13 @@ private struct ScreenshotActionView: View {
     let importImage: () -> Void
     let importResult: () -> Void
     let settings: () -> Void
+    let stop: () -> Void
     private let quickActions = [
         ("总结要点", "text.alignleft", "用简洁的条目总结截图中的核心内容和重点。"),
         ("提取原文", "doc.text.viewfinder", "准确提取截图中的全部文字，保持原有段落和列表结构。"),
         ("翻译中文", "character.book.closed", "提取截图中的文字并翻译成自然、准确的中文，保留原有结构。"),
         ("整理表格", "tablecells", "识别截图中的表格或结构化数据，并整理成清晰的 Markdown 表格。"),
-        ("生成待办", "checklist", "从截图内容中提取需要执行的事项，整理成简洁的待办清单。"),
+        ("生成待办", "checklist", "从截图内容中提取需要执行的事项，每项使用 Markdown - [ ] 格式；已完成项使用 - [x]，保持原意。"),
         ("排查问题", "exclamationmark.magnifyingglass", "找出截图中的异常、错误或体验问题，并给出可执行的解决建议。"),
     ]
 
@@ -221,6 +272,8 @@ private struct ScreenshotActionView: View {
                 }
                 .disabled(state.imageImported || state.image == nil)
             }
+            Text("默认导入：\(state.targetTitle) · 点击导入可选择目标与位置")
+                .font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
 
             if let image = state.image {
                 Image(nsImage: image)
@@ -255,6 +308,7 @@ private struct ScreenshotActionView: View {
                 HStack(spacing: 9) {
                     ProgressView().controlSize(.small)
                     Text("正在调用图片模型…").foregroundStyle(.secondary)
+                    Button("停止", action: stop).controlSize(.small)
                 }
                 .frame(maxWidth: .infinity, minHeight: 84, alignment: .center)
             } else if !state.result.isEmpty {
@@ -279,7 +333,8 @@ private struct ScreenshotActionView: View {
                         .padding(12)
                 }
                 .background(Color(nsColor: .controlBackgroundColor).opacity(0.55), in: RoundedRectangle(cornerRadius: 10))
-            } else if !state.notice.isEmpty {
+            }
+            if !state.notice.isEmpty {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
                     Image(systemName: "exclamationmark.circle")
                     Text(state.notice).font(.system(size: 12)).foregroundStyle(.secondary)

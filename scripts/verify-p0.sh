@@ -1,6 +1,7 @@
 #!/bin/zsh
 set -euo pipefail
 cd "${0:A:h}/.."
+bash scripts/prepare-offline-speech.sh
 xcodegen generate
 xcodebuild test \
   -project QuickNote.xcodeproj \

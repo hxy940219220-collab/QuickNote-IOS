@@ -28,8 +28,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var screenshotActions: ScreenshotActionController?
     private var aiSettings: AISettingsController?
     private var presentationLifecycle: AppPresentationLifecycle?
+    private var desktopPet: DesktopPetController?
+    private var petDrops: DesktopPetDropController?
+    private var petVoice: DesktopPetVoiceController?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Tests create their own in-memory libraries; never open the user's library in the test host.
+        guard ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil else { return }
         NSApp.setActivationPolicy(.regular)
         do {
             let container = try ModelContainer(for: NoteRecord.self, NoteFolder.self)
@@ -44,18 +49,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 repository: repository,
                 documents: NoteDocumentStore(root: appSupport)
             )
-            if let last = try repository.recentNotes(limit: 1).first {
-                try session.open(last)
-            } else {
-                try session.createAndOpen()
-            }
+            try session.openMostRecentReadableNote()
 
             let aiSettings = AISettingsController()
+            let desktopPet = DesktopPetController()
             var coordinator: PanelCoordinator!
             var panel: NotePanelController!
             let root = RootNoteView(
                 session: session,
                 allNotes: repository.allNotes,
+                searchNotes: repository.search,
                 allFolders: repository.allFolders,
                 createFolderAction: { name in
                     _ = try repository.createFolder(named: name)
@@ -76,10 +79,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 activateEditor: { coordinator.activateEditor() },
                 drawerVisibilityChanged: { panel.setDrawerOpen($0) },
                 setWindowLocked: { panel.setLocked($0) },
-                showAISettings: aiSettings.show
+                showAISettings: aiSettings.show,
+                desktopPet: desktopPet
             )
             panel = NotePanelController(rootView: root)
-            coordinator = PanelCoordinator(panel: panel, session: session, repository: repository)
+            coordinator = PanelCoordinator(panel: panel, session: session)
 
             let rail = EdgeRailController()
             rail.onSelect = { note in try? coordinator.select(note: note) }
@@ -95,16 +99,49 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             let selectionActions = SelectionActionController(
                 session: session,
-                showSettings: aiSettings.show
+                allNotes: repository.allNotes,
+                showSettings: aiSettings.show,
+                desktopPet: desktopPet
             )
             let screenshotActions = ScreenshotActionController(
                 session: session,
-                showSettings: aiSettings.show
+                allNotes: repository.allNotes,
+                showSettings: aiSettings.show,
+                desktopPet: desktopPet
             )
+            let petDrops = DesktopPetDropController(session: session, allNotes: repository.allNotes,
+                pet: desktopPet, showImage: { [weak screenshotActions] in screenshotActions?.present($0) })
+            let petVoice = DesktopPetVoiceController(session: session, allNotes: repository.allNotes,
+                pet: desktopPet, showSettings: aiSettings.show, openNote: { [weak coordinator] id in
+                    guard let note = try? repository.allNotes().first(where: { $0.id == id }) else { return }
+                    try? coordinator?.select(note: note)
+                }, showAnalysis: { [weak selectionActions] text, targetID, revision in
+                    selectionActions?.presentVoice(text, targetID: targetID, revision: revision)
+                })
+            desktopPet.onDrop = { [weak petDrops] in petDrops?.present($0) }
+            desktopPet.canReceiveDrop = { [weak petDrops, weak petVoice] in petDrops?.pending == nil && petVoice?.isPresented != true }
+            desktopPet.onHidden = { [weak petDrops, weak petVoice] in petDrops?.cancel(); petVoice?.hide() }
+            desktopPet.onAction = { [weak coordinator, weak session, weak selectionActions, weak screenshotActions, weak aiSettings, weak petDrops, weak petVoice] action, sourcePID in
+                do {
+                    switch action {
+                    case .openNote: try coordinator?.presentCurrentNote()
+                    case .newNote:
+                        _ = session?.createAndOpenRecovering()
+                        try coordinator?.presentCurrentNote()
+                    case .screenshot: screenshotActions?.capture()
+                    case .selection: selectionActions?.captureSelection(from: sourcePID)
+                    case .settings: aiSettings?.show()
+                    case .voice:
+                        guard petDrops?.pending == nil else { return }
+                        petVoice?.show()
+                    }
+                } catch { NSAlert(error: error).runModal() }
+            }
             statusMenu = StatusMenuController(
                 showAction: { _ = presentationLifecycle.applicationShouldHandleReopen() },
                 settingsAction: aiSettings.show,
-                quitAction: { NSApp.terminate(nil) }
+                quitAction: { NSApp.terminate(nil) },
+                showPetAction: { [weak desktopPet] in desktopPet?.setEnabled(true) }
             )
             let monitorStarted = commandMonitor.start(
                 onDoubleCommand: togglePanel,
@@ -124,8 +161,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self.screenshotActions = screenshotActions
             NSApp.servicesProvider = self
             self.aiSettings = aiSettings
+            self.desktopPet = desktopPet
+            self.petDrops = petDrops
+            self.petVoice = petVoice
             self.presentationLifecycle = presentationLifecycle
             presentationLifecycle.applicationDidLaunch()
+            desktopPet.start()
         } catch {
             NSAlert(error: error).runModal()
         }
@@ -139,8 +180,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard petVoice?.confirmDiscard() != false else { return .terminateCancel }
+        petVoice?.hide()
         do {
             try session?.flush()
+            desktopPet?.stop()
             return .terminateNow
         } catch {
             try? panelCoordinator?.presentCurrentNote()

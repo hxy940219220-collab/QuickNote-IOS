@@ -7,11 +7,26 @@ settings:
     SWIFT_VERSION: "6.0"
     PRODUCT_BUNDLE_IDENTIFIER: com.xixi.quicknote
     CODE_SIGN_IDENTITY: "-"
+packages:
+  SherpaOnnx:
+    url: https://github.com/k2-fsa/sherpa-onnx
+    exactVersion: 1.13.7
 targets:
   QuickNote:
     type: application
     platform: macOS
-    sources: [QuickNote]
+    sources:
+      - path: QuickNote
+        excludes: [Resources/DesktopPet, Resources/Speech]
+      - path: QuickNote/Resources/DesktopPet
+        type: folder
+        buildPhase: resources
+      - path: QuickNote/Resources/Speech
+        type: folder
+        buildPhase: resources
+    dependencies:
+      - package: SherpaOnnx
+        product: sherpa-onnx
     settings:
       base:
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
@@ -22,6 +37,14 @@ targets:
         LSApplicationCategoryType: public.app-category.productivity
         NSHighResolutionCapable: true
         NSScreenCaptureUsageDescription: QuickNote 需要截取你主动选择的屏幕区域，用于图片分析。
+        NSMicrophoneUsageDescription: 仅在你点击录音时使用麦克风，将口述内容在本机转为便签文字；录音不会上传或保存。
+        NSSpeechRecognitionUsageDescription: 将你主动录制的中文语音在本机转成可编辑文字，确认后再写入便签。
+        NSServices:
+          - NSMenuItem:
+              default: 用 QuickNote 识图
+            NSMessage: analyzeImage
+            NSPortName: $(PRODUCT_NAME)
+            NSSendTypes: [public.image, public.file-url]
   QuickNoteTests:
     type: bundle.unit-test
     platform: macOS

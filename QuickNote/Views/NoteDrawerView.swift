@@ -1,9 +1,24 @@
 import SwiftUI
 
+enum NoteSearchExcerpt {
+    static func text(for note: NoteRecord, query: String) -> String {
+        let query = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return "" }
+        if let tag = note.tags.first(where: { $0.localizedStandardContains(query) }) { return "#\(tag)" }
+        let content = note.plainText
+        guard let match = content.range(of: query, options: [.caseInsensitive, .diacriticInsensitive]) else { return "" }
+        let start = content.index(match.lowerBound, offsetBy: -20, limitedBy: content.startIndex) ?? content.startIndex
+        let end = content.index(match.upperBound, offsetBy: 40, limitedBy: content.endIndex) ?? content.endIndex
+        return (start > content.startIndex ? "…" : "")
+            + content[start..<end].replacingOccurrences(of: "\n", with: " ")
+            + (end < content.endIndex ? "…" : "")
+    }
+}
+
 enum NoteDrawerLayout {
-    static let noteLeadingIndent: CGFloat = 8
-    static let noteRowHeight: CGFloat = 30
-    static let folderRowHeight: CGFloat = 32
+    static let noteLeadingIndent: CGFloat = 24
+    static let noteRowHeight: CGFloat = 28
+    static let folderRowHeight = noteRowHeight
 }
 
 struct NoteDrawerView: View {
@@ -19,6 +34,9 @@ struct NoteDrawerView: View {
     let togglePin: (NoteRecord) -> Void
     let delete: (NoteRecord) -> Void
     let theme: NoteTheme
+    let search: (String) throws -> [NoteRecord]
+    let selectMatch: (NoteRecord, String) -> Void
+    let editTags: (NoteRecord) -> Void
 
     @State private var query = ""
     @State private var expandedFolders = Set<UUID>()
@@ -28,6 +46,9 @@ struct NoteDrawerView: View {
     @State private var confirmingDeletion = false
     @State private var pendingFolderDeletion: NoteFolder?
     @State private var confirmingFolderDeletion = false
+    @State private var hoveredNoteID: UUID?
+    @State private var matches: [NoteRecord] = []
+    @State private var searchError: String?
 
     var body: some View {
         VStack(spacing: 6) {
@@ -37,7 +58,7 @@ struct NoteDrawerView: View {
                 Image(systemName: "magnifyingglass")
                     .font(.system(size: 12))
                     .foregroundStyle(.tertiary)
-                TextField("搜索便签标题", text: $query)
+                TextField("搜索标题、正文、标签", text: $query)
                     .font(.system(size: 12))
                     .textFieldStyle(.plain)
             }
@@ -67,6 +88,8 @@ struct NoteDrawerView: View {
         .background(Color(nsColor: theme.sidebarBackground))
         .onAppear(perform: expandSelectedFolder)
         .onChange(of: selectedID) { _, _ in expandSelectedFolder() }
+        .onChange(of: query) { _, _ in refreshSearch() }
+        .onChange(of: notes.map(\.updatedAt)) { _, _ in refreshSearch() }
         .sheet(isPresented: $creatingFolder) {
             FolderNameEditor(
                 title: "新建文件夹",
@@ -88,7 +111,7 @@ struct NoteDrawerView: View {
             }
             Button("取消", role: .cancel) { pendingDeletion = nil }
         } message: { note in
-            Text("“\(note.title)”将被永久删除。")
+            Text("“\(note.title)”将移入最近删除，可在设置 → 本地存储中恢复。")
         }
         .alert(
             "删除文件夹？",
@@ -108,7 +131,7 @@ struct NoteDrawerView: View {
     private var header: some View {
         HStack(spacing: 4) {
             Text("全部便签")
-                .font(.system(size: 13, weight: .semibold))
+                .font(.system(size: 13, weight: .medium))
 
             Text("\(notes.count)")
                 .font(.caption)
@@ -138,14 +161,17 @@ struct NoteDrawerView: View {
 
     @ViewBuilder
     private var searchResults: some View {
-        if filtered.isEmpty {
+        if let searchError {
+            Text(searchError).font(.caption).foregroundStyle(.secondary)
+            Button("重新搜索", action: refreshSearch)
+        } else if matches.isEmpty {
             ContentUnavailableView {
                 Label("没有找到便签", systemImage: "magnifyingglass")
             }
             .controlSize(.small)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
-            List(filtered) { note in
+            List(matches) { note in
                 noteRow(note)
             }
             .listStyle(.plain)
@@ -168,7 +194,7 @@ struct NoteDrawerView: View {
 
             if !unfiledNotes.isEmpty {
                 Text("未分类")
-                    .font(.system(size: 11, weight: .medium))
+                    .font(.system(size: 11, weight: .regular))
                     .foregroundStyle(.secondary)
                     .frame(height: 20, alignment: .leading)
                     .listRowInsets(EdgeInsets(top: 4, leading: 4, bottom: 0, trailing: 4))
@@ -190,11 +216,11 @@ struct NoteDrawerView: View {
         } label: {
             HStack(spacing: 6) {
                 Image(systemName: "folder")
-                    .font(.system(size: 13))
+                    .font(.system(size: 12, weight: .light))
                     .frame(width: 14)
                     .foregroundStyle(.secondary)
                 Text(folder.name)
-                    .font(.system(size: 13, weight: .medium))
+                    .font(.system(size: 13, weight: .regular))
                     .lineLimit(1)
                 Spacer()
                 Image(systemName: expandedFolders.contains(folder.id) ? "chevron.down" : "chevron.right")
@@ -223,27 +249,34 @@ struct NoteDrawerView: View {
                 Label("删除文件夹", systemImage: "trash")
             }
         }
+        .padding(.horizontal, 6)
         .frame(height: NoteDrawerLayout.folderRowHeight)
-        .quickNoteHoverHighlight(cornerRadius: 5)
-        .listRowInsets(EdgeInsets(top: 0, leading: 4, bottom: 0, trailing: 4))
+        .listRowInsets(EdgeInsets(top: 2, leading: 4, bottom: 2, trailing: 4))
+        .listRowBackground(Color.clear)
         .listRowSeparator(.hidden)
     }
 
     private func noteRow(_ note: NoteRecord) -> some View {
         HStack(spacing: 0) {
-            Button(action: { select(note) }) {
-                HStack(spacing: 6) {
-                    Image(systemName: "doc.text")
-                        .font(.system(size: 12))
-                        .frame(width: 14)
-                        .foregroundStyle(.secondary)
+            Button(action: { isSearching ? selectMatch(note, query) : select(note) }) {
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 7) {
                     Text(note.title)
-                        .font(.system(size: 13, weight: note.id == selectedID ? .medium : .regular))
+                        .font(.system(size: 13, weight: .light))
                         .lineLimit(1)
                     if note.isPinned {
-                        Image(systemName: "pin.fill")
-                            .font(.caption2)
-                            .foregroundStyle(Color.accentColor)
+                        Circle()
+                            .fill(Color.secondary.opacity(0.55))
+                            .frame(width: 4, height: 4)
+                            .help("已置顶")
+                            .accessibilityLabel("已置顶")
+                    }
+                    }
+                    if isSearching {
+                        Text(NoteSearchExcerpt.text(for: note, query: query))
+                            .font(.system(size: 10, weight: .regular))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(2)
                     }
                 }
                 .padding(.leading, NoteDrawerLayout.noteLeadingIndent)
@@ -252,9 +285,11 @@ struct NoteDrawerView: View {
             }
             .buttonStyle(.plain)
             .help(note.title)
+            .accessibilityValue(note.isPinned ? "已置顶的便签" : "")
             .accessibilityAddTraits(note.id == selectedID ? .isSelected : [])
 
             Menu {
+                Button("标签…") { editTags(note) }
                 Button(action: { togglePin(note) }) {
                     Label(
                         note.isPinned ? "取消置顶" : "置顶",
@@ -303,28 +338,42 @@ struct NoteDrawerView: View {
             .menuStyle(.borderlessButton)
             .menuIndicator(.hidden)
             .fixedSize()
+            .opacity(hoveredNoteID == note.id || note.id == selectedID ? 0.75 : 0)
             .quickNoteHoverHighlight(cornerRadius: 6)
             .help("编辑便签")
             .accessibilityLabel("编辑便签")
         }
-        .frame(height: NoteDrawerLayout.noteRowHeight)
-        .quickNoteHoverHighlight(cornerRadius: 5, enabled: note.id != selectedID)
-        .listRowInsets(EdgeInsets(top: 0, leading: 4, bottom: 0, trailing: 4))
-        .listRowBackground(
+        .padding(.horizontal, 6)
+        .frame(height: isSearching ? 50 : NoteDrawerLayout.noteRowHeight)
+        .background(
             RoundedRectangle(cornerRadius: 5, style: .continuous)
-                .fill(note.id == selectedID ? Color.primary.opacity(0.065) : Color.clear)
+                .fill(note.id == selectedID ? Color(nsColor: theme == .system ? .controlAccentColor : theme.accentColor).opacity(0.09) : Color.clear)
         )
+        .quickNoteHoverHighlight(cornerRadius: 5, enabled: note.id != selectedID)
+        .listRowInsets(EdgeInsets(top: 2, leading: 4, bottom: 2, trailing: 4))
+        .listRowBackground(Color.clear)
         .listRowSeparator(.hidden)
+        .onHover { hovering in
+            if hovering {
+                hoveredNoteID = note.id
+            } else if hoveredNoteID == note.id {
+                hoveredNoteID = nil
+            }
+        }
     }
 
     private var isSearching: Bool {
         !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
-    private var filtered: [NoteRecord] {
-        let normalized = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !normalized.isEmpty else { return notes }
-        return notes.filter { $0.title.localizedStandardContains(normalized) }
+    private func refreshSearch() {
+        do {
+            matches = try search(query)
+            searchError = nil
+        } catch {
+            matches = []
+            searchError = "搜索失败：\(error.localizedDescription)"
+        }
     }
 
     private var unfiledNotes: [NoteRecord] {

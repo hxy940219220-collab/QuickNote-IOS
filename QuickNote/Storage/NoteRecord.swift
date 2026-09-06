@@ -1,6 +1,14 @@
 import Foundation
 import SwiftData
 
+struct NoteVersion: Codable, Identifiable {
+    let id: UUID
+    let date: Date
+    let reason: String
+}
+
+enum NoteImportPosition { case cursor, end, newNote }
+
 @Model
 final class NoteRecord {
     @Attribute(.unique) var id: UUID
@@ -13,6 +21,7 @@ final class NoteRecord {
     var cursorLocation: Int
     var tagsText: String = ""
     var folderID: UUID? = nil
+    var deletedAt: Date? = nil
 
     var tags: [String] {
         get { tagsText.split(separator: "\n").map(String.init) }
