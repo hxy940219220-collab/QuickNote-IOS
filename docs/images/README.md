@@ -12,3 +12,5 @@ Preserve the earlier QuickNote campaign's ink-violet stage, restrained violet ri
 - **Pip:** “认识 Pip / 你的桌面小鸟”. The existing bird with a recording state bubble and image/document drag-in cues.
 - **Voice:** “说完，自动整理”. A voice waveform leads to the current result panel, showing natural paragraphs, copy, and save. Label the result as an example.
 - **Search:** “想找的，一搜就到”. The current search popup over a subdued note window, with a pointer outside to explain dismissal.
+- **Selection:** “选中文字，立即理解”. Option + Space takes selected text to explanation, analysis, translation, or expansion, with import actions for source and result.
+- **Screenshot:** “框选屏幕，识图取字”. Press and release Command + Shift, select a screen region, and use the current vertically stacked image panel for extraction or analysis. No third shortcut key.
