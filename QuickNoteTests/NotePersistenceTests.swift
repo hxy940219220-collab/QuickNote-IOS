@@ -7,6 +7,164 @@ import XCTest
 
 @MainActor
 final class NotePersistenceTests: XCTestCase {
+    func testSearchDismissalUsesFullHitAreaAndOutsideBackdrop() throws {
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+        let drawer = try String(contentsOf: root.appending(path: "QuickNote/Views/NoteDrawerView.swift"), encoding: .utf8)
+        let start = try XCTUnwrap(drawer.range(of: "Button(action: close)"))
+        let end = try XCTUnwrap(drawer.range(of: ".help(\"关闭搜索", range: start.upperBound..<drawer.endIndex))
+        let closeButton = String(drawer[start.lowerBound..<end.lowerBound])
+        XCTAssertTrue(closeButton.contains("frame(width: 34, height: 34)"))
+        XCTAssertTrue(closeButton.contains("contentShape(Rectangle())"))
+        XCTAssertFalse(drawer.contains(".sheet(isPresented: $searchPresented)"))
+        let app = try String(contentsOf: root.appending(path: "QuickNote/Views/RootNoteView.swift"), encoding: .utf8)
+        XCTAssertTrue(app.contains(".onTapGesture(perform: close)"), "搜索背景应拦截并关闭，不能穿透到正文")
+        XCTAssertTrue(app.contains(".disabled(searchPresented)"), "搜索期间不能误操作底层便签")
+    }
+
+    func testStandardSpacingAndSimplifiedPetSettings() throws {
+        let text = QuickNoteTextView()
+        text.textStorage?.setAttributedString(NSAttributedString(string: "正文"))
+        RichTextEditorController().applyDefaultParagraphSpacing(in: text)
+        let style = try XCTUnwrap(text.textStorage?.attribute(.paragraphStyle, at: 0,
+            effectiveRange: nil) as? NSParagraphStyle)
+        XCTAssertEqual(style.paragraphSpacingBefore, 0)
+        XCTAssertEqual(style.paragraphSpacing, 4)
+        XCTAssertEqual((text.typingAttributes[.paragraphStyle] as? NSParagraphStyle)?.paragraphSpacing, 4)
+
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+        let settings = try String(contentsOf: root.appending(path: "QuickNote/Views/RootNoteView.swift"), encoding: .utf8)
+        let panel = try XCTUnwrap(settings.range(of: "private struct QuickNoteSettingsView"))
+        let content = String(settings[panel.lowerBound...])
+        let pet = try XCTUnwrap(content.range(of: "Pip 桌宠陪伴"))
+        let theme = try XCTUnwrap(content.range(of: "settingsButton(\"便签主题\""))
+        XCTAssertLessThan(pet.lowerBound, theme.lowerBound)
+        XCTAssertFalse(content.contains("本机增强识别"))
+        let voice = try String(contentsOf: root.appending(path: "QuickNote/Input/DesktopPetVoice.swift"), encoding: .utf8)
+        XCTAssertFalse(voice.contains("voice.offlineRefinement.enabled"))
+        XCTAssertTrue(voice.contains("if VoiceOfflineRecognition.isAvailable {"))
+    }
+
+    func testDrawerSearchIsAHeaderButtonInsteadOfPersistentField() throws {
+        let file = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .appending(path: "QuickNote/Views/NoteDrawerView.swift")
+        let source = try String(contentsOf: file, encoding: .utf8)
+        let headerStart = try XCTUnwrap(source.range(of: "private var header:"))
+        let header = String(source[headerStart.lowerBound...])
+        let icon = header.range(of: "magnifyingglass")
+        let folder = try XCTUnwrap(header.range(of: "folder.badge.plus"))
+        XCTAssertNotNil(icon, "搜索入口在侧栏标题行")
+        if let icon { XCTAssertLessThan(icon.lowerBound, folder.lowerBound, "放大镜必须在文件夹左边") }
+        XCTAssertFalse(source[..<headerStart.lowerBound].contains("TextField("), "侧栏不再常驻输入框")
+    }
+
+    func testSearchPanelFocusSearchKeyboardAndRender() async throws {
+        let folder = NoteFolder(name: "项目资料")
+        let first = NoteRecord(), second = NoteRecord()
+        first.title = "产品设计讨论"; first.folderID = folder.id; first.updatedAt = .now
+        second.title = "下周行动计划"; second.updatedAt = .distantPast
+        var selected: UUID?
+        var selectedQuery = ""
+        var closed = false
+        var searched = ""
+        let root = NoteSearchPanel(notes: [second, first], folders: [folder], theme: .system,
+            search: { query in searched = query; return [second] },
+            select: { note, query in selected = note.id; selectedQuery = query }, close: { closed = true })
+        let view = NSHostingView(rootView: root)
+        let window = NSPanel(contentRect: NSRect(x: 180, y: 180, width: 480, height: 380),
+            styleMask: [.titled, .closable], backing: .buffered, defer: false)
+        window.contentView = view
+        NSApp.activate(ignoringOtherApps: true)
+        window.makeKeyAndOrderFront(nil)
+        defer { window.orderOut(nil); window.contentView = nil }
+        try await Task.sleep(for: .milliseconds(180))
+        let fieldEditor = try XCTUnwrap(window.firstResponder as? NSTextView, "打开即聚焦搜索输入")
+        XCTAssertTrue(fieldEditor.isFieldEditor)
+        view.layoutSubtreeIfNeeded()
+        XCTAssertLessThanOrEqual(view.fittingSize.width, 480)
+        XCTAssertLessThanOrEqual(view.fittingSize.height, 380)
+        let bitmap = try XCTUnwrap(view.bitmapImageRepForCachingDisplay(in: view.bounds))
+        view.cacheDisplay(in: view.bounds, to: bitmap)
+        try bitmap.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: "/tmp/quicknote-search-panel.png"))
+        func press(_ characters: String, code: UInt16) throws {
+            let event = try XCTUnwrap(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [],
+                timestamp: 0, windowNumber: window.windowNumber, context: nil,
+                characters: characters, charactersIgnoringModifiers: characters, isARepeat: false, keyCode: code))
+            NSApp.sendEvent(event)
+        }
+        try press("\r", code: 36)
+        try await Task.sleep(for: .milliseconds(50))
+        XCTAssertEqual(selected, first.id, "默认按最近更新排序，回车打开第一条")
+        try press(String(UnicodeScalar(NSDownArrowFunctionKey)!), code: 125)
+        try press(String(UnicodeScalar(NSDownArrowFunctionKey)!), code: 125)
+        try press("\r", code: 36)
+        try await Task.sleep(for: .milliseconds(50))
+        XCTAssertEqual(selected, second.id, "向下到末条后不越界")
+        try press(String(UnicodeScalar(NSUpArrowFunctionKey)!), code: 126)
+        try press(String(UnicodeScalar(NSUpArrowFunctionKey)!), code: 126)
+        try press("\r", code: 36)
+        try await Task.sleep(for: .milliseconds(50))
+        XCTAssertEqual(selected, first.id, "向上到首条后不越界")
+        fieldEditor.insertText("行动", replacementRange: NSRange(location: 0, length: fieldEditor.string.utf16.count))
+        try await Task.sleep(for: .milliseconds(80))
+        XCTAssertEqual(searched, "行动")
+        try press("\r", code: 36)
+        try await Task.sleep(for: .milliseconds(50))
+        XCTAssertEqual(selected, second.id)
+        XCTAssertEqual(selectedQuery, "行动", "沿用原有正文匹配定位")
+        try press("\u{1b}", code: 53)
+        try await Task.sleep(for: .milliseconds(50))
+        XCTAssertTrue(closed)
+    }
+
+    func testBodyUsesRegularWeightAndUnboldDoesNotRestoreLight() {
+        let regular = NSFont.systemFont(ofSize: 13, weight: .regular)
+        XCTAssertEqual(EditorTextStyle.body.font, regular)
+        let text = NSTextView()
+        let controller = RichTextEditorController()
+        controller.connect(text)
+        text.typingAttributes[.font] = NSFont.systemFont(ofSize: 13, weight: .bold)
+        controller.toggleBold()
+        XCTAssertEqual(text.typingAttributes[.font] as? NSFont, regular)
+    }
+
+    func testSavedLightBodyMigratesOnceWithoutChangingOtherFormatting() throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = NoteDocumentStore(root: root)
+        let id = UUID()
+        let light = NSFont.systemFont(ofSize: 13, weight: .light)
+        let source = NSMutableAttributedString(string: "正文 abc\n", attributes: [.font: light])
+        source.append(NSAttributedString(string: "标题\n", attributes: [.font: NSFont.systemFont(ofSize: 24, weight: .bold)]))
+        source.append(NSAttributedString(string: "自定字体\n", attributes: [.font: NSFont(name: "HelveticaNeue-Light", size: 15)!]))
+        source.append(NSAttributedString(string: "链接", attributes: [.font: light, .link: URL(string: "https://example.com")!]))
+        let wrapper = try source.fileWrapper(from: NSRange(location: 0, length: source.length),
+            documentAttributes: [.documentType: NSAttributedString.DocumentType.rtfd])
+        for marker in ["QuickNote-format-version", "QuickNote-heading-version"] {
+            wrapper.addRegularFile(withContents: Data("1".utf8), preferredFilename: marker)
+        }
+        let url = root.appending(path: "\(id.uuidString).rtfd")
+        try wrapper.write(to: url, options: .atomic, originalContentsURL: nil)
+        let originalBytes = try Data(contentsOf: url.appending(path: "TXT.rtf"))
+        let before = try NSAttributedString(url: url, options: [.documentType: NSAttributedString.DocumentType.rtfd], documentAttributes: nil)
+        let loaded = try store.load(id: id)
+        XCTAssertEqual(loaded.string, source.string)
+        let body = try XCTUnwrap(loaded.attribute(.font, at: 0, effectiveRange: nil) as? NSFont)
+        XCTAssertEqual(NSFontManager.shared.weight(of: body), NSFontManager.shared.weight(of: NSFont.systemFont(ofSize: 13)))
+        for word in ["标题", "自定字体"] {
+            let at = (source.string as NSString).range(of: word).location
+            XCTAssertEqual(loaded.attribute(.font, at: at, effectiveRange: nil) as? NSFont, before.attribute(.font, at: at, effectiveRange: nil) as? NSFont)
+        }
+        XCTAssertNotNil(loaded.attribute(.link, at: loaded.length - 1, effectiveRange: nil))
+        XCTAssertEqual(try Data(contentsOf: url.appending(path: "TXT.rtf")), originalBytes, "只读打开不覆写文件")
+        let customized = NSMutableAttributedString(attributedString: loaded)
+        customized.addAttribute(.font, value: light, range: NSRange(location: 0, length: 2))
+        try store.save(customized, id: id)
+        let reopened = try store.load(id: id)
+        let chosen = try XCTUnwrap(reopened.attribute(.font, at: 0, effectiveRange: nil) as? NSFont)
+        XCTAssertEqual(NSFontManager.shared.weight(of: chosen), NSFontManager.shared.weight(of: light), "迁移后手动选细体应保留")
+    }
+
     func testQuickNavigationWorksWithSidebarClosedAndPreservesDraft() async throws {
         let (container, repository, documents, session) = try safetyFixture()
         defer { withExtendedLifetime(container) {}; try? FileManager.default.removeItem(at: documents.root) }
@@ -22,7 +180,7 @@ final class NotePersistenceTests: XCTestCase {
             drawerVisibilityChanged: { _ in XCTFail("快速切换不应展开侧栏") }, setWindowLocked: { _ in }, showAISettings: {})
         let view = NSHostingView(rootView: root)
         let window = NSPanel(contentRect: NSRect(x: 150, y: 150, width: 520, height: 300),
-                             styleMask: [.titled, .closable, .fullSizeContentView], backing: .buffered, defer: false)
+                             styleMask: NotePanelController.windowStyleMask.union(.nonactivatingPanel), backing: .buffered, defer: false)
         window.titleVisibility = .hidden
         window.contentView = view
         NSApp.activate(ignoringOtherApps: true)
@@ -30,6 +188,7 @@ final class NotePersistenceTests: XCTestCase {
         defer { window.orderOut(nil); window.contentView = nil }
         try await Task.sleep(for: .milliseconds(160))
         view.layoutSubtreeIfNeeded()
+        window.makeFirstResponder(try XCTUnwrap(view.descendant(ofType: NSTextView.self)))
         window.makeKey()
         XCTAssertTrue(window.isKeyWindow)
         XCTAssertLessThanOrEqual(view.fittingSize.width, 520)
@@ -1078,8 +1237,10 @@ final class NotePersistenceTests: XCTestCase {
             (textView.textStorage?.attribute(.font, at: bodyLocation, effectiveRange: nil) as? NSFont)?.pointSize,
             EditorTextStyle.body.font.pointSize
         )
-        XCTAssertEqual(bodyStyle?.lineHeightMultiple, 1.18)
-        XCTAssertEqual(bodyStyle?.paragraphSpacing, 7)
+        XCTAssertEqual(bodyStyle?.lineHeightMultiple, 0)
+        XCTAssertEqual(bodyStyle?.lineSpacing, 1)
+        XCTAssertEqual(bodyStyle?.paragraphSpacingBefore, 0)
+        XCTAssertEqual(bodyStyle?.paragraphSpacing, 4)
     }
 
     func testAIFormattingFinishesForOriginalNoteAfterSwitch() throws {

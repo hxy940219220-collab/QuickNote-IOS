@@ -1,6 +1,6 @@
-# quicknote（ios）
+# QuickNote-IOS
 
-> 本次更新按项目约定标注为 `quicknote（ios）`。当前实际实现与构建目标仍为 **macOS 14+**，尚未提供 iPhone / iPad 版本。
+> 仓库名为 `QuickNote-IOS`，当前实际实现与构建目标仍为 **macOS 14+**，尚未提供 iPhone / iPad 版本。
 
 QuickNote 是一款本地优先的 macOS 便签工具。双击 Command 即刻唤起，记录完成后回到原来的工作流；选中文字后按 Option + Space，或按 Command + Shift 截取屏幕区域，可以直接调用 AI 分析并把结果导入便签。
 
@@ -38,12 +38,16 @@ QuickNote 是一款本地优先的 macOS 便签工具。双击 Command 即刻唤
 
 ## 功能
 
-- 独立桌宠：拖动、缩放、左右朝向、状态气泡、悬停快捷入口与文件拖入
-- 本机语音输入、实时转写与 SenseVoice 离线复核，支持直接存入或 AI 润色
+- Pip 小鸟桌宠：拖动、缩放、左右朝向、状态气泡、悬停快捷入口与文件拖入
+- 本机语音输入、实时转写与默认 SenseVoice 离线复核，录音结束后自动进行 AI 纠错和分段，支持一键复制与存入笔记
+- AI 整理遇到 502/503/504 时最多自动重试两次，失败保留原文并支持手动重试，不需重新录音
+- 紧凑搜索浮层，支持最近便签、标题/正文/标签搜索、键盘操作、Esc 和点击外侧关闭
+- 右下角常驻翻页按钮，支持完整点击区域和窗口未激活时直接首击；保留 Command + Option + 左右方向键
 - 选中文字后点击翻译、解释、分析或拓展即可处理，不再弹重复的发送确认
 - 钥匙串读取失败时提供明确提示及单接入安全重新配置，不覆盖旧密钥库
 - 双击 Command 快速打开或收起便签
 - 第一行默认作为大号标题，正文统一使用系统 13pt 字体
+- 正文使用常规字重和标准段落间距，保留已有标题、附件与手动格式
 - 文件夹分类、搜索、固定与侧边快速切换
 - 富文本、清单、表格、链接、图片、文件和音频附件
 - Command + Z 逐步撤销文字与格式操作
@@ -65,14 +69,18 @@ QuickNote 是一款本地优先的 macOS 便签工具。双击 Command 即刻唤
 
 ```bash
 brew install xcodegen
+export QUICKNOTE_SIGNING_IDENTITY='Apple Development: YOUR_NAME (CERTIFICATE_ID)'
+export QUICKNOTE_DEVELOPMENT_TEAM='YOUR_TEAM_ID'
 ./scripts/verify-p0.sh
 open /tmp/QuickNoteDerived/Build/Products/Release/QuickNote.app
 ```
 
 首次使用快捷键时，请按应用内说明开启“输入监控”和“辅助功能”权限。
 
-开发构建默认使用临时签名；更新二进制后可能需要重新授权已保存的 API Key。正式分发应配置稳定的签名身份。离线模型与原生运行时的许可证保留在 `QuickNote/Resources/Speech/`。
+将签名占位值替换为本人的有效证书与团队标识，并在后续更新中保持签名身份稳定。验证脚本不再将发布包重新签成临时身份，也不会在证书不可用时回退到临时签名。仅本地调试可直接使用工程默认临时签名，但不要用它覆盖保存过密钥的正式安装。仓库不包含维护者个人签名配置。离线模型与原生运行时的许可证保留在 `QuickNote/Resources/Speech/`。
 
 ## 数据与隐私
 
-便签保存在本机 `~/Library/Application Support/QuickNote/`。基础记录功能不依赖 AI；只有用户主动调用 AI 功能时，所选内容才会发送到用户配置的模型服务。
+便签保存在本机 `~/Library/Application Support/QuickNote/`。基础记录功能不依赖 AI；用户调用 AI 时会发送所选内容，语音输入结束后自动整理会发送本次转写文字到已配置的模型服务，不发送录音或整个便签库。无法访问的旧钥匙串条目会保留，不自动弹出重复授权，也不改动系统密码。
+
+最近更新见 [2026-09-08 更新说明](docs/2026-09-08-release-notes.md)。

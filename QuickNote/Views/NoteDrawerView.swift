@@ -34,11 +34,9 @@ struct NoteDrawerView: View {
     let togglePin: (NoteRecord) -> Void
     let delete: (NoteRecord) -> Void
     let theme: NoteTheme
-    let search: (String) throws -> [NoteRecord]
-    let selectMatch: (NoteRecord, String) -> Void
+    let showSearch: () -> Void
     let editTags: (NoteRecord) -> Void
 
-    @State private var query = ""
     @State private var expandedFolders = Set<UUID>()
     @State private var creatingFolder = false
     @State private var editingFolder: NoteFolder?
@@ -47,33 +45,12 @@ struct NoteDrawerView: View {
     @State private var pendingFolderDeletion: NoteFolder?
     @State private var confirmingFolderDeletion = false
     @State private var hoveredNoteID: UUID?
-    @State private var matches: [NoteRecord] = []
-    @State private var searchError: String?
 
     var body: some View {
         VStack(spacing: 6) {
             header
 
-            HStack(spacing: 6) {
-                Image(systemName: "magnifyingglass")
-                    .font(.system(size: 12))
-                    .foregroundStyle(.tertiary)
-                TextField("搜索标题、正文、标签", text: $query)
-                    .font(.system(size: 12))
-                    .textFieldStyle(.plain)
-            }
-            .padding(.horizontal, 7)
-            .frame(height: 27)
-            .background(Color(nsColor: .controlBackgroundColor))
-            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .stroke(Color(nsColor: .separatorColor).opacity(0.45), lineWidth: 1)
-            }
-
-            if isSearching {
-                searchResults
-            } else if notes.isEmpty && folders.isEmpty {
+            if notes.isEmpty && folders.isEmpty {
                 ContentUnavailableView {
                     Label("还没有便签", systemImage: "note.text")
                 }
@@ -88,8 +65,6 @@ struct NoteDrawerView: View {
         .background(Color(nsColor: theme.sidebarBackground))
         .onAppear(perform: expandSelectedFolder)
         .onChange(of: selectedID) { _, _ in expandSelectedFolder() }
-        .onChange(of: query) { _, _ in refreshSearch() }
-        .onChange(of: notes.map(\.updatedAt)) { _, _ in refreshSearch() }
         .sheet(isPresented: $creatingFolder) {
             FolderNameEditor(
                 title: "新建文件夹",
@@ -139,6 +114,15 @@ struct NoteDrawerView: View {
 
             Spacer()
 
+            Button(action: showSearch) {
+                Image(systemName: "magnifyingglass")
+                    .frame(width: 24, height: 24)
+            }
+            .buttonStyle(.borderless)
+            .quickNoteHoverHighlight()
+            .help("搜索便签")
+            .accessibilityLabel("搜索便签")
+
             Button { creatingFolder = true } label: {
                 Image(systemName: "folder.badge.plus")
                     .frame(width: 24, height: 24)
@@ -156,27 +140,6 @@ struct NoteDrawerView: View {
             .quickNoteHoverHighlight()
             .help("新建便签")
             .accessibilityLabel("新建便签")
-        }
-    }
-
-    @ViewBuilder
-    private var searchResults: some View {
-        if let searchError {
-            Text(searchError).font(.caption).foregroundStyle(.secondary)
-            Button("重新搜索", action: refreshSearch)
-        } else if matches.isEmpty {
-            ContentUnavailableView {
-                Label("没有找到便签", systemImage: "magnifyingglass")
-            }
-            .controlSize(.small)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-        } else {
-            List(matches) { note in
-                noteRow(note)
-            }
-            .listStyle(.plain)
-            .contentMargins(.all, 0, for: .scrollContent)
-            .scrollContentBackground(.hidden)
         }
     }
 
@@ -258,11 +221,11 @@ struct NoteDrawerView: View {
 
     private func noteRow(_ note: NoteRecord) -> some View {
         HStack(spacing: 0) {
-            Button(action: { isSearching ? selectMatch(note, query) : select(note) }) {
+            Button(action: { select(note) }) {
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 7) {
                     Text(note.title)
-                        .font(.system(size: 13, weight: .light))
+                        .font(.system(size: 13, weight: .regular))
                         .lineLimit(1)
                     if note.isPinned {
                         Circle()
@@ -271,12 +234,6 @@ struct NoteDrawerView: View {
                             .help("已置顶")
                             .accessibilityLabel("已置顶")
                     }
-                    }
-                    if isSearching {
-                        Text(NoteSearchExcerpt.text(for: note, query: query))
-                            .font(.system(size: 10, weight: .regular))
-                            .foregroundStyle(.secondary)
-                            .lineLimit(2)
                     }
                 }
                 .padding(.leading, NoteDrawerLayout.noteLeadingIndent)
@@ -344,7 +301,7 @@ struct NoteDrawerView: View {
             .accessibilityLabel("编辑便签")
         }
         .padding(.horizontal, 6)
-        .frame(height: isSearching ? 50 : NoteDrawerLayout.noteRowHeight)
+        .frame(height: NoteDrawerLayout.noteRowHeight)
         .background(
             RoundedRectangle(cornerRadius: 5, style: .continuous)
                 .fill(note.id == selectedID ? Color(nsColor: theme == .system ? .controlAccentColor : theme.accentColor).opacity(0.09) : Color.clear)
@@ -359,20 +316,6 @@ struct NoteDrawerView: View {
             } else if hoveredNoteID == note.id {
                 hoveredNoteID = nil
             }
-        }
-    }
-
-    private var isSearching: Bool {
-        !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-    }
-
-    private func refreshSearch() {
-        do {
-            matches = try search(query)
-            searchError = nil
-        } catch {
-            matches = []
-            searchError = "搜索失败：\(error.localizedDescription)"
         }
     }
 
@@ -405,6 +348,125 @@ struct NoteDrawerView: View {
         expandedFolders.insert(folderID)
     }
 }
+struct NoteSearchPanel: View {
+    let notes: [NoteRecord]
+    let folders: [NoteFolder]
+    let theme: NoteTheme
+    let search: (String) throws -> [NoteRecord]
+    let select: (NoteRecord, String) -> Void
+    let close: () -> Void
+    var size = CGSize(width: 480, height: 380)
+    @State private var query = ""
+    @State private var matches: [NoteRecord] = []
+    @State private var selectedID: UUID?
+    @State private var error: String?
+    @FocusState private var searchFocused: Bool
+    private var trimmedQuery: String { query.trimmingCharacters(in: .whitespacesAndNewlines) }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 12) {
+                HStack(spacing: 8) {
+                    Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+                    TextField("搜索标题、正文、标签", text: $query)
+                        .textFieldStyle(.plain).font(.system(size: 14))
+                        .focused($searchFocused)
+                        .accessibilityLabel("搜索标题、正文、标签")
+                        .onSubmit(openSelection)
+                        .onKeyPress(.downArrow) { moveSelection(1); return .handled }
+                        .onKeyPress(.upArrow) { moveSelection(-1); return .handled }
+                }
+                .padding(.horizontal, 10).frame(height: 34)
+                .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 10))
+                Button(action: close) {
+                    Image(systemName: "xmark")
+                        .frame(width: 34, height: 34)
+                        .contentShape(Rectangle())
+                }.buttonStyle(.plain).foregroundStyle(.secondary).quickNoteHoverHighlight()
+                    .help("关闭搜索（Esc）").accessibilityLabel("关闭搜索")
+            }
+            Text(trimmedQuery.isEmpty ? "最近便签" : "搜索结果 · \(matches.count)")
+                .font(.system(size: 12, weight: .medium)).foregroundStyle(.secondary)
+                .padding(.horizontal, 8)
+            if let error {
+                VStack(spacing: 12) {
+                    Text(error).font(.system(size: 12)).foregroundStyle(.secondary)
+                    Button("重试", action: refreshSearch)
+                }.frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if matches.isEmpty {
+                VStack(spacing: 8) {
+                    Text(trimmedQuery.isEmpty ? "还没有便签" : "没有找到相关便签").font(.system(size: 14))
+                    if !trimmedQuery.isEmpty { Text("试试标题、正文或标签中的其他关键词").font(.system(size: 12)).foregroundStyle(.secondary) }
+                }.frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        LazyVStack(spacing: 2) {
+                            ForEach(matches) { note in
+                                Button { select(note, trimmedQuery) } label: {
+                                    HStack(spacing: 16) {
+                                        VStack(alignment: .leading, spacing: 3) {
+                                            Text(note.title).font(.system(size: 14)).lineLimit(1)
+                                            let excerpt = NoteSearchExcerpt.text(for: note, query: trimmedQuery)
+                                            if !excerpt.isEmpty {
+                                                Text(excerpt).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
+                                            }
+                                        }.frame(maxWidth: .infinity, alignment: .leading)
+                                        Label(folders.first(where: { $0.id == note.folderID })?.name ?? "未分类", systemImage: "folder")
+                                            .font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
+                                            .frame(maxWidth: 150, alignment: .trailing)
+                                    }.padding(.horizontal, 10).padding(.vertical, 9)
+                                        .frame(maxWidth: .infinity, minHeight: 38)
+                                        .contentShape(Rectangle())
+                                }.buttonStyle(.plain)
+                                    .background(selectedID == note.id ? Color.primary.opacity(0.05) : .clear, in: RoundedRectangle(cornerRadius: 7))
+                                    .quickNoteHoverHighlight(cornerRadius: 7)
+                                    .help(note.title).id(note.id)
+                            }
+                        }
+                    }.onChange(of: selectedID) { _, id in
+                        if let id { proxy.scrollTo(id) }
+                    }
+                }
+            }
+        }
+        .padding(16).frame(width: size.width, height: size.height)
+        .foregroundStyle(Color(nsColor: theme.textColor))
+        .background(Color(nsColor: theme.editorBackground))
+        .preferredColorScheme(theme.colorScheme)
+        .onAppear(perform: refreshSearch)
+        .task {
+            await Task.yield()
+            searchFocused = true
+        }
+        .onChange(of: query) { _, _ in refreshSearch() }
+        .onChange(of: notes.map(\.updatedAt)) { _, _ in refreshSearch() }
+        .onExitCommand(perform: close)
+    }
+
+    private func refreshSearch() {
+        do {
+            matches = trimmedQuery.isEmpty ? notes.sorted { $0.updatedAt > $1.updatedAt } : try search(trimmedQuery)
+            selectedID = matches.first?.id
+            error = nil
+        } catch {
+            matches = []
+            selectedID = nil
+            self.error = "搜索暂时不可用，请重试。"
+        }
+    }
+
+    private func moveSelection(_ offset: Int) {
+        guard !matches.isEmpty else { return }
+        let current = matches.firstIndex(where: { $0.id == selectedID }) ?? 0
+        selectedID = matches[min(matches.count - 1, max(0, current + offset))].id
+    }
+
+    private func openSelection() {
+        if let note = matches.first(where: { $0.id == selectedID }) { select(note, trimmedQuery) }
+    }
+}
+
 private struct FolderNameEditor: View {
     @Environment(\.dismiss) private var dismiss
     let title: String

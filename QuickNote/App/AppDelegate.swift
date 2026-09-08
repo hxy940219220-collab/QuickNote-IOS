@@ -115,8 +115,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 pet: desktopPet, showSettings: aiSettings.show, openNote: { [weak coordinator] id in
                     guard let note = try? repository.allNotes().first(where: { $0.id == id }) else { return }
                     try? coordinator?.select(note: note)
-                }, showAnalysis: { [weak selectionActions] text, targetID, revision in
-                    selectionActions?.presentVoice(text, targetID: targetID, revision: revision)
                 })
             desktopPet.onDrop = { [weak petDrops] in petDrops?.present($0) }
             desktopPet.canReceiveDrop = { [weak petDrops, weak petVoice] in petDrops?.pending == nil && petVoice?.isPresented != true }

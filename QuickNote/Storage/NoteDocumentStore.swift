@@ -4,6 +4,7 @@ import AppKit
 struct NoteDocumentStore {
     private static let formatMarker = "QuickNote-format-version"
     private static let headingMarker = "QuickNote-heading-version"
+    private static let bodyWeightMarker = "QuickNote-body-weight-version"
     let root: URL
 
     init(root: URL) {
@@ -21,8 +22,22 @@ struct NoteDocumentStore {
         // Reading never overwrites a user's document (including a damaged package).
         let normalized = FileManager.default.fileExists(atPath: url.appending(path: Self.formatMarker).path)
             ? document : NoteFontNormalizer.normalized(document)
-        return FileManager.default.fileExists(atPath: url.appending(path: Self.headingMarker).path)
+        let headed = FileManager.default.fileExists(atPath: url.appending(path: Self.headingMarker).path)
             ? normalized : NoteHeadingNormalizer.normalized(normalized, promoteFirstLine: false)
+        guard !FileManager.default.fileExists(atPath: url.appending(path: Self.bodyWeightMarker).path) else { return headed }
+        let result = NSMutableAttributedString(attributedString: headed)
+        let oldBody = NSFont.systemFont(ofSize: 13, weight: .light)
+        headed.enumerateAttributes(in: NSRange(location: 0, length: headed.length)) { attributes, range, _ in
+            guard attributes[.attachment] == nil, let font = attributes[.font] as? NSFont,
+                  [oldBody.fontName, "HelveticaNeue-Light", "HelveticaNeue-LightItalic"].contains(font.fontName),
+                  abs(font.pointSize - oldBody.pointSize) < 0.1 else { return }
+            // RTF serializes AppKit's system Light font as HelveticaNeue-Light.
+            let regular = font.fontDescriptor.symbolicTraits.contains(.italic)
+                ? NSFontManager.shared.convert(EditorTextStyle.body.font, toHaveTrait: .italicFontMask)
+                : EditorTextStyle.body.font
+            result.addAttribute(.font, value: regular, range: range)
+        }
+        return result
     }
 
     func save(_ document: NSAttributedString, id: UUID) throws {
@@ -34,6 +49,7 @@ struct NoteDocumentStore {
         )
         wrapper.addRegularFile(withContents: Data("1".utf8), preferredFilename: Self.formatMarker)
         wrapper.addRegularFile(withContents: Data("1".utf8), preferredFilename: Self.headingMarker)
+        wrapper.addRegularFile(withContents: Data("1".utf8), preferredFilename: Self.bodyWeightMarker)
         try wrapper.write(to: url(for: id), options: .atomic, originalContentsURL: nil)
     }
 

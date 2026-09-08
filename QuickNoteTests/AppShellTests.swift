@@ -37,17 +37,43 @@ final class AppShellTests: XCTestCase {
     }
 
     @MainActor
+    func testNavigationButtonsAcceptFirstClickAcrossEntireTarget() async throws {
+        var offsets: [Int] = []
+        let view = NSHostingView(rootView: NoteNavigationControls(previousTitle: "上一条", nextTitle: "下一条", navigate: { offsets.append($0) }))
+        view.frame = NSRect(x: 0, y: 0, width: 68, height: 30)
+        let window = NSPanel(contentRect: NSRect(x: 300, y: 300, width: 68, height: 30),
+            styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+        window.contentView = view
+        window.orderFrontRegardless()
+        defer { window.orderOut(nil); window.contentView = nil }
+        try await Task.sleep(for: .milliseconds(100))
+        view.layoutSubtreeIfNeeded()
+        for point in [NSPoint(x: 2, y: 2), NSPoint(x: 33, y: 15), NSPoint(x: 35, y: 15), NSPoint(x: 66, y: 28)] {
+            let hit = try XCTUnwrap(view.hitTest(point))
+            XCTAssertTrue(hit.acceptsFirstMouse(for: nil), "窗口未激活时也应一次点击生效：\(type(of: hit))")
+            XCTAssertFalse(hit.mouseDownCanMoveWindow, "按钮区域不能被当作拖动窗口")
+            let button = try XCTUnwrap(hit as? NSButton, "整个命中区域由按钮处理")
+            button.performClick(nil)
+        }
+        XCTAssertEqual(offsets, [-1, -1, 1, 1])
+        view.rootView = NoteNavigationControls(previousTitle: nil, nextTitle: "下一条", navigate: { offsets.append($0) })
+        view.layoutSubtreeIfNeeded()
+        let first = try XCTUnwrap(view.hitTest(NSPoint(x: 2, y: 2)) as? NSButton)
+        XCTAssertFalse(first.isEnabled, "到达首条仍然禁止继续向上切换")
+    }
+
+    @MainActor
     func testNoteNavigationControlsStayCompactAndRender() async throws {
         let view = NSHostingView(rootView: NoteNavigationControls(previousTitle: "会议纪要", nextTitle: "项目素材", navigate: { _ in }))
-        view.frame = NSRect(x: 0, y: 0, width: 48, height: 26)
+        view.frame = NSRect(x: 0, y: 0, width: 68, height: 30)
         let window = NSPanel(contentRect: view.frame, styleMask: [.borderless], backing: .buffered, defer: false)
         window.contentView = view
         window.orderFrontRegardless()
         defer { window.orderOut(nil) }
         try await Task.sleep(for: .milliseconds(100))
         view.layoutSubtreeIfNeeded()
-        XCTAssertLessThanOrEqual(view.fittingSize.width, 48)
-        XCTAssertLessThanOrEqual(view.fittingSize.height, 26)
+        XCTAssertLessThanOrEqual(view.fittingSize.width, 68)
+        XCTAssertLessThanOrEqual(view.fittingSize.height, 30)
     }
 
     @MainActor
@@ -818,6 +844,29 @@ final class AppShellTests: XCTestCase {
     }
 
     @MainActor
+    func testKeychainRetryNeverReopensPasswordPrompt() throws {
+        let suite = "QuickNoteTests.KeychainRetry.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let reference = UUID().uuidString
+        defaults.set(reference, forKey: "ai.slot.2.keychainReference")
+        var reads = 0
+        let keychain = APIKeyKeychain(copyMatching: { query, _ in
+            reads += 1
+            XCTAssertEqual((query as NSDictionary)[kSecAttrAccount] as? String, "profile.2.\(reference)")
+            var allowed: DarwinBoolean = true
+            XCTAssertEqual(SecKeychainGetUserInteractionAllowed(&allowed), errSecSuccess)
+            XCTAssertFalse(allowed.boolValue, "重试只能重新检查，不能再次要求用户输入旧钥匙串密码")
+            return errSecAuthFailed
+        })
+        let store = AIConfigurationStore(defaults: defaults, keychain: keychain)
+        XCTAssertTrue(store.draft(for: .third).apiKey.isEmpty)
+        XCTAssertThrowsError(try store.retryAPIKeyRead(for: .third))
+        XCTAssertEqual(reads, 2)
+        XCTAssertEqual(defaults.string(forKey: "ai.slot.2.keychainReference"), reference)
+    }
+
+    @MainActor
     func testKeychainDenialCannotPromptOnReadOrOverwriteOtherProfiles() throws {
         let suite = "QuickNoteTests.KeychainDenial.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
@@ -896,7 +945,7 @@ final class AppShellTests: XCTestCase {
         XCTAssertEqual(reopened.draft(for: .third).apiKey, draft.apiKey)
         XCTAssertNotNil(reopened.keychainIssue(for: .first))
         denyVault = false
-        XCTAssertEqual(try reopened.authorizeAPIKey(for: .first), "other-test-key")
+        XCTAssertEqual(try reopened.retryAPIKeyRead(for: .first), "other-test-key")
         XCTAssertEqual(items[vault], originalVault)
 
         // A corrupt but readable vault is not equivalent to an empty one either.

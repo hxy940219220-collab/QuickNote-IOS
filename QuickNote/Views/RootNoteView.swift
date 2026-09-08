@@ -144,34 +144,63 @@ struct NoteNavigationControls: View {
     let previousTitle: String?
     let nextTitle: String?
     let navigate: (Int) -> Void
-    @State private var hovering = false
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         HStack(spacing: 0) {
             navigationButton(offset: -1, title: previousTitle)
             navigationButton(offset: 1, title: nextTitle)
         }
-        .foregroundStyle(hovering ? .primary : .secondary)
-        .onHover { value in
-            withAnimation(reduceMotion ? nil : .easeOut(duration: 0.16)) { hovering = value }
+        .foregroundStyle(.secondary)
+        .background(.primary.opacity(0.045), in: Capsule())
+        .overlay {
+            Rectangle().fill(.quaternary).frame(width: 1, height: 12).allowsHitTesting(false)
         }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("便签翻页")
     }
 
     private func navigationButton(offset: Int, title: String?) -> some View {
-        let previous = offset < 0
+        NoteNavigationButton(previous: offset < 0, title: title) { navigate(offset) }
+            .frame(width: 34, height: 30)
+            .quickNoteHoverHighlight(enabled: title != nil)
+    }
+}
+
+private struct NoteNavigationButton: NSViewRepresentable {
+    let previous: Bool
+    let title: String?
+    let action: () -> Void
+    @Environment(\.isEnabled) private var enabled
+
+    func makeNSView(context: Context) -> FirstClickNavigationButton {
+        let button = FirstClickNavigationButton(title: "", target: nil, action: nil)
+        button.isBordered = false
+        button.setButtonType(.momentaryChange)
+        button.imagePosition = .imageOnly
+        button.target = button
+        button.action = #selector(FirstClickNavigationButton.press)
+        return button
+    }
+
+    func updateNSView(_ button: FirstClickNavigationButton, context: Context) {
         let label = previous ? "上一条便签" : "下一条便签"
         let keys = previous ? "⌘⌥←" : "⌘⌥→"
-        return Button { navigate(offset) } label: {
-            Image(systemName: previous ? "chevron.left" : "chevron.right")
-                .font(.system(size: 10, weight: .regular))
-                .frame(width: 24, height: 26).contentShape(Rectangle())
-        }
-        .buttonStyle(.plain).quickNoteHoverHighlight()
-        .disabled(title == nil)
-        .help(title.map { "\(label)：\($0)（\(keys)）" } ?? (previous ? "已是第一条便签" : "已是最后一条便签"))
-        .accessibilityLabel(label).accessibilityValue(title ?? "没有更多便签")
+        button.image = NSImage(systemSymbolName: previous ? "chevron.up" : "chevron.down", accessibilityDescription: nil)?
+            .withSymbolConfiguration(.init(pointSize: 10, weight: .regular))
+        button.contentTintColor = .secondaryLabelColor
+        button.isEnabled = enabled && title != nil
+        button.onPress = action
+        button.toolTip = title.map { "\(label)：\($0)（\(keys)）" } ?? (previous ? "已是第一条便签" : "已是最后一条便签")
+        button.setAccessibilityLabel(label)
+        button.setAccessibilityValue(title ?? "没有更多便签")
     }
+}
+
+private final class FirstClickNavigationButton: NSButton {
+    var onPress: (() -> Void)?
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { isEnabled }
+    override var mouseDownCanMoveWindow: Bool { false }
+    @objc func press() { if isEnabled { onPress?() } }
 }
 
 enum AIFormattingComparison {
@@ -220,6 +249,7 @@ struct RootNoteView: View {
     @State private var windowLocked = false
     @State private var calendarPresented = false
     @State private var settingsPresented = false
+    @State private var searchPresented = false
     @State private var settingsDestination: QuickNoteSettingsDestination?
     @State private var noteStorageLocations: [NoteStorageLocation] = []
     @State private var commandPresented = false
@@ -265,11 +295,6 @@ struct RootNoteView: View {
                         .popover(isPresented: $calendarPresented, arrowEdge: .top) {
                             CalendarPopoverView(selectedDate: $selectedDate)
                         }
-                    }
-
-                    if notes.count > 1 {
-                        NoteNavigationControls(previousTitle: neighboringNote(-1)?.title,
-                                               nextTitle: neighboringNote(1)?.title, navigate: navigateNote)
                     }
 
                     Spacer(minLength: 8)
@@ -411,8 +436,12 @@ struct RootNoteView: View {
                         togglePin: togglePin,
                         delete: delete,
                         theme: theme,
-                        search: searchNotes,
-                        selectMatch: openSearchMatch,
+                        showSearch: {
+                            settingsPresented = false
+                            calendarPresented = false
+                            commandPresented = false
+                            searchPresented = true
+                        },
                         editTags: { note in
                             if session.openRecovering(note) { tagsPresented = true }
                         }
@@ -454,12 +483,25 @@ struct RootNoteView: View {
                             .allowsHitTesting(false)
                     }
                 }
+                .safeAreaInset(edge: .bottom, spacing: 0) {
+                    if notes.count > 1 {
+                        HStack {
+                            Spacer(minLength: 0)
+                            NoteNavigationControls(previousTitle: neighboringNote(-1)?.title,
+                                                   nextTitle: neighboringNote(1)?.title, navigate: navigateNote)
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 4)
+                        .background(Color(nsColor: theme.editorBackground))
+                    }
+                }
             }
         }
         .background(Color(nsColor: theme.editorBackground))
         .tint(Color(nsColor: theme.accentColor))
         .preferredColorScheme(theme.colorScheme)
         .ignoresSafeArea(.container, edges: .top)
+        .disabled(searchPresented)
         .overlay(alignment: .topTrailing) {
             if settingsPresented {
                 ZStack(alignment: .topTrailing) {
@@ -486,6 +528,35 @@ struct RootNoteView: View {
                         .padding(.trailing, 8)
                 }
             }
+        }
+        .overlay {
+            if searchPresented {
+                let close = { searchPresented = false }
+                GeometryReader { geometry in
+                    ZStack {
+                        Color.primary.opacity(0.15)
+                            .ignoresSafeArea()
+                            .contentShape(Rectangle())
+                            .onTapGesture(perform: close)
+                            .accessibilityLabel("关闭搜索背景")
+                        NoteSearchPanel(notes: notes, folders: folders, theme: theme, search: searchNotes,
+                            select: { note, query in
+                                if query.isEmpty { open(note) } else { openSearchMatch(note, query: query) }
+                                close()
+                            }, close: close,
+                            size: CGSize(width: min(480, geometry.size.width - 32),
+                                         height: min(380, geometry.size.height - 32)))
+                            .clipShape(RoundedRectangle(cornerRadius: 22))
+                            .contentShape(RoundedRectangle(cornerRadius: 22))
+                            .onTapGesture { }
+                            .shadow(color: .black.opacity(0.16), radius: 16, y: 4)
+                    }
+                    .frame(width: geometry.size.width, height: geometry.size.height)
+                }
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didResignActiveNotification)) { _ in
+            searchPresented = false
         }
         .sheet(item: $settingsDestination) { destination in
             QuickNoteSettingsDetailView(
@@ -747,6 +818,7 @@ struct RootNoteView: View {
     }
 
     private func performShortcut(_ shortcut: QuickNoteShortcut) {
+        guard !searchPresented else { return }
         switch shortcut {
         case .zoomIn:
             editorController.zoom(by: 0.1)
@@ -1410,7 +1482,6 @@ private struct NoteStorageLocation: Identifiable {
 }
 
 private struct QuickNoteSettingsView: View {
-    @AppStorage(VoiceOfflineRecognition.enabledKey) private var enhancedVoice = true
     @Binding var selectedTheme: String
     @Binding var petEnabled: Bool
     let open: (QuickNoteSettingsDestination) -> Void
@@ -1424,6 +1495,16 @@ private struct QuickNoteSettingsView: View {
                 .padding(.horizontal, 6)
                 .padding(.bottom, 2)
 
+            Toggle(isOn: $petEnabled) {
+                Label("Pip 桌宠陪伴", systemImage: "bird")
+                    .font(.system(size: 13, weight: .regular))
+            }
+            .toggleStyle(.switch)
+            .controlSize(.mini)
+            .padding(.horizontal, 6)
+            .frame(height: 30)
+            .help("Pip，陪你随手记的小鸟；可拖动与右键操作")
+            .accessibilityHint("显示或隐藏独立桌宠；收起便签不影响桌宠，关闭桌宠不影响 AI 功能")
             settingsButton("便签主题", systemImage: "paintpalette") {
                 themePresented.toggle()
             }
@@ -1432,23 +1513,6 @@ private struct QuickNoteSettingsView: View {
                 NoteThemePicker(selection: $selectedTheme)
             }
             settingsButton("AI 模型", systemImage: "sparkles", action: openAISettings)
-            Toggle(isOn: $enhancedVoice) {
-                Label("本机增强识别", systemImage: "waveform")
-                    .font(.system(size: 13, weight: .regular))
-            }
-            .toggleStyle(.switch).controlSize(.mini)
-            .padding(.horizontal, 6).frame(height: 30)
-            .help("录音结束后使用 SenseVoice 在本机复核；关闭后仅使用系统实时转写，下次录音生效")
-            Toggle(isOn: $petEnabled) {
-                Label("桌宠陪伴", systemImage: "bird")
-                    .font(.system(size: 13, weight: .regular))
-            }
-            .toggleStyle(.switch)
-            .controlSize(.mini)
-            .padding(.horizontal, 6)
-            .frame(height: 30)
-            .help("桌面常驻，可拖动与右键操作；退出 QuickNote 时消失")
-            .accessibilityHint("显示或隐藏独立桌宠；收起便签不影响桌宠，关闭桌宠不影响 AI 功能")
             settingsButton(.localStorage)
             settingsButton(.shortcuts)
             settingsButton(.help)

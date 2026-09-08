@@ -188,7 +188,7 @@ enum EditorTextStyle: String, CaseIterable, Identifiable {
         case .title: .systemFont(ofSize: 24, weight: .medium)
         case .heading: .systemFont(ofSize: 18, weight: .medium)
         case .subheading: .systemFont(ofSize: 16, weight: .medium)
-        case .body: .systemFont(ofSize: 13, weight: .light)
+        case .body: .systemFont(ofSize: 13, weight: .regular)
         case .monospaced: .monospacedSystemFont(ofSize: 13, weight: .regular)
         }
     }
@@ -1096,9 +1096,10 @@ final class RichTextEditorController: ObservableObject {
                 paragraphStyle.paragraphSpacingBefore = 10
                 paragraphStyle.paragraphSpacing = 5
             case .body, .monospaced:
-                paragraphStyle.lineHeightMultiple = 1.18
+                paragraphStyle.lineHeightMultiple = 0
+                paragraphStyle.lineSpacing = 1
                 paragraphStyle.paragraphSpacingBefore = 0
-                paragraphStyle.paragraphSpacing = 7
+                paragraphStyle.paragraphSpacing = 4
             }
             storage.addAttribute(.paragraphStyle, value: paragraphStyle, range: range)
         }
@@ -2180,7 +2181,7 @@ final class RichTextEditorController: ObservableObject {
             let mono = font.fontDescriptor.symbolicTraits.contains(.monoSpace)
             var result: NSFont = mono
                 ? .monospacedSystemFont(ofSize: font.pointSize, weight: removing ? .regular : .bold)
-                : .systemFont(ofSize: font.pointSize, weight: removing ? .light : .bold)
+                : .systemFont(ofSize: font.pointSize, weight: removing ? .regular : .bold)
             if font.fontDescriptor.symbolicTraits.contains(.italic) {
                 result = manager.convert(result, toHaveTrait: .italicFontMask)
             }

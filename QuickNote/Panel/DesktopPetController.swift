@@ -109,7 +109,7 @@ final class DesktopPetController: NSObject, NSMenuDelegate {
         clips = resourceURL.flatMap { try? Data(contentsOf: $0.appendingPathComponent("manifest.json")) }
             .flatMap { try? JSONDecoder().decode(Manifest.self, from: $0).clips } ?? []
         super.init()
-        petPanel.title = "小胖鸟桌宠"
+        petPanel.title = "Pip"
         petPanel.ignoresMouseEvents = false
         petPanel.acceptsMouseMovedEvents = true
         petPanel.contentView = bird
@@ -165,7 +165,7 @@ final class DesktopPetController: NSObject, NSMenuDelegate {
         configureQuickActions()
         bird.setAccessibilityElement(true)
         bird.setAccessibilityRole(.button)
-        bird.setAccessibilityLabel("小胖鸟桌宠")
+        bird.setAccessibilityLabel("Pip 小鸟桌宠")
         bird.setAccessibilityHelp("靠近小鸟可展开语音、便签和 AI 设置；点击摸摸头，拖动可移动，右键也可打开所有功能")
         let bubble = NSView(frame: NSRect(x: 0, y: 0, width: 210, height: 54))
         bubble.wantsLayer = true
@@ -364,7 +364,7 @@ final class DesktopPetController: NSObject, NSMenuDelegate {
             message = ""
             importantBubble = false
             bubblePanel.orderOut(nil)
-            bird.setAccessibilityLabel("小胖鸟桌宠")
+            bird.setAccessibilityLabel("Pip 小鸟桌宠")
             dismissBubble = nil
         }
     }
