@@ -34,8 +34,11 @@ final class NotePersistenceTests: XCTestCase {
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
         let settings = try String(contentsOf: root.appending(path: "QuickNote/Views/RootNoteView.swift"), encoding: .utf8)
         let panel = try XCTUnwrap(settings.range(of: "private struct QuickNoteSettingsView"))
-        let content = String(settings[panel.lowerBound...])
-        let pet = try XCTUnwrap(content.range(of: "Pip 桌宠陪伴"))
+        let panelEnd = try XCTUnwrap(settings.range(of: "private struct QuickNoteSettingsDetailView",
+            range: panel.upperBound..<settings.endIndex))
+        let content = String(settings[panel.lowerBound..<panelEnd.lowerBound])
+        let pet = try XCTUnwrap(content.range(of: "settingsRow(\"桌宠陪伴\", systemImage: \"pawprint\")"))
+        XCTAssertFalse(content.contains("Pip"), "设置菜单使用通用的桌宠名称")
         let theme = try XCTUnwrap(content.range(of: "settingsButton(\"便签主题\""))
         XCTAssertLessThan(pet.lowerBound, theme.lowerBound)
         XCTAssertFalse(content.contains("本机增强识别"))

@@ -518,7 +518,7 @@ struct RootNoteView: View {
                             showAISettings()
                         }
                     )
-                        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+                        .background(Color(nsColor: .windowBackgroundColor), in: RoundedRectangle(cornerRadius: 12))
                         .overlay {
                             RoundedRectangle(cornerRadius: 12)
                                 .stroke(Color.secondary.opacity(0.2), lineWidth: 1)
@@ -1492,19 +1492,16 @@ private struct QuickNoteSettingsView: View {
         VStack(alignment: .leading, spacing: 0) {
             Text("设置")
                 .font(.system(size: 14, weight: .semibold))
-                .padding(.horizontal, 6)
-                .padding(.bottom, 2)
+                .padding(.horizontal, 8)
+                .padding(.bottom, 6)
 
-            Toggle(isOn: $petEnabled) {
-                Label("Pip 桌宠陪伴", systemImage: "bird")
-                    .font(.system(size: 13, weight: .regular))
+            settingsRow("桌宠陪伴", systemImage: "pawprint") {
+                Toggle("桌宠陪伴", isOn: $petEnabled)
+                    .labelsHidden()
+                    .toggleStyle(.switch)
+                    .controlSize(.mini)
+                    .help("显示或隐藏桌宠")
             }
-            .toggleStyle(.switch)
-            .controlSize(.mini)
-            .padding(.horizontal, 6)
-            .frame(height: 30)
-            .help("Pip，陪你随手记的小鸟；可拖动与右键操作")
-            .accessibilityHint("显示或隐藏独立桌宠；收起便签不影响桌宠，关闭桌宠不影响 AI 功能")
             settingsButton("便签主题", systemImage: "paintpalette") {
                 themePresented.toggle()
             }
@@ -1512,13 +1509,21 @@ private struct QuickNoteSettingsView: View {
             .popover(isPresented: $themePresented, arrowEdge: .trailing) {
                 NoteThemePicker(selection: $selectedTheme)
             }
+            sectionDivider
             settingsButton("AI 模型", systemImage: "sparkles", action: openAISettings)
             settingsButton(.localStorage)
+            sectionDivider
             settingsButton(.shortcuts)
             settingsButton(.help)
         }
-        .padding(8)
-        .frame(width: 176)
+        .padding(10)
+        .frame(width: 224)
+    }
+
+    private var sectionDivider: some View {
+        Divider()
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
     }
 
     private func settingsButton(_ destination: QuickNoteSettingsDestination) -> some View {
@@ -1533,23 +1538,37 @@ private struct QuickNoteSettingsView: View {
         action: @escaping () -> Void
     ) -> some View {
         Button(action: action) {
-            HStack(spacing: 10) {
-                Image(systemName: systemImage)
-                    .frame(width: 18)
-                Text(title)
-                Spacer()
+            settingsRow(title, systemImage: systemImage) {
                 Image(systemName: "chevron.right")
                     .font(.system(size: 9, weight: .semibold))
                     .foregroundStyle(.tertiary)
+                    .frame(width: 10, alignment: .trailing)
             }
-            .font(.system(size: 13, weight: .medium))
-            .padding(.horizontal, 6)
-            .frame(maxWidth: .infinity, minHeight: 30, alignment: .leading)
-            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .quickNoteHoverHighlight(cornerRadius: 6)
+        .accessibilityLabel(title)
         .accessibilityHint("打开详细页面")
+    }
+
+    private func settingsRow<Trailing: View>(
+        _ title: String, systemImage: String, @ViewBuilder trailing: () -> Trailing
+    ) -> some View {
+        HStack(spacing: 9) {
+            Image(systemName: systemImage)
+                .font(.system(size: 14))
+                .frame(width: 20)
+                .accessibilityHidden(true)
+            Text(title)
+                .font(.system(size: 13, weight: .medium))
+                .lineLimit(1)
+                .accessibilityHidden(true)
+            Spacer(minLength: 8)
+            trailing()
+        }
+        .padding(.horizontal, 8)
+        .frame(maxWidth: .infinity, minHeight: 32, alignment: .leading)
+        .contentShape(Rectangle())
     }
 }
 
