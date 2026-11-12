@@ -6,11 +6,11 @@ product
 
 ## Users
 
-Mac users who need to capture thoughts without leaving their current workflow. They primarily invoke QuickNote from the keyboard, type or import selected text, briefly organize the result, and return to the previous app.
+Mac users who collect and make sense of information while learning or working. They open QuickNote from the keyboard, ask AI about selected text or an image, and save useful answers to the note they are building.
 
 ## Product Purpose
 
-QuickNote is a fast, local-first Mac note utility. Success means the note surface appears immediately, editing feels native and predictable, content is saved safely, and optional AI actions never slow down basic capture.
+QuickNote is a local-first AI notes app for macOS. It connects capture, questions, and revision so users can keep adding to a note as they learn. Success means the note opens quickly, editing feels native, and users can save a useful AI answer into a note they can keep working on.
 
 ## Brand Personality
 
