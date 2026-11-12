@@ -49,5 +49,16 @@
 			</array>
 		</dict>
 	</array>
+	<key>UTExportedTypeDeclarations</key>
+	<array>
+		<dict>
+			<key>UTTypeIdentifier</key>
+			<string>com.xixi.quicknote.note-reference</string>
+			<key>UTTypeDescription</key>
+			<string>QuickNote Note Reference</string>
+			<key>UTTypeConformsTo</key>
+			<array><string>public.data</string></array>
+		</dict>
+	</array>
 </dict>
 </plist>

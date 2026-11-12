@@ -627,6 +627,8 @@ final class DesktopPetVoiceController: NSObject, ObservableObject, NSWindowDeleg
     出现“有三件事、第一、第二、第三”等明确列举时，每项必须独立一行，用“1.、2.、3.”编号；不能仅用分号把多项挤在同一段。只有一句话时不要为了排版硬拆成列表。
     仅输出可直接复制或存入笔记的整理稿，使用纯文本、自然分段或简单编号，不加前言、分析过程、标题标签、代码围栏或 Markdown 加粗。
     """
+    private static let waitingForCodex = "正在等待 Codex…"
+    fileprivate static let destinationRowHeight: CGFloat = 20
     let recorder = LocalVoiceRecorder()
     @Published private(set) var isPresented = false
     @Published private(set) var isWorking = false { didSet { positionPanel() } }
@@ -652,19 +654,25 @@ final class DesktopPetVoiceController: NSObject, ObservableObject, NSWindowDeleg
     @Published private(set) var unpolishedTranscript = ""
     @Published private(set) var copiedTranscript: String?
     @Published private(set) var canRetryPolishing = false
+    @Published private var organizationRoute: AIFeatureRoute? { didSet { positionPanel() } }
+    var polishingDestination: String? {
+        guard case .codex? = organizationRoute else { return nil }
+        return "整理将发送至 \(CodexLocalPreferences.destinationName)"
+    }
     var didCopy: Bool { copiedTranscript == recorder.transcript }
     @Published private(set) var notes: [NoteRecord] = []
     private let session: NoteSession
     private let allNotes: () throws -> [NoteRecord]
-    private let analyze: (String, String) async throws -> AITextResult
-    private let polish: (String, String) async throws -> AITextResult
+    private let store: AIConfigurationStore
+    private let analyzeOverride: ((String, String) async throws -> AITextResult)?
     private let polishingTimeout: Duration
-    private let confirmSending: (String) -> Bool
+    private let confirmSendingOverride: ((String) -> Bool)?
     private weak var pet: DesktopPetController?
     private let showSettings: () -> Void
     private let openNote: (UUID) -> Void
     private var targetRevision: Int?
     private var capturedID: UUID?
+    private var formattingSourceID: UUID?
     private var task: Task<Void, Never>?
     private var polishDeadline: Task<Void, Never>?
     private var generation = UUID()
@@ -681,10 +689,10 @@ final class DesktopPetVoiceController: NSObject, ObservableObject, NSWindowDeleg
         self.session = session
         self.allNotes = allNotes
         self.pet = pet
-        self.analyze = analyze ?? { try await AITextAnalyzer.respond(instruction: $0, text: $1, store: store) }
-        self.polish = analyze ?? { try await AITextAnalyzer.respond(instruction: $0, text: $1, store: store, forDictation: true) }
+        self.store = store
+        self.analyzeOverride = analyze
         self.polishingTimeout = polishingTimeout
-        self.confirmSending = confirmSending ?? { store.confirmSending(.text, content: $0) }
+        self.confirmSendingOverride = confirmSending
         self.showSettings = showSettings
         self.openNote = openNote
         super.init()
@@ -714,6 +722,7 @@ final class DesktopPetVoiceController: NSObject, ObservableObject, NSWindowDeleg
         if !isPresented {
             captureScreen = NSScreen.screens.first(where: { $0.frame.contains(NSEvent.mouseLocation) })?.visibleFrame
                 ?? NSScreen.main?.visibleFrame
+            organizationRoute = store.resolvedSource(for: .voiceOrganization)
         }
         if preview?.consumed == true {
             recorder.discard()
@@ -768,7 +777,8 @@ final class DesktopPetVoiceController: NSObject, ObservableObject, NSWindowDeleg
         resetProposal()
         capturedID = session.currentNote?.id
         captureTarget(capturedID)
-        recorder.contextHints = [targetTitle] + notes.map(\.title)
+        organizationRoute = store.resolvedSource(for: .voiceOrganization)
+        refreshRecognitionHints()
         if VoiceOfflineRecognition.isAvailable {
             recorder.refine = { audio in try await VoiceOfflineRecognition.shared.transcribe(audio) }
         } else {
@@ -831,7 +841,11 @@ final class DesktopPetVoiceController: NSObject, ObservableObject, NSWindowDeleg
         captureScreen = screen
         let width = recorder.phase != .idle ? Self.recordingWidth(for: recorder.transcript)
             : (isWorking ? 240 : (showsTranscript ? 340 : Self.resultWidth(for: recorder.transcript)))
-        let frame = Self.hudFrame(in: screen, height: height, width: width)
+        let destinationWidth = polishingDestination.map {
+            ceil(($0 as NSString).size(withAttributes: [.font: NSFont.systemFont(ofSize: 11)]).width) + 24
+        }
+        let frame = Self.hudFrame(in: screen, height: height + (destinationWidth == nil ? 0 : Self.destinationRowHeight),
+                                  width: max(width, destinationWidth ?? 0))
         guard panel.frame != frame else { return }
         // Never leave an AppKit frame animation running across a different voice phase.
         // Text/meter animation stays inside the view, independently of window geometry.
@@ -873,19 +887,33 @@ final class DesktopPetVoiceController: NSObject, ObservableObject, NSWindowDeleg
 
     func retryPolishing() {
         guard canRetryPolishing else { return }
+        organizationRoute = store.resolvedSource(for: .voiceOrganization)
         polishTranscript()
     }
 
     private func polishTranscript() {
         guard isPresented, recorder.phase == .idle, !isWorking else { return }
-        let text = recorder.transcript.trimmingCharacters(in: .whitespacesAndNewlines)
+        let original = recorder.transcript
+        let text = original.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
         guard text.count <= 12_000 else { notice = "内容过长，已保留原始转写，请分段使用。"; return }
-        unpolishedTranscript = recorder.transcript
+        // The route used automatically is the one disclosed when recording started.
+        let route = organizationRoute ?? store.resolvedSource(for: .voiceOrganization)
+        if store.confirmVoicePolishing {
+            let lifecycle = generation
+            let confirmed = confirmSending(.voiceOrganization, content: "本次语音转写文字（不包含便签库或录音）", route: route)
+            guard generation == lifecycle, isPresented, recorder.transcript == original else { return }
+            guard confirmed else {
+                canRetryPolishing = true
+                notice = "已取消整理，已保留原始转写。"
+                return
+            }
+        }
+        unpolishedTranscript = original
         copiedTranscript = nil
-        beginWork("正在整理")
+        let progress = "正在整理"
+        beginWork(progress, route: route)
         let token = generation
-        let original = recorder.transcript
         task = Task { [weak self] in
             guard let self, generation == token, !Task.isCancelled else { return }
             var polished = false
@@ -896,7 +924,9 @@ final class DesktopPetVoiceController: NSObject, ObservableObject, NSWindowDeleg
                     try Task.checkCancellation()
                     guard generation == token, recorder.transcript == original else { return }
                     do {
-                        response = try await polish(Self.polishingInstruction, text)
+                        response = try await respond(Self.polishingInstruction, text: text, route: route,
+                            progress: progress, token: token, forDictation: true,
+                            preflight: transcriptPreflight(original, token: token))
                         break
                     } catch let error as AIAnalyzerError {
                         try Task.checkCancellation()
@@ -933,7 +963,8 @@ final class DesktopPetVoiceController: NSObject, ObservableObject, NSWindowDeleg
                 case let error as URLError where error.code == .timedOut:
                     reason = "模型响应超时"
                 default:
-                    reason = "AI 整理暂未完成"
+                    if case .codex = route { reason = error.localizedDescription }
+                    else { reason = "AI 整理暂未完成" }
                 }
                 notice = "\(reason)，已保留原始转写。"
             }
@@ -970,20 +1001,26 @@ final class DesktopPetVoiceController: NSObject, ObservableObject, NSWindowDeleg
 
     func interpret(analyzeContent: Bool = false) {
         guard recorder.phase == .idle, !isWorking else { return }
-        let text = recorder.transcript.trimmingCharacters(in: .whitespacesAndNewlines)
+        let original = recorder.transcript
+        let text = original.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
+        let route = store.resolvedSource(for: .voiceOrganization)
         let lifecycle = generation
-        guard confirmSending("本次语音转写文字（不包含便签库或录音）") else { return }
-        guard generation == lifecycle else { return }
+        guard confirmSending(.voiceOrganization, content: "本次语音转写文字（不包含便签库或录音）", route: route) else { return }
+        guard generation == lifecycle, recorder.transcript == original else { return }
         resetProposal()
-        beginWork(analyzeContent ? "正在分析这段内容…" : "正在理解你的意思…")
+        organizationRoute = route
+        let progress = analyzeContent ? "正在分析这段内容…" : "正在理解你的意思…"
+        beginWork(progress, route: route)
         let token = generation
         task = Task { [weak self] in
             guard let self, generation == token, !Task.isCancelled else { return }
             defer { finishWork(token) }
             do {
-                let response = try await analyze(analyzeContent ? AITextAction.analyze.instruction : VoiceProposal.instruction, text)
-                guard generation == token, !Task.isCancelled else { return }
+                let response = try await respond(analyzeContent ? AITextAction.analyze.instruction : VoiceProposal.instruction,
+                    text: text, route: route, progress: progress, token: token,
+                    preflight: transcriptPreflight(original, token: token))
+                guard generation == token, !Task.isCancelled, recorder.transcript == original else { return }
                 if analyzeContent {
                     let content = response.text.trimmingCharacters(in: .whitespacesAndNewlines)
                     guard !content.isEmpty, content.count <= 12_000 else { throw AIAnalyzerError.invalidResponse }
@@ -1032,6 +1069,21 @@ final class DesktopPetVoiceController: NSObject, ObservableObject, NSWindowDeleg
         targetTitle = notes.first(where: { $0.id == id })?.title ?? "请选择目标便签"
     }
 
+    private func refreshRecognitionHints() {
+        let eligibleNotes = notes.filter(\.isEligibleForAI)
+        let target = eligibleNotes.first(where: { $0.id == targetID }).map { [$0.title] } ?? []
+        recorder.contextHints = target + eligibleNotes.map(\.title)
+    }
+
+    func invalidateAIInput(for noteID: UUID) {
+        refreshRecognitionHints()
+        let wasFormatting = formattingSourceID == noteID
+        let hasStalePreview = preview.map { $0.action == .format && $0.targetID == noteID && !$0.consumed } == true
+        if wasFormatting { stopWork() }
+        if hasStalePreview { preview = nil }
+        if wasFormatting || hasStalePreview { notice = NoteAIInputError.ineligibleNote.localizedDescription }
+    }
+
     func preparePreview() {
         guard hasProposal, !isWorking, recorder.phase == .idle else { return }
         preview = nil
@@ -1046,21 +1098,34 @@ final class DesktopPetVoiceController: NSObject, ObservableObject, NSWindowDeleg
         }
         guard let id = targetID, let revision = targetRevision else { return }
         do {
+            guard session.isEligibleForAI(noteID: id) else { throw NoteAIInputError.ineligibleNote }
             guard session.contentRevision(for: id) == revision else { throw AIFormattingError.documentChanged }
             let original = try session.documentSnapshot(for: id)
             let editor = RichTextEditorController()
             let source = try editor.aiFormattingSource(document: original)
+            let route = store.resolvedSource(for: .formatting)
             let lifecycle = generation
-            guard confirmSending("便签“\(targetTitle)”的文字段落（不含图片/附件文件）") else { return }
-            guard generation == lifecycle else { return }
-            beginWork("正在排版：\(targetTitle)")
+            guard confirmSending(.formatting, content: "便签“\(targetTitle)”的文字段落（不含图片/附件文件）",
+                                 route: route) else { return }
+            guard generation == lifecycle, targetID == id, action == .format else { return }
+            let recheck: OpenAICompatibleClient.RequestPreflight = { [session] in
+                guard session.isEligibleForAI(noteID: id) else { throw NoteAIInputError.ineligibleNote }
+                guard session.contentRevision(for: id) == revision else { throw AIFormattingError.documentChanged }
+            }
+            try recheck()
+            let progress = "正在排版：\(targetTitle)"
+            beginWork(progress, route: route)
+            formattingSourceID = id
             let token = generation
             task = Task { [weak self] in
                 guard let self, generation == token, !Task.isCancelled else { return }
                 defer { finishWork(token) }
                 do {
-                    let response = try await analyze(AIFormattingPlan.instruction, source.material)
+                    let response = try await respond(AIFormattingPlan.instruction, text: source.material,
+                        route: route, progress: progress, token: token, outputSchema: AIFormattingPlan.outputSchema,
+                        preflight: recheck)
                     guard generation == token, !Task.isCancelled else { return }
+                    try recheck()
                     let plan = try AIFormattingPlan.parse(response.text)
                     let formatted = try editor.formattedDocument(plan, source: source)
                     preview = VoiceNotePreview(action: .format, targetID: id, revision: revision, content: formatted, original: original)
@@ -1075,6 +1140,10 @@ final class DesktopPetVoiceController: NSObject, ObservableObject, NSWindowDeleg
 
     func applyPreview() {
         guard var draft = preview, !draft.consumed, !isWorking else { return }
+        if draft.action == .format, let noteID = draft.targetID, !session.isEligibleForAI(noteID: noteID) {
+            invalidateAIInput(for: noteID)
+            return
+        }
         do {
             _ = try draft.apply(to: session)
             preview = draft
@@ -1093,28 +1162,63 @@ final class DesktopPetVoiceController: NSObject, ObservableObject, NSWindowDeleg
     func reviseTranscript() { guard !isWorking else { return }; resetProposal() }
     func configureAI() { showSettings() }
 
+    var confirmBeforePolishing: Bool {
+        get { store.confirmVoicePolishing }
+        set {
+            objectWillChange.send()
+            store.confirmVoicePolishing = newValue
+        }
+    }
+
     func stopWork() {
         canRetryPolishing = false
         generation = UUID()
         task?.cancel(); task = nil
         polishDeadline?.cancel(); polishDeadline = nil
+        formattingSourceID = nil
         isWorking = false
         pet?.finish(activityID, message: "已停止，草稿还在", clip: "attention")
         notice = "已停止，本次没有写入便签。"
     }
 
-    private func beginWork(_ message: String) {
+    private func confirmSending(_ feature: AIFeature, content: String, route: AIFeatureRoute) -> Bool {
+        confirmSendingOverride?(content) ?? store.confirmSending(feature, content: content, route: route)
+    }
+
+    private func transcriptPreflight(_ original: String, token: UUID) -> OpenAICompatibleClient.RequestPreflight {
+        { [weak self] in
+            guard let self, generation == token, recorder.transcript == original else { throw CancellationError() }
+        }
+    }
+
+    private func respond(_ instruction: String, text: String, route: AIFeatureRoute, progress: String,
+                         token: UUID, forDictation: Bool = false, outputSchema: Data? = nil,
+                         preflight: @escaping OpenAICompatibleClient.RequestPreflight) async throws -> AITextResult {
+        if let analyzeOverride {
+            try preflight()
+            return try await analyzeOverride(instruction, text)
+        }
+        return try await FeatureAI.textRespond(instruction: instruction, text: text, route: route,
+            forDictation: forDictation, outputSchema: outputSchema, preflight: preflight, onFirstDelta: { [weak self] in
+                guard let self, generation == token, notice == Self.waitingForCodex else { return }
+                notice = progress
+            })
+    }
+
+    private func beginWork(_ message: String, route: AIFeatureRoute) {
         canRetryPolishing = false
         generation = UUID()
         isWorking = true
-        notice = message
-        pet?.begin(id: activityID, message: "正在思考中", detail: message)
+        if case .codex = route { notice = Self.waitingForCodex }
+        else { notice = message }
+        pet?.begin(id: activityID, message: "正在思考中", detail: notice)
     }
 
     private func finishWork(_ token: UUID, polished: Bool = false) {
         guard token == generation else { return }
         polishDeadline?.cancel(); polishDeadline = nil
         task = nil
+        formattingSourceID = nil
         isWorking = false
         let ready = polished || (hasProposal && (action != .format || preview != nil))
         pet?.finish(activityID, message: ready ? "整理好了，来看看" : "暂时没处理成功",
@@ -1155,6 +1259,7 @@ final class DesktopPetVoiceController: NSObject, ObservableObject, NSWindowDeleg
     func hide() {
         isPresented = false
         interrupted()
+        organizationRoute = nil
         panel?.orderOut(nil)
         panel?.contentView = nil
         panel = nil
@@ -1350,7 +1455,7 @@ private struct DesktopPetVoiceView: View {
     private var cornerRadius: CGFloat { recorder.phase != .idle || controller.isWorking ? 18 : 14 }
 
     var body: some View {
-        Group {
+        VStack(spacing: 0) {
             if recorder.phase != .idle {
                 VoiceRecordingCapsule(phase: recorder.phase, text: recorder.transcript, level: recorder.level,
                                       isRecovering: recorder.isRecovering, theme: theme, close: controller.close, stop: controller.stopRecording)
@@ -1389,6 +1494,8 @@ private struct DesktopPetVoiceView: View {
                             Button(controller.showsTranscript ? "收起详情" : "展开详情", action: controller.toggleTranscript)
                             Button("重新录音", action: controller.startRecording)
                             targetPicker
+                            Divider()
+                            Toggle("语音整理前确认", isOn: $controller.confirmBeforePolishing)
                         } label: { Image(systemName: "ellipsis").frame(width: 24, height: 24) }
                             .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
                             .tint(Color(nsColor: .secondaryLabelColor))
@@ -1474,6 +1581,13 @@ private struct DesktopPetVoiceView: View {
                         if !compactResult { transcriptActions }
                     }
                 }.padding(.horizontal, 10).padding(.vertical, 10)
+            }
+            if let destination = controller.polishingDestination {
+                Text(destination)
+                    .font(.system(size: 11)).foregroundStyle(.secondary)
+                    .lineLimit(1).fixedSize(horizontal: true, vertical: false)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: DesktopPetVoiceController.destinationRowHeight)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)

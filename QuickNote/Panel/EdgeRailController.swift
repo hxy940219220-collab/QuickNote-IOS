@@ -20,9 +20,12 @@ final class EdgeRailController {
     private weak var currentScreen: NSScreen?
     private var contentSize = EdgeRailView.collapsedSize
     private var noteCount = 0
+    private var pendingCount = 0
+    private var displayedNotes: [NoteRecord] = []
     private var isExpanded = false
 
     var onSelect: ((NoteRecord) -> Void)?
+    var onOpenProposals: (() -> Void)?
 
     isolated deinit {
         if let globalMouseMonitor { NSEvent.removeMonitor(globalMouseMonitor) }
@@ -56,9 +59,10 @@ final class EdgeRailController {
 
     func update(notes: [NoteRecord]) {
         let notes = Array(notes.prefix(EdgeRailView.maximumNotes))
+        displayedNotes = notes
         noteCount = notes.count
         isExpanded = false
-        contentSize = EdgeRailView.collapsedSize
+        contentSize = railSize(expanded: false)
         let hostingView = NSHostingView(rootView: EdgeRailView(
             notes: notes,
             preview: { [weak self] in self?.setPreview($0) },
@@ -66,7 +70,9 @@ final class EdgeRailController {
                 self?.setPreview(nil)
                 self?.onSelect?(note)
             },
-            expandedChanged: { [weak self] in self?.setExpanded($0) }
+            expandedChanged: { [weak self] in self?.setExpanded($0) },
+            pendingCount: pendingCount,
+            openProposals: { [weak self] in self?.onOpenProposals?() }
         ))
         hostingView.wantsLayer = true
         hostingView.layer?.backgroundColor = NSColor.clear.cgColor
@@ -74,12 +80,21 @@ final class EdgeRailController {
         reposition(force: true)
     }
 
+    func setPendingCount(_ count: Int) {
+        guard pendingCount != count else { return }
+        pendingCount = count
+        update(notes: displayedNotes)
+    }
+
+    private func railSize(expanded: Bool) -> NSSize {
+        let base = expanded ? EdgeRailView.expandedSize(noteCount: noteCount) : EdgeRailView.collapsedSize
+        return pendingCount > 0 ? NSSize(width: max(base.width, 22), height: base.height + 20) : base
+    }
+
     private func setExpanded(_ expanded: Bool) {
         guard expanded != isExpanded else { return }
         isExpanded = expanded
-        contentSize = expanded
-            ? EdgeRailView.expandedSize(noteCount: noteCount)
-            : EdgeRailView.collapsedSize
+        contentSize = railSize(expanded: expanded)
         reposition(force: true, animated: true)
     }
 

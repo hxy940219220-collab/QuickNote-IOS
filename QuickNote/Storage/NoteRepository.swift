@@ -18,6 +18,45 @@ struct NoteRecoveryError: LocalizedError {
     var errorDescription: String? { message }
 }
 
+@MainActor
+enum NoteSidebarOrder {
+    private static func rankPrecedes(_ lhs: Int?, _ rhs: Int?) -> Bool? {
+        switch (lhs, rhs) {
+        case let (a?, b?) where a != b: return a < b
+        case (.some, .none): return true
+        case (.none, .some): return false
+        default: return nil
+        }
+    }
+
+    static func notePrecedes(_ lhs: NoteRecord, _ rhs: NoteRecord) -> Bool {
+        if let result = rankPrecedes(lhs.manualOrder, rhs.manualOrder) { return result }
+        if lhs.isPinned != rhs.isPinned { return lhs.isPinned }
+        if lhs.updatedAt != rhs.updatedAt { return lhs.updatedAt > rhs.updatedAt }
+        return lhs.id.uuidString < rhs.id.uuidString
+    }
+
+    static func pinnedPrecedes(_ lhs: NoteRecord, _ rhs: NoteRecord) -> Bool {
+        if let result = rankPrecedes(lhs.pinnedOrder, rhs.pinnedOrder) { return result }
+        if lhs.updatedAt != rhs.updatedAt { return lhs.updatedAt > rhs.updatedAt }
+        return lhs.id.uuidString < rhs.id.uuidString
+    }
+
+    static func folderPrecedes(_ lhs: NoteFolder, _ rhs: NoteFolder) -> Bool {
+        if let result = rankPrecedes(lhs.manualOrder, rhs.manualOrder) { return result }
+        if lhs.createdAt != rhs.createdAt { return lhs.createdAt < rhs.createdAt }
+        return lhs.id.uuidString < rhs.id.uuidString
+    }
+
+    static func inserting(_ id: UUID, relativeTo target: UUID, after: Bool, in ids: [UUID]) -> [UUID]? {
+        guard id != target, ids.contains(id), ids.contains(target) else { return nil }
+        var result = ids.filter { $0 != id }
+        guard let index = result.firstIndex(of: target) else { return nil }
+        result.insert(id, at: index + (after ? 1 : 0))
+        return result
+    }
+}
+
 private enum BackupSetting: Codable {
     case string(String), integer(Int), boolean(Bool), strings([String])
 
@@ -103,6 +142,7 @@ private struct NoteBackup {
         let id: UUID
         let name: String
         let createdAt: Date
+        let manualOrder: Int?
     }
     struct Note: Codable {
         let id: UUID
@@ -117,6 +157,9 @@ private struct NoteBackup {
         let tags: [String]
         let folderID: UUID?
         let versions: [NoteVersion]
+        let manualOrder: Int?
+        let pinnedOrder: Int?
+        let isSensitive: Bool?
     }
     struct Manifest: Codable {
         let formatVersion: Int
@@ -211,7 +254,8 @@ private struct NoteBackup {
               folderIDs.count == manifest.folders.count,
               Set(manifest.notes.map(\.id)).count == manifest.notes.count,
               manifest.folders.allSatisfy({ !$0.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                  && $0.name.count <= 1_024 && $0.createdAt.timeIntervalSince1970.isFinite }),
+                  && $0.name.count <= 1_024 && $0.createdAt.timeIntervalSince1970.isFinite
+                  && ($0.manualOrder.map { $0 >= 0 } ?? true) }),
               manifest.settings.allSatisfy({ validSetting($0.key, $0.value) }) else {
             throw NoteRecoveryError(message: "备份格式、文件夹或设置清单无效。")
         }
@@ -219,6 +263,8 @@ private struct NoteBackup {
         var allowed: Set<String> = ["manifest.json", "Documents", "History"]
         for note in manifest.notes {
             guard note.documentPath == "\(note.id.uuidString).rtfd",
+                  note.manualOrder.map({ $0 >= 0 }) ?? true,
+                  note.pinnedOrder.map({ $0 >= 0 }) ?? true,
                   note.folderID.map(folderIDs.contains) ?? true,
                   note.cursorLocation >= 0, note.title.count <= 100_000,
                   note.createdAt.timeIntervalSince1970.isFinite, note.updatedAt.timeIntervalSince1970.isFinite,
@@ -263,8 +309,10 @@ final class NoteRepository {
 
     init(context: ModelContext) { self.context = context }
 
-    func createNote() -> NoteRecord {
-        let note = NoteRecord()
+    func createNote() -> NoteRecord { createNote(id: UUID()) }
+
+    func createNote(id: UUID) -> NoteRecord {
+        let note = NoteRecord(id: id)
         context.insert(note)
         return note
     }
@@ -282,10 +330,16 @@ final class NoteRepository {
         try context.fetch(FetchDescriptor<NoteRecord>(sortBy: [SortDescriptor(\.updatedAt, order: .reverse)]))
     }
 
+    func note(withID id: UUID) throws -> NoteRecord? {
+        var descriptor = FetchDescriptor<NoteRecord>(predicate: #Predicate { $0.id == id })
+        descriptor.fetchLimit = 1
+        return try context.fetch(descriptor).first
+    }
+
     func allFolders() throws -> [NoteFolder] {
         try context.fetch(
             FetchDescriptor<NoteFolder>(sortBy: [SortDescriptor(\.createdAt)])
-        )
+        ).sorted(by: NoteSidebarOrder.folderPrecedes)
     }
 
     func createFolder(named rawName: String) throws -> NoteFolder {
@@ -298,22 +352,57 @@ final class NoteRepository {
         folder.name = try validatedFolderName(rawName, excluding: folder.id)
     }
 
+    func reorderNote(id: UUID, relativeTo targetID: UUID, after: Bool, pinned: Bool = false) throws -> Bool {
+        let notes = try allNotes()
+        guard let source = notes.first(where: { $0.id == id }),
+              let target = notes.first(where: { $0.id == targetID }), id != targetID else { return false }
+        let peers: [NoteRecord]
+        if pinned {
+            guard source.isPinned, target.isPinned else { return false }
+            peers = notes.filter(\.isPinned).sorted(by: NoteSidebarOrder.pinnedPrecedes)
+        } else {
+            if let folderID = target.folderID {
+                guard try allFolders().contains(where: { $0.id == folderID }) else { return false }
+            }
+            peers = notes.filter { $0.folderID == target.folderID }
+        }
+        let original = peers.map(\.id)
+        let candidates = original.contains(id) ? original : original + [id]
+        guard let ordered = NoteSidebarOrder.inserting(id, relativeTo: targetID, after: after, in: candidates),
+              ordered != original else { return false }
+        if !pinned { source.folderID = target.folderID }
+        let byID = Dictionary(uniqueKeysWithValues: notes.map { ($0.id, $0) })
+        for (rank, noteID) in ordered.enumerated() {
+            if pinned { byID[noteID]?.pinnedOrder = rank }
+            else { byID[noteID]?.manualOrder = rank }
+        }
+        return true
+    }
+
+    func reorderFolder(id: UUID, relativeTo targetID: UUID, after: Bool) throws -> Bool {
+        let folders = try allFolders()
+        let original = folders.map(\.id)
+        guard let ordered = NoteSidebarOrder.inserting(id, relativeTo: targetID, after: after, in: original),
+              ordered != original else { return false }
+        let byID = Dictionary(uniqueKeysWithValues: folders.map { ($0.id, $0) })
+        for (rank, folderID) in ordered.enumerated() { byID[folderID]?.manualOrder = rank }
+        return true
+    }
+
     func move(_ note: NoteRecord, to folder: NoteFolder?) {
+        if note.folderID != folder?.id { note.manualOrder = nil }
         note.folderID = folder?.id
     }
 
     func delete(_ folder: NoteFolder) throws {
         for note in try notesIncludingDeleted() where note.folderID == folder.id {
-            note.folderID = nil
+            move(note, to: nil)
         }
         context.delete(folder)
     }
 
     func allNotes() throws -> [NoteRecord] {
-        try notesIncludingDeleted().filter { $0.deletedAt == nil }.sorted {
-            if $0.isPinned != $1.isPinned { return $0.isPinned }
-            return $0.updatedAt > $1.updatedAt
-        }
+        try notesIncludingDeleted().filter { $0.deletedAt == nil }.sorted(by: NoteSidebarOrder.notePrecedes)
     }
 
     func recentNotes(limit: Int = 6) throws -> [NoteRecord] {
@@ -369,12 +458,13 @@ final class NoteRepository {
                     documentPath: note.documentPath, createdAt: note.createdAt, updatedAt: note.updatedAt,
                     deletedAt: note.deletedAt, isPinned: note.isPinned,
                     cursorLocation: min(max(0, note.cursorLocation), document.length),
-                    tags: note.tags, folderID: note.folderID, versions: versions))
+                    tags: note.tags, folderID: note.folderID, versions: versions,
+                    manualOrder: note.manualOrder, pinnedOrder: note.pinnedOrder, isSensitive: note.isSensitive))
             } catch {
                 throw NoteRecoveryError(message: "无法备份便签“\(note.title)”：\(error.localizedDescription) 请先检查原文档。")
             }
         }
-        let folders = try allFolders().map { NoteBackup.Folder(id: $0.id, name: $0.name, createdAt: $0.createdAt) }
+        let folders = try allFolders().map { NoteBackup.Folder(id: $0.id, name: $0.name, createdAt: $0.createdAt, manualOrder: $0.manualOrder) }
         var settings: [String: BackupSetting] = [:]
         for key in NoteBackup.settingKeys {
             guard let object = defaults.object(forKey: key),
@@ -416,6 +506,7 @@ final class NoteRepository {
                 let created = try createFolder(named: name)
                 insertedFolders.append(created)
                 created.createdAt = folder.createdAt
+                created.manualOrder = folder.manualOrder
                 folderMap[folder.id] = created.id
             }
             for entry in manifest.notes {
@@ -430,6 +521,9 @@ final class NoteRepository {
                 note.cursorLocation = entry.cursorLocation
                 note.tags = entry.tags
                 note.folderID = entry.folderID.flatMap { folderMap[$0] }
+                note.manualOrder = entry.manualOrder
+                note.pinnedOrder = entry.pinnedOrder
+                note.isSensitive = entry.isSensitive ?? false
                 let target = documents.root.appending(path: note.documentPath)
                 guard !fm.fileExists(atPath: target.path) else { throw CocoaError(.fileWriteFileExists) }
                 try fm.moveItem(at: stage.appending(path: "Documents/\(entry.documentPath)"), to: target)

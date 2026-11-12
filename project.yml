@@ -18,6 +18,7 @@ targets:
     sources:
       - path: QuickNote
         excludes: [Resources/DesktopPet, Resources/Speech]
+      - path: QuickNoteMCPShared
       - path: QuickNote/Resources/DesktopPet
         type: folder
         buildPhase: resources
@@ -27,6 +28,12 @@ targets:
     dependencies:
       - package: SherpaOnnx
         product: sherpa-onnx
+      - target: quicknote-mcp
+        link: false
+        embed: true
+        codeSign: true
+        copy:
+          destination: executables
     settings:
       base:
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
@@ -36,6 +43,10 @@ targets:
         CFBundleDisplayName: QuickNote
         LSApplicationCategoryType: public.app-category.productivity
         NSHighResolutionCapable: true
+        UTExportedTypeDeclarations:
+          - UTTypeIdentifier: com.xixi.quicknote.note-reference
+            UTTypeDescription: QuickNote Note Reference
+            UTTypeConformsTo: [public.data]
         NSScreenCaptureUsageDescription: QuickNote 需要截取你主动选择的屏幕区域，用于图片分析。
         NSMicrophoneUsageDescription: 仅在你点击录音时使用麦克风，将口述内容在本机转为便签文字；录音不会上传或保存。
         NSSpeechRecognitionUsageDescription: 将你主动录制的中文语音在本机转成可编辑文字，确认后再写入便签。
@@ -45,10 +56,22 @@ targets:
             NSMessage: analyzeImage
             NSPortName: $(PRODUCT_NAME)
             NSSendTypes: [public.image, public.file-url]
+  quicknote-mcp:
+    type: tool
+    platform: macOS
+    sources:
+      - QuickNoteMCPCLI
+      - QuickNoteMCPShared
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.xixi.quicknote.mcp
   QuickNoteTests:
     type: bundle.unit-test
     platform: macOS
-    sources: [QuickNoteTests]
+    sources:
+      - QuickNoteTests
+      - path: evals/ask/cases.jsonl
+        buildPhase: resources
     settings:
       base:
         GENERATE_INFOPLIST_FILE: YES

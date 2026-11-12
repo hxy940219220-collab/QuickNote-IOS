@@ -22,6 +22,11 @@ final class NoteRecord {
     var tagsText: String = ""
     var folderID: UUID? = nil
     var deletedAt: Date? = nil
+    var manualOrder: Int? = nil
+    var pinnedOrder: Int? = nil
+    var isSensitive: Bool = false
+
+    var isEligibleForAI: Bool { deletedAt == nil && !isSensitive }
 
     var tags: [String] {
         get { tagsText.split(separator: "\n").map(String.init) }
@@ -45,6 +50,7 @@ final class NoteFolder {
     @Attribute(.unique) var id: UUID
     var name: String
     var createdAt: Date
+    var manualOrder: Int? = nil
 
     init(id: UUID = UUID(), name: String, now: Date = .now) {
         self.id = id

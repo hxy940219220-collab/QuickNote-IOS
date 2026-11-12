@@ -24,45 +24,13 @@ extension View {
         modifier(QuickNoteHoverHighlight(cornerRadius: cornerRadius, enabled: enabled))
     }
 
-    func quickNoteTooltip(_ text: String, alignment: Alignment = .bottom) -> some View {
-        modifier(QuickNoteTooltip(text: text, alignment: alignment))
-    }
-}
-
-private struct QuickNoteTooltip: ViewModifier {
-    @State private var hovering = false
-    let text: String
-    let alignment: Alignment
-
-    func body(content: Content) -> some View {
-        content
-            .overlay(alignment: alignment) {
-                if hovering {
-                    Text(text)
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(.primary)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 5)
-                        .fixedSize()
-                        .background(Color(nsColor: .windowBackgroundColor), in: RoundedRectangle(cornerRadius: 6))
-                        .overlay {
-                            RoundedRectangle(cornerRadius: 6)
-                                .stroke(Color.secondary.opacity(0.22), lineWidth: 1)
-                        }
-                        .shadow(color: .black.opacity(0.16), radius: 5, y: 2)
-                        .offset(y: 30)
-                        .allowsHitTesting(false)
-                }
-            }
-            .zIndex(hovering ? 100 : 0)
-            .onHover { hovering = $0 }
-    }
 }
 
 enum QuickNoteShortcut: Equatable {
     case zoomIn
     case zoomOut
     case toggleSidebar
+    case searchNotes
     case newNote
     case insertLink
     case previousNote
@@ -73,6 +41,9 @@ enum QuickNoteShortcut: Equatable {
         modifiers: NSEvent.ModifierFlags
     ) -> QuickNoteShortcut? {
         let modifiers = modifiers.intersection(.deviceIndependentFlagsMask)
+        if modifiers.subtracting(.capsLock) == [.command, .shift], characters?.lowercased() == "f" {
+            return .searchNotes
+        }
         if modifiers == [.command, .option] {
             if characters == String(UnicodeScalar(NSLeftArrowFunctionKey)!) { return .previousNote }
             if characters == String(UnicodeScalar(NSRightArrowFunctionKey)!) { return .nextNote }
@@ -98,16 +69,29 @@ private final class QuickNoteShortcutMonitor: ObservableObject {
     private var monitor: Any?
     private var action: ((QuickNoteShortcut) -> Void)?
 
-    func start(window: @escaping () -> NSWindow?, action: @escaping (QuickNoteShortcut) -> Void) {
+    func start(window: @escaping () -> NSWindow?, switchSearchMode: @escaping (Bool) -> Bool,
+               dismissSearch: @escaping () -> Bool,
+               action: @escaping (QuickNoteShortcut) -> Void) {
         self.action = action
         guard monitor == nil else { return }
         monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let owner = window(), event.window === owner, owner.isKeyWindow,
                   owner.attachedSheet == nil, NSApp.modalWindow == nil else { return event }
+            let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask).subtracting(.capsLock)
+            if event.keyCode == 53, modifiers.isEmpty {
+                // The AppKit field editor can consume Escape before SwiftUI sees onExitCommand.
+                guard (owner.firstResponder as? NSTextView)?.hasMarkedText() != true else { return event }
+                if dismissSearch() { return nil }
+            }
+            if event.keyCode == 48, modifiers.isEmpty, let field = owner.firstResponder as? NSTextView,
+               field.isFieldEditor, !field.hasMarkedText(), switchSearchMode(event.isARepeat) { return nil }
             guard let shortcut = QuickNoteShortcut.resolve(
                 characters: event.charactersIgnoringModifiers,
                 modifiers: event.modifierFlags
             ), !event.isARepeat || shortcut == .zoomIn || shortcut == .zoomOut else { return event }
+            if shortcut == .searchNotes, (owner.firstResponder as? NSTextView)?.hasMarkedText() == true {
+                return event
+            }
             self?.action?(shortcut)
             return nil
         }
@@ -146,23 +130,24 @@ struct NoteNavigationControls: View {
     let navigate: (Int) -> Void
 
     var body: some View {
-        HStack(spacing: 0) {
+        VStack(spacing: 0) {
             navigationButton(offset: -1, title: previousTitle)
             navigationButton(offset: 1, title: nextTitle)
         }
         .foregroundStyle(.secondary)
-        .background(.primary.opacity(0.045), in: Capsule())
+        .background(.primary.opacity(0.025), in: RoundedRectangle(cornerRadius: 5))
         .overlay {
-            Rectangle().fill(.quaternary).frame(width: 1, height: 12).allowsHitTesting(false)
+            Rectangle().fill(.quaternary).frame(width: 10, height: 0.5).allowsHitTesting(false)
         }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("便签翻页")
+        .accessibilityIdentifier("chrome.pager")
     }
 
     private func navigationButton(offset: Int, title: String?) -> some View {
         NoteNavigationButton(previous: offset < 0, title: title) { navigate(offset) }
-            .frame(width: 34, height: 30)
-            .quickNoteHoverHighlight(enabled: title != nil)
+            .frame(width: 22, height: 22)
+            .quickNoteHoverHighlight(cornerRadius: 4, enabled: title != nil)
     }
 }
 
@@ -186,7 +171,7 @@ private struct NoteNavigationButton: NSViewRepresentable {
         let label = previous ? "上一条便签" : "下一条便签"
         let keys = previous ? "⌘⌥←" : "⌘⌥→"
         button.image = NSImage(systemSymbolName: previous ? "chevron.up" : "chevron.down", accessibilityDescription: nil)?
-            .withSymbolConfiguration(.init(pointSize: 10, weight: .regular))
+            .withSymbolConfiguration(.init(pointSize: 8, weight: .regular))
         button.contentTintColor = .secondaryLabelColor
         button.isEnabled = enabled && title != nil
         button.onPress = action
@@ -241,7 +226,13 @@ struct RootNoteView: View {
     let setWindowLocked: (Bool) -> Void
     let showAISettings: () -> Void
     var desktopPet: DesktopPetController? = nil
+    var reorderNoteAction: (UUID, UUID, Bool, Bool) throws -> Bool = { _, _, _, _ in false }
+    var reorderFolderAction: (UUID, UUID, Bool) throws -> Bool = { _, _, _ in false }
+    var askController: NoteAskController? = nil
+    var resolveAskNote: (UUID) -> NoteRecord? = { _ in nil }
+    var noteMCPService: NoteMCPService? = nil
     @AppStorage(DesktopPetController.enabledKey) private var petEnabled = false
+    @AppStorage("noteSearch.mode") private var searchMode = NoteSearchMode.search
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @StateObject private var editorController = RichTextEditorController()
     @StateObject private var shortcutMonitor = QuickNoteShortcutMonitor()
@@ -250,12 +241,19 @@ struct RootNoteView: View {
     @State private var calendarPresented = false
     @State private var settingsPresented = false
     @State private var searchPresented = false
+    @State private var searchInitialQuery = ""
+    @State private var searchReturnSelection: EditorReturnSelection?
+    @State private var searchGeneration = 0
     @State private var settingsDestination: QuickNoteSettingsDestination?
+    @State private var mcpReturnSelection: EditorReturnSelection?
     @State private var noteStorageLocations: [NoteStorageLocation] = []
     @State private var commandPresented = false
     @State private var isAIFormatting = false
+    @State private var isConfirmingAIFormatting = false
+    @State private var aiFormattingWaitingForCodex = false
     @State private var aiFormattingTask: Task<Void, Never>?
     @State private var aiFormattingID: UUID?
+    @State private var aiFormattingSourceID: UUID?
     @State private var aiFormattingNoteTitle: String?
     @State private var formattingPreview: AIFormattingPreview?
     @State private var previewPresented = false
@@ -268,101 +266,23 @@ struct RootNoteView: View {
 
     var body: some View {
         let noteID = session.currentNote?.id
-        VStack(spacing: 0) {
-            ZStack {
-                HStack(spacing: 8) {
-                    toolbarButton(
-                        "便签列表",
-                        systemImage: "sidebar.left",
-                        action: toggleDrawer
-                    )
-                    .offset(y: -1)
-
-                    TimelineView(.periodic(from: .now, by: 60)) { context in
-                        Button {
-                            commandPresented = false
-                            settingsPresented = false
-                            selectedDate = context.date
-                            calendarPresented.toggle()
-                        } label: {
-                            Text(CalendarText.toolbarDate(for: context.date))
-                                .font(.system(size: 12, weight: .regular))
-                        }
-                        .buttonStyle(.borderless)
-                        .quickNoteHoverHighlight()
-                        .help("查看日历")
-                        .accessibilityLabel(CalendarText.fullDate(for: context.date))
-                        .popover(isPresented: $calendarPresented, arrowEdge: .top) {
-                            CalendarPopoverView(selectedDate: $selectedDate)
-                        }
-                    }
-
-                    Spacer(minLength: 8)
-
-                    toolbarButton("新建便签（Command + N）", systemImage: "square.and.pencil") {
-                        commandPresented = false
-                        create()
-                    }
-
-                    toolbarButton(
-                        windowLocked ? "取消窗口置顶（不是加密）" : "窗口置顶（不是加密）",
-                        systemImage: windowLocked ? "pin.fill" : "pin",
-                        action: {
-                            commandPresented = false
-                            toggleWindowLock()
-                        }
-                    )
-
-                    toolbarButton("打开设置", systemImage: "gearshape", tooltipAlignment: .bottomTrailing) {
-                        commandPresented = false
-                        calendarPresented = false
-                        settingsPresented.toggle()
-                    }
-                }
-                .padding(.leading, 74)
-                .padding(.trailing, 10)
-
-                HStack(spacing: 2) {
-                    toolbarButton("编辑工具", systemImage: "slider.horizontal.3") {
-                        calendarPresented = false
-                        settingsPresented = false
-                        editorController.captureSelection()
-                        commandPresented.toggle()
-                    }
-                    .background(
-                        commandPresented ? Color.primary.opacity(0.065) : Color.clear,
-                        in: RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    )
-                    .popover(isPresented: $commandPresented, arrowEdge: .top) {
-                        NoteFormatPopover(
-                            controller: editorController,
-                            toggleChecklist: editorController.toggleChecklistItemAtSelection,
-                            chooseFiles: chooseFiles
-                        )
-                    }
-
-                    toolbarButton(
-                        isAIFormatting ? "停止 AI 排版" : "AI 排版",
-                        systemImage: isAIFormatting ? "stop.circle" : "wand.and.stars",
-                        action: {
-                            commandPresented = false
-                            toggleAIFormatting()
-                        }
-                    )
-                }
-                .padding(.horizontal, 4)
-                .frame(height: 30)
-                .background(Color(nsColor: .controlBackgroundColor), in: Capsule())
+        HStack(spacing: 0) {
+            if drawerOpen {
+                sidebarColumn
+                Color(nsColor: NoteChrome.separator).frame(width: 1)
             }
-            .frame(height: 38)
-            .background(Color(nsColor: theme.toolbarBackground))
-            .zIndex(1)
+          VStack(spacing: 0) {
+            editorToolbar
+            if let noteMCPService {
+                MCPProposalInbox(store: noteMCPService.proposals, service: noteMCPService,
+                                 prepareFocus: captureMCPFocus, restoreFocus: restoreMCPFocus)
+            }
 
             if let aiFormattingNoteTitle {
                 HStack(spacing: 7) {
                     ProgressView()
                         .controlSize(.small)
-                    Text("AI 正在排版：")
+                    Text(aiFormattingWaitingForCodex ? "正在等待 Codex…" : "AI 正在排版")
                         .foregroundStyle(.secondary)
                     Text(aiFormattingNoteTitle)
                         .fontWeight(.medium)
@@ -419,40 +339,7 @@ struct RootNoteView: View {
                 .background(Color.orange.opacity(0.12))
             }
 
-            Divider()
-
-            HStack(spacing: 0) {
-                if drawerOpen {
-                    NoteDrawerView(
-                        notes: notes,
-                        folders: folders,
-                        selectedID: session.currentNote?.id,
-                        select: open,
-                        create: create,
-                        createFolder: createFolder,
-                        renameFolder: renameFolder,
-                        deleteFolder: deleteFolder,
-                        move: move,
-                        togglePin: togglePin,
-                        delete: delete,
-                        theme: theme,
-                        showSearch: {
-                            settingsPresented = false
-                            calendarPresented = false
-                            commandPresented = false
-                            searchPresented = true
-                        },
-                        editTags: { note in
-                            if session.openRecovering(note) { tagsPresented = true }
-                        }
-                    )
-                    .frame(width: 210)
-                    .transition(.move(edge: .leading).combined(with: .opacity))
-
-                    Divider()
-                }
-
-                ZStack(alignment: .topLeading) {
+                Group {
                     RichTextEditor(
                         document: session.document,
                         cursorLocation: session.currentNote?.cursorLocation ?? 0,
@@ -471,28 +358,21 @@ struct RootNoteView: View {
                         },
                         backgroundColor: theme.editorBackground,
                         textColor: theme.textColor,
-                        overridesDocumentTextColor: theme.overridesDocumentTextColor
+                        overridesDocumentTextColor: theme.overridesDocumentTextColor,
+                        displayScale: NoteChrome.editorDisplayScale,
+                        contentInsets: NoteChrome.editorInsets
                     )
 
-                    if session.document.string.isEmpty {
-                        Text("开始记录…")
-                            .font(.system(size: 15, weight: .light))
-                            .foregroundStyle(Color(nsColor: theme.textColor).opacity(0.35))
-                            .padding(.leading, 17)
-                            .padding(.top, 13)
-                            .allowsHitTesting(false)
-                    }
                 }
-                .safeAreaInset(edge: .bottom, spacing: 0) {
+                .padding(.horizontal, 24)
+                .frame(maxWidth: NoteChrome.maximumEditorWidth)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .overlay(alignment: .bottomTrailing) {
                     if notes.count > 1 {
-                        HStack {
-                            Spacer(minLength: 0)
-                            NoteNavigationControls(previousTitle: neighboringNote(-1)?.title,
-                                                   nextTitle: neighboringNote(1)?.title, navigate: navigateNote)
-                        }
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 4)
-                        .background(Color(nsColor: theme.editorBackground))
+                        NoteNavigationControls(previousTitle: neighboringNote(-1)?.title,
+                                               nextTitle: neighboringNote(1)?.title, navigate: navigateNote)
+                            .padding(.trailing, 1)
+                            .padding(.bottom, 8)
                     }
                 }
             }
@@ -512,6 +392,7 @@ struct RootNoteView: View {
                     QuickNoteSettingsView(
                         selectedTheme: $selectedTheme,
                         petEnabled: $petEnabled,
+                        noteMCPService: noteMCPService,
                         open: showSettings,
                         openAISettings: {
                             settingsPresented = false
@@ -531,41 +412,44 @@ struct RootNoteView: View {
         }
         .overlay {
             if searchPresented {
-                let close = { searchPresented = false }
+                let close = { dismissSearch(restoringEditor: true) }
                 GeometryReader { geometry in
-                    ZStack {
+                    ZStack(alignment: .top) {
                         Color.primary.opacity(0.15)
                             .ignoresSafeArea()
                             .contentShape(Rectangle())
                             .onTapGesture(perform: close)
                             .accessibilityLabel("关闭搜索背景")
                         NoteSearchPanel(notes: notes, folders: folders, theme: theme, search: searchNotes,
-                            select: { note, query in
-                                if query.isEmpty { open(note) } else { openSearchMatch(note, query: query) }
-                                close()
-                            }, close: close,
-                            size: CGSize(width: min(480, geometry.size.width - 32),
-                                         height: min(380, geometry.size.height - 32)))
-                            .clipShape(RoundedRectangle(cornerRadius: 22))
-                            .contentShape(RoundedRectangle(cornerRadius: 22))
+                            select: openSearchMatch, close: close,
+                            size: NoteSearchPanelLayout.maximumSize(in: geometry.size),
+                            initialQuery: searchInitialQuery, mode: $searchMode, askController: askController,
+                            selectCitation: openAskCitation)
+                            .clipShape(RoundedRectangle(cornerRadius: 14))
+                            .contentShape(RoundedRectangle(cornerRadius: 14))
                             .onTapGesture { }
                             .shadow(color: .black.opacity(0.16), radius: 16, y: 4)
+                            .padding(.top, NoteSearchPanelLayout.topInset)
                     }
                     .frame(width: geometry.size.width, height: geometry.size.height)
                 }
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didResignActiveNotification)) { _ in
-            searchPresented = false
+            if searchPresented { dismissSearch(restoringEditor: false) }
         }
-        .sheet(item: $settingsDestination) { destination in
-            QuickNoteSettingsDetailView(
-                destination: destination,
-                locations: noteStorageLocations,
-                session: session,
-                allNotes: allNotes,
-                didChangeLibrary: reloadLibraryRecovering
-            )
+        .sheet(item: $settingsDestination, onDismiss: restoreMCPFocus) { destination in
+            if destination == .mcp, let noteMCPService {
+                NoteMCPSettingsView(service: noteMCPService, folders: folders)
+            } else {
+                QuickNoteSettingsDetailView(
+                    destination: destination,
+                    locations: noteStorageLocations,
+                    session: session,
+                    allNotes: allNotes,
+                    didChangeLibrary: reloadLibraryRecovering
+                )
+            }
         }
         .sheet(isPresented: $previewPresented) {
             if let preview = formattingPreview {
@@ -587,7 +471,8 @@ struct RootNoteView: View {
         .onChange(of: petEnabled) { _, enabled in desktopPet?.setEnabled(enabled) }
         .onAppear {
             reloadLibraryRecovering()
-            shortcutMonitor.start(window: { editorController.window }, action: performShortcut)
+            shortcutMonitor.start(window: { editorController.window }, switchSearchMode: switchSearchMode,
+                                  dismissSearch: dismissSearchFromShortcut, action: performShortcut)
         }
         .onDisappear {
             shortcutMonitor.stop()
@@ -626,11 +511,97 @@ struct RootNoteView: View {
         } catch { NSAlert(error: error).runModal() }
     }
 
-    private func openSearchMatch(_ note: NoteRecord, query: String) {
-        guard session.openRecovering(note) else { return }
+    private struct EditorReturnSelection {
+        let noteID: UUID
+        let revision: Int
+        let range: NSRange?
+    }
+
+    private func presentSearch(_ initialQuery: String) {
+        guard !searchPresented, !editorController.hasMarkedText else { return }
+        searchGeneration += 1
+        searchInitialQuery = initialQuery
+        searchReturnSelection = session.currentNote.map { note in
+            EditorReturnSelection(noteID: note.id, revision: session.contentRevision(for: note.id),
+                                  range: editorController.selectedTextRange)
+        }
+        editorController.dismissSelectionToolbar()
+        settingsPresented = false
+        calendarPresented = false
+        commandPresented = false
+        searchPresented = true
+    }
+
+    private func switchSearchMode(isRepeat: Bool) -> Bool {
+        guard searchPresented, askController != nil else { return false }
+        if !isRepeat { searchMode = searchMode == .search ? .ask : .search }
+        return true
+    }
+
+    private func dismissSearchFromShortcut() -> Bool {
+        guard searchPresented else { return false }
+        dismissSearch(restoringEditor: true)
+        return true
+    }
+
+    private func dismissSearch(restoringEditor: Bool) {
+        searchGeneration += 1
+        if searchMode == .ask { askController?.deactivate() }
+        searchPresented = false
+        let savedSelection = searchReturnSelection
+        searchReturnSelection = nil
+        guard restoringEditor else { return }
+        let generation = searchGeneration
         DispatchQueue.main.async {
-            guard session.currentNote?.id == note.id else { return }
-            _ = editorController.findText(query)
+            guard searchGeneration == generation, editorController.window != nil else { return }
+            let selection = savedSelection.flatMap { saved -> NSRange? in
+                guard session.currentNote?.id == saved.noteID,
+                      session.contentRevision(for: saved.noteID) == saved.revision else { return nil }
+                return saved.range
+            }
+            editorController.focusEditor(restoring: selection)
+        }
+    }
+
+    private func openSearchMatch(_ note: NoteRecord, query: String, snippet: NoteSearchSnippet?) {
+        openSearchNote(note, resetNavigation: query.isEmpty) { _ in
+            _ = editorController.revealSearchMatch(snippet, query: query)
+        }
+    }
+
+    private func openAskCitation(_ evidence: NoteAskEvidence, question: String) {
+        let chunk = evidence.chunk
+        guard let note = resolveAskNote(chunk.noteID), note.isEligibleForAI,
+              session.isEligibleForAI(noteID: chunk.noteID) else { return }
+        openSearchNote(note, resetNavigation: false) { revision in
+            guard session.isEligibleForAI(noteID: chunk.noteID) else { return }
+            _ = editorController.revealAskCitation(chunk, revision: revision, question: question)
+        }
+    }
+
+    private func openSearchNote(_ note: NoteRecord, resetNavigation: Bool, reveal: @escaping (Int) -> Void) {
+        let id = note.id
+        if resetNavigation { navigationOrder.refresh(notes: notes, folders: folders, reset: true) }
+        guard session.openRecovering(note) else {
+            dismissSearch(restoringEditor: true)
+            return
+        }
+        dismissSearch(restoringEditor: false)
+        let generation = searchGeneration
+        let revision = session.contentRevision(for: id)
+        Task { @MainActor in
+            // Wait for SwiftUI to put the newly opened note into the AppKit editor.
+            for _ in 0..<20 {
+                guard searchGeneration == generation, session.currentNote?.id == id,
+                      session.contentRevision(for: id) == revision else { return }
+                if editorController.renderedNoteID == id,
+                   editorController.renderedText == session.document.string {
+                    editorController.focusEditor()
+                    reveal(revision)
+                    return
+                }
+                try? await Task.sleep(for: .milliseconds(15))
+            }
         }
     }
 
@@ -644,8 +615,17 @@ struct RootNoteView: View {
         }
     }
 
+    private func toggleSensitive(_ note: NoteRecord) {
+        do {
+            try session.setSensitive(!note.isSensitive, for: note)
+            if note.isSensitive { invalidateAIFormatting(for: note.id) }
+            reloadLibraryRecovering()
+        } catch { NSAlert(error: error).runModal() }
+    }
+
     private func delete(_ note: NoteRecord) {
         if session.deleteRecovering(note) {
+            invalidateAIFormatting(for: note.id)
             reloadLibraryRecovering()
         }
     }
@@ -658,6 +638,22 @@ struct RootNoteView: View {
     private func renameFolder(_ folder: NoteFolder, to name: String) throws {
         try renameFolderAction(folder, name)
         try reloadLibrary()
+    }
+
+    private func reorderNote(_ id: UUID, _ target: UUID, _ after: Bool, _ pinned: Bool) -> Bool {
+        do {
+            guard try reorderNoteAction(id, target, after, pinned) else { return false }
+            try reloadLibrary()
+            return true
+        } catch { NSAlert(error: error).runModal(); return false }
+    }
+
+    private func reorderFolder(_ id: UUID, _ target: UUID, _ after: Bool) -> Bool {
+        do {
+            guard try reorderFolderAction(id, target, after) else { return false }
+            try reloadLibrary()
+            return true
+        } catch { NSAlert(error: error).runModal(); return false }
     }
 
     private func deleteFolder(_ folder: NoteFolder) {
@@ -700,6 +696,7 @@ struct RootNoteView: View {
     }
 
     private func showSettings(_ destination: QuickNoteSettingsDestination) {
+        if destination == .mcp { captureMCPFocus() }
         if destination == .localStorage {
             do {
                 noteStorageLocations = try allNotes().map { note in
@@ -719,6 +716,20 @@ struct RootNoteView: View {
         DispatchQueue.main.async { settingsDestination = destination }
     }
 
+    private func captureMCPFocus() {
+        guard let note = session.currentNote else { return }
+        mcpReturnSelection = .init(noteID: note.id, revision: session.contentRevision(for: note.id),
+                                   range: editorController.selectedTextRange)
+    }
+
+    private func restoreMCPFocus() {
+        guard let saved = mcpReturnSelection else { return }
+        mcpReturnSelection = nil
+        guard session.currentNote?.id == saved.noteID,
+              session.contentRevision(for: saved.noteID) == saved.revision else { return }
+        editorController.focusEditor(restoring: saved.range)
+    }
+
     private func chooseFiles() {
         let panel = NSOpenPanel()
         panel.allowsMultipleSelection = true
@@ -734,29 +745,35 @@ struct RootNoteView: View {
 
     private func toggleAIFormatting() {
         if isAIFormatting {
-            if let id = aiFormattingID { desktopPet?.finish(id, message: "已停止排版", clip: "attention") }
-            aiFormattingTask?.cancel()
-            aiFormattingTask = nil
-            aiFormattingID = nil
-            aiFormattingNoteTitle = nil
-            isAIFormatting = false
+            stopAIFormatting()
             return
         }
         if formattingPreview != nil {
             previewPresented = true
             return
         }
+        guard !isConfirmingAIFormatting else { return }
         do {
             guard let note = session.currentNote else { throw AIFormattingError.noContent }
-            guard AIConfigurationStore.shared.confirmSending(.text, content: "发送“\(note.title)”的文字用于排版，不发送附件原文件。") else { return }
             let noteID = note.id
+            guard session.isEligibleForAI(noteID: noteID) else { throw NoteAIInputError.ineligibleNote }
+            let store = AIConfigurationStore.shared
+            let route = store.resolvedSource(for: .formatting)
+            isConfirmingAIFormatting = true
+            defer { isConfirmingAIFormatting = false }
+            guard store.confirmSending(.formatting, content: "发送“\(note.title)”的文字用于排版，不发送附件原文件。",
+                                       route: route) else { return }
+            guard session.currentNote?.id == noteID else { throw AIFormattingError.documentChanged }
+            guard session.isEligibleForAI(noteID: noteID) else { throw NoteAIInputError.ineligibleNote }
             let revision = session.contentRevision(for: noteID)
             let source = try editorController.aiFormattingSource()
             let baseline = NSAttributedString(attributedString: session.document)
             guard baseline.string == source.document.string else { throw AIFormattingError.documentChanged }
             let requestID = UUID()
             isAIFormatting = true
+            aiFormattingWaitingForCodex = route.isCodex
             aiFormattingID = requestID
+            aiFormattingSourceID = noteID
             aiFormattingNoteTitle = source.documentText
                 .components(separatedBy: .newlines)
                 .map { $0.trimmingCharacters(in: .whitespaces) }
@@ -768,16 +785,33 @@ struct RootNoteView: View {
                         isAIFormatting = false
                         aiFormattingTask = nil
                         aiFormattingID = nil
+                        aiFormattingSourceID = nil
                         aiFormattingNoteTitle = nil
+                        aiFormattingWaitingForCodex = false
                     }
                 }
                 do {
-                    let result = try await AITextAnalyzer.respond(
+                    try Task.checkCancellation()
+                    guard session.isEligibleForAI(noteID: noteID) else { throw NoteAIInputError.ineligibleNote }
+                    let result = try await FeatureAI.textRespond(
                         instruction: AIFormattingPlan.instruction,
                         text: source.material,
-                        store: .shared
+                        route: route,
+                        outputSchema: AIFormattingPlan.outputSchema,
+                        preflight: {
+                            guard aiFormattingID == requestID else { throw CancellationError() }
+                            guard session.isEligibleForAI(noteID: noteID) else { throw NoteAIInputError.ineligibleNote }
+                            guard session.contentRevision(for: noteID) == revision else {
+                                throw AIFormattingError.documentChanged
+                            }
+                        },
+                        onFirstDelta: {
+                            if aiFormattingID == requestID { aiFormattingWaitingForCodex = false }
+                        }
                     )
                     try Task.checkCancellation()
+                    guard aiFormattingID == requestID else { return }
+                    guard session.isEligibleForAI(noteID: noteID) else { throw NoteAIInputError.ineligibleNote }
                     let plan = try AIFormattingPlan.parse(result.text)
                     try Task.checkCancellation()
                     guard session.contentRevision(for: noteID) == revision else {
@@ -802,8 +836,32 @@ struct RootNoteView: View {
         }
     }
 
+    private func stopAIFormatting() {
+        if let id = aiFormattingID { desktopPet?.finish(id, message: "已停止排版", clip: "attention") }
+        aiFormattingTask?.cancel()
+        aiFormattingTask = nil
+        aiFormattingID = nil
+        aiFormattingSourceID = nil
+        aiFormattingNoteTitle = nil
+        aiFormattingWaitingForCodex = false
+        isAIFormatting = false
+    }
+
+    private func invalidateAIFormatting(for noteID: UUID) {
+        if aiFormattingSourceID == noteID { stopAIFormatting() }
+        if formattingPreview?.noteID == noteID {
+            formattingPreview = nil
+            previewPresented = false
+        }
+    }
+
     private func applyFormattingPreview() throws {
         guard let preview = formattingPreview else { return }
+        guard session.isEligibleForAI(noteID: preview.noteID) else {
+            formattingPreview = nil
+            previewPresented = false
+            throw NoteAIInputError.ineligibleNote
+        }
         do {
             try session.applyAIFormattedDocument(preview.formatted, original: preview.baseline,
                 expectedRevision: preview.revision, noteID: preview.noteID)
@@ -826,6 +884,8 @@ struct RootNoteView: View {
             editorController.zoom(by: -0.1)
         case .toggleSidebar:
             toggleDrawer()
+        case .searchNotes:
+            presentSearch("")
         case .newNote:
             create()
         case .insertLink:
@@ -866,21 +926,115 @@ struct RootNoteView: View {
         }
     }
 
+    private var sidebarColumn: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Spacer()
+                toolbarButton("收起侧边栏", systemImage: "sidebar.left", action: toggleDrawer)
+            }
+            .padding(.leading, 74).padding(.trailing, 10)
+            .frame(height: NoteChrome.toolbarHeight)
+            .zIndex(1)
+            NoteDrawerView(notes: notes, folders: folders, selectedID: session.currentNote?.id,
+                select: open, create: create, createFolder: createFolder, renameFolder: renameFolder,
+                deleteFolder: deleteFolder, move: move, togglePin: togglePin, delete: delete, theme: theme,
+                showSearch: { presentSearch("") }, editTags: { note in
+                    if session.openRecovering(note) { tagsPresented = true }
+                }, reorderNote: reorderNote, reorderFolder: reorderFolder, toggleSensitive: toggleSensitive,
+                submitSearch: presentSearch)
+        }
+        .frame(width: NotePanelController.drawerWidth)
+        .background(Color(nsColor: theme.sidebarBackground))
+        .transition(.move(edge: .leading).combined(with: .opacity))
+    }
+
+    private var editorToolbar: some View {
+        ZStack {
+            HStack(spacing: 8) {
+                if !drawerOpen {
+                    toolbarButton("便签列表", systemImage: "sidebar.left", action: toggleDrawer)
+                }
+                TimelineView(.periodic(from: .now, by: 60)) { context in
+                    Button {
+                        commandPresented = false; settingsPresented = false
+                        selectedDate = context.date; calendarPresented.toggle()
+                    } label: {
+                        Text(CalendarText.toolbarDate(for: context.date))
+                            .font(.system(size: 11)).foregroundStyle(.secondary)
+                            .frame(height: NoteChrome.toolbarControlHeight)
+                    }
+                    .buttonStyle(.plain).quickNoteHoverHighlight()
+                    .help("查看日历")
+                    .accessibilityLabel(CalendarText.fullDate(for: context.date))
+                    .accessibilityIdentifier("chrome.date")
+                    .popover(isPresented: $calendarPresented, arrowEdge: .top) {
+                        CalendarPopoverView(selectedDate: $selectedDate)
+                    }
+                }
+                Spacer(minLength: 8)
+                HStack(spacing: 2) {
+                    toolbarButton("新建便签（Command + N）", systemImage: "square.and.pencil") {
+                        commandPresented = false; create()
+                    }
+                    toolbarButton(windowLocked ? "取消窗口置顶（不是加密）" : "窗口置顶（不是加密）",
+                        systemImage: windowLocked ? "pin.fill" : "pin") {
+                        commandPresented = false; toggleWindowLock()
+                    }
+                    toolbarButton("打开设置", systemImage: "gearshape") {
+                        commandPresented = false; calendarPresented = false; settingsPresented.toggle()
+                    }
+                }
+            }
+            .padding(.leading, drawerOpen ? 24 : 74).padding(.trailing, 16)
+            HStack(spacing: 2) {
+                toolbarButton("编辑工具", systemImage: "slider.horizontal.3") {
+                    calendarPresented = false; settingsPresented = false
+                    editorController.captureSelection(); commandPresented.toggle()
+                }
+                .popover(isPresented: $commandPresented, arrowEdge: .top) {
+                    NoteFormatPopover(controller: editorController,
+                        toggleChecklist: editorController.toggleChecklistItemAtSelection, chooseFiles: chooseFiles)
+                }
+                Button { commandPresented = false; toggleAIFormatting() } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: isAIFormatting ? "stop.circle" : "wand.and.stars")
+                            .font(.system(size: NoteChrome.toolbarIconSize, weight: .regular))
+                            .foregroundStyle(Color(nsColor: theme.accentColor))
+                        Text("AI").font(.system(size: 11, weight: .medium))
+                    }
+                    .padding(.horizontal, 6).frame(height: NoteChrome.toolbarControlHeight)
+                    .contentShape(Rectangle())
+                    .background(Color(nsColor: theme.editorBackground), in: RoundedRectangle(cornerRadius: 5))
+                }
+                .buttonStyle(.plain).quickNoteHoverHighlight(cornerRadius: 5)
+                .help(isAIFormatting ? "停止 AI 排版" : "AI 排版")
+                .accessibilityLabel(isAIFormatting ? "停止 AI 排版" : "AI 排版")
+                .accessibilityIdentifier("chrome.ai")
+            }
+            .padding(2)
+            .background(Color(nsColor: theme.sidebarBackground), in: RoundedRectangle(cornerRadius: 7))
+        }
+        .frame(height: NoteChrome.toolbarHeight)
+        .background(Color(nsColor: theme.toolbarBackground))
+        .zIndex(1)
+    }
+
     private func toolbarButton(
         _ label: String,
         systemImage: String,
-        tooltipAlignment: Alignment = .bottom,
         action: @escaping () -> Void
     ) -> some View {
         Button(action: action) {
             Image(systemName: systemImage)
-                .frame(width: 26, height: 26)
+                .font(.system(size: NoteChrome.toolbarIconSize, weight: .regular))
+                .frame(width: 28, height: NoteChrome.toolbarControlHeight)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .quickNoteHoverHighlight()
-        .quickNoteTooltip(label, alignment: tooltipAlignment)
+        .help(label)
         .accessibilityLabel(label)
+        .accessibilityIdentifier("chrome.button.\(systemImage)")
     }
 }
 
@@ -1000,7 +1154,7 @@ private struct NoteThemePicker: View {
     }
 }
 
-private struct NoteFormatPopover: View {
+struct NoteFormatPopover: View {
     @ObservedObject var controller: RichTextEditorController
     let toggleChecklist: () -> Void
     let chooseFiles: () -> Void
@@ -1060,21 +1214,16 @@ private struct NoteFormatPopover: View {
             Divider()
 
             ForEach(EditorTextStyle.allCases) { style in
-                Button {
+                NoteTextStyleButton(style: style) {
                     controller.applyTextStyle(style)
-                } label: {
-                    HStack {
-                        Text(style.title)
-                            .font(.system(size: min(style.font.pointSize, 18), weight: .regular))
-                        Spacer()
-                        if controller.selectionState.textStyle == style {
-                            Image(systemName: "checkmark").font(.system(size: 10)).foregroundStyle(Color.accentColor)
-                        }
-                    }
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.vertical, 3)
                 }
-                .buttonStyle(.plain)
+                .frame(height: 26)
+                .overlay(alignment: .trailing) {
+                    if controller.selectionState.textStyle == style {
+                        Image(systemName: "checkmark").font(.system(size: 10)).foregroundStyle(Color.accentColor)
+                            .allowsHitTesting(false)
+                    }
+                }
                 .quickNoteHoverHighlight(cornerRadius: 5)
                 .accessibilityValue(controller.selectionState.textStyle == style ? "当前样式" : "")
             }
@@ -1140,6 +1289,7 @@ private struct NoteFormatPopover: View {
                 .font(.system(size: 12))
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.vertical, 3)
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .quickNoteHoverHighlight(cornerRadius: 5)
@@ -1224,6 +1374,35 @@ private struct ParagraphFormatPopover: View {
     private func lineSpacingButton(_ title: String, value: CGFloat) -> some View {
         Button(title) { controller.applyLineHeightMultiple(value) }
     }
+}
+
+private struct NoteTextStyleButton: NSViewRepresentable {
+    let style: EditorTextStyle
+    let action: () -> Void
+
+    func makeNSView(context: Context) -> FirstClickStyleButton {
+        let button = FirstClickStyleButton(title: "", target: nil, action: nil)
+        button.isBordered = false
+        button.alignment = .left
+        button.setButtonType(.momentaryChange)
+        button.target = button
+        button.action = #selector(FirstClickStyleButton.press)
+        return button
+    }
+
+    func updateNSView(_ button: FirstClickStyleButton, context: Context) {
+        button.title = style.title
+        button.font = .systemFont(ofSize: min(style.font.pointSize, 18))
+        button.onPress = action
+        button.setAccessibilityLabel(style.title)
+    }
+}
+
+private final class FirstClickStyleButton: NSButton {
+    var onPress: (() -> Void)?
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { isEnabled }
+    override var mouseDownCanMoveWindow: Bool { false }
+    @objc func press() { if isEnabled { onPress?() } }
 }
 
 private struct EditorColorPopover: View {
@@ -1452,6 +1631,7 @@ private struct NoteTagsPopover: View {
 
 private enum QuickNoteSettingsDestination: String, Identifiable {
     case localStorage
+    case mcp
     case shortcuts
     case help
 
@@ -1460,6 +1640,7 @@ private enum QuickNoteSettingsDestination: String, Identifiable {
     var title: String {
         switch self {
         case .localStorage: "本地存储"
+        case .mcp: "Codex 读取便签"
         case .shortcuts: "快捷键"
         case .help: "帮助与权限"
         }
@@ -1468,6 +1649,7 @@ private enum QuickNoteSettingsDestination: String, Identifiable {
     var systemImage: String {
         switch self {
         case .localStorage: "folder"
+        case .mcp: "link"
         case .shortcuts: "keyboard"
         case .help: "questionmark.circle"
         }
@@ -1484,6 +1666,7 @@ private struct NoteStorageLocation: Identifiable {
 private struct QuickNoteSettingsView: View {
     @Binding var selectedTheme: String
     @Binding var petEnabled: Bool
+    let noteMCPService: NoteMCPService?
     let open: (QuickNoteSettingsDestination) -> Void
     let openAISettings: () -> Void
     @State private var themePresented = false
@@ -1511,6 +1694,7 @@ private struct QuickNoteSettingsView: View {
             }
             sectionDivider
             settingsButton("AI 模型", systemImage: "sparkles", action: openAISettings)
+            if noteMCPService != nil { settingsButton(.mcp) }
             settingsButton(.localStorage)
             sectionDivider
             settingsButton(.shortcuts)
@@ -1572,6 +1756,104 @@ private struct QuickNoteSettingsView: View {
     }
 }
 
+private struct NoteMCPSettingsView: View {
+    @Environment(\.dismiss) private var dismiss
+    @ObservedObject var service: NoteMCPService
+    let folders: [NoteFolder]
+
+    private var allSelected: Bool {
+        service.readScope.includes(nil) && folders.allSatisfy { service.readScope.includes($0.id) }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 6) {
+                Label("Codex 读取便签", systemImage: "link")
+                    .font(.system(size: 17, weight: .semibold))
+                Text("通过MCP将Codex接入QuickNote")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+            }
+
+            VStack(spacing: 0) {
+                connectionToggle("读取授权便签", isOn: Binding(
+                    get: { service.isEnabled },
+                    set: { service.setEnabled($0) }
+                ))
+                Divider()
+                connectionToggle("允许写入提议", isOn: Binding(
+                    get: { service.isWriteEnabled },
+                    set: { service.setWriteEnabled($0) }
+                ))
+            }
+            .padding(.horizontal, 11)
+            .background(Color.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 9))
+
+            HStack {
+                Text("授权位置")
+                    .font(.system(size: 13, weight: .semibold))
+                Spacer()
+                Button(allSelected ? "取消全选" : "全选") {
+                    service.setAllFolders(folders.map(\.id), allowed: !allSelected)
+                }
+                .buttonStyle(.link)
+                .font(.system(size: 12, weight: .medium))
+            }
+
+            Text("仅访问勾选位置，敏感便签始终排除。")
+                .font(.system(size: 12))
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 0) {
+                    folderToggle("便签集", id: nil)
+                    ForEach(folders, id: \.id) { folder in
+                        folderToggle(folder.name, id: folder.id)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .frame(height: min(CGFloat(folders.count + 1) * 26, 208))
+
+            Divider()
+
+            HStack {
+                Spacer()
+                Button("完成") { dismiss() }
+                    .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(16)
+        .frame(width: 360)
+        .onExitCommand { dismiss() }
+    }
+
+    private func connectionToggle(_ title: LocalizedStringKey, isOn: Binding<Bool>) -> some View {
+        HStack {
+            Text(title)
+                .font(.system(size: 13, weight: .medium))
+                .accessibilityHidden(true)
+            Spacer()
+            Toggle(title, isOn: isOn)
+                .labelsHidden()
+                .toggleStyle(.switch)
+                .controlSize(.small)
+                .accessibilityLabel(Text(title))
+        }
+        .frame(minHeight: 38)
+    }
+
+    private func folderToggle(_ title: String, id: UUID?) -> some View {
+        Toggle(title, isOn: Binding(
+            get: { service.readScope.includes(id) },
+            set: { service.setFolder(id, allowed: $0) }
+        ))
+        .toggleStyle(.checkbox)
+        .frame(minHeight: 26, alignment: .leading)
+    }
+}
+
 private struct QuickNoteSettingsDetailView: View {
     @Environment(\.dismiss) private var dismiss
     let destination: QuickNoteSettingsDestination
@@ -1616,6 +1898,7 @@ private struct QuickNoteSettingsDetailView: View {
     private var detailSize: CGSize {
         switch destination {
         case .localStorage: CGSize(width: 560, height: 480)
+        case .mcp: CGSize(width: 360, height: 260)
         case .shortcuts: CGSize(width: 430, height: 500)
         case .help: CGSize(width: 500, height: 390)
         }
@@ -1626,10 +1909,12 @@ private struct QuickNoteSettingsDetailView: View {
         switch destination {
         case .localStorage:
             localStorageDetail
+        case .mcp:
+            EmptyView()
         case .shortcuts:
             shortcutsDetail
         case .help:
-            helpDetail
+            ScrollView { helpDetail }
         }
     }
 
@@ -1861,6 +2146,9 @@ private struct QuickNoteSettingsDetailView: View {
                 shortcutDivider
                 shortcutRow(keys: ["⌘", "B"], title: "Command + B", detail: "展开或收起侧边栏")
                 shortcutDivider
+                shortcutRow(keys: ["⌘", "⇧", "F"], title: "全文搜索", detail: "查找所有便签的正文",
+                            systemImage: "text.magnifyingglass")
+                shortcutDivider
                 shortcutRow(keys: ["⌘", "⌥", "← / →"], title: "Command + Option + 方向键", detail: "上一条或下一条便签，无需展开侧栏")
                 shortcutDivider
                 shortcutRow(keys: ["⌘", "N"], title: "Command + N", detail: "新建便签")
@@ -1878,6 +2166,14 @@ private struct QuickNoteSettingsDetailView: View {
 
     private var helpDetail: some View {
         VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: 4) {
+                Label("全文搜索", systemImage: "text.magnifyingglass")
+                    .font(.system(size: 13, weight: .semibold))
+                Text("点击侧栏的「全文搜索」图标，或按 ⌘⇧F。在「筛选便签」里输入后按回车，也可以带着关键词打开全文搜索。点击正文片段即可定位。")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+            }
+            Divider()
             permissionRow(
                 title: "输入监控",
                 detail: "隐私与安全性 → 输入监控，用于识别双击 Command。",
@@ -1948,7 +2244,8 @@ private struct QuickNoteSettingsDetailView: View {
         keys: [String],
         title: String,
         detail: String,
-        emphasized: Bool = false
+        emphasized: Bool = false,
+        systemImage: String? = nil
     ) -> some View {
         HStack(spacing: 20) {
             HStack(spacing: 5) {
@@ -1971,7 +2268,11 @@ private struct QuickNoteSettingsDetailView: View {
             }
             .frame(width: 92, alignment: .trailing)
             VStack(alignment: .leading, spacing: 1) {
-                Text(title).font(.system(size: 13, weight: .semibold))
+                if let systemImage {
+                    Label(title, systemImage: systemImage).font(.system(size: 13, weight: .semibold))
+                } else {
+                    Text(title).font(.system(size: 13, weight: .semibold))
+                }
                 Text(detail).font(.system(size: 11)).foregroundStyle(.secondary)
             }
             Spacer()
@@ -2015,7 +2316,7 @@ private struct QuickNoteSettingsDetailView: View {
     }
 }
 
-private struct CalendarPopoverView: View {
+struct CalendarPopoverView: View {
     @Binding var selectedDate: Date
     @State private var displayedMonth: Date
 
@@ -2027,22 +2328,8 @@ private struct CalendarPopoverView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Text(CalendarText.fullDate(for: selectedDate))
-                .font(.system(size: 20, weight: .semibold))
-
-            HStack(spacing: 10) {
-                Text(CalendarText.weekday(for: selectedDate))
-                Text(CalendarText.lunarDate(for: selectedDate))
-                    .foregroundStyle(.secondary)
-            }
-            .font(.system(size: 12, weight: .medium))
-            .padding(.top, 6)
-
-            Divider()
-                .padding(.vertical, 12)
-
-            HStack {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 4) {
                 Text(CalendarText.monthTitle(for: displayedMonth))
                     .font(.system(size: 13, weight: .semibold))
 
@@ -2051,23 +2338,34 @@ private struct CalendarPopoverView: View {
                 monthButton("上个月", image: "chevron.left", offset: -1)
                 monthButton("下个月", image: "chevron.right", offset: 1)
             }
-            .padding(.bottom, 8)
+            .frame(height: 24)
 
-            LazyVGrid(columns: columns, spacing: 4) {
-                ForEach(Array(CalendarText.weekdaySymbols.enumerated()), id: \.offset) { _, symbol in
-                    Text(symbol)
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(.secondary)
-                        .frame(width: 28, height: 20)
+            VStack(spacing: 4) {
+                HStack(spacing: 4) {
+                    ForEach(Array(CalendarText.weekdaySymbols.enumerated()), id: \.offset) { _, symbol in
+                        Text(symbol)
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(.secondary)
+                            .frame(width: 28, height: 18)
+                    }
                 }
-
-                ForEach(Array(CalendarText.monthGrid(containing: displayedMonth).enumerated()), id: \.offset) { _, date in
-                    dayButton(date)
+                LazyVGrid(columns: columns, spacing: 4) {
+                    ForEach(Array(CalendarText.monthGrid(containing: displayedMonth).enumerated()), id: \.offset) { _, date in
+                        dayButton(date)
+                    }
                 }
             }
+
+            HStack(spacing: 8) {
+                Text(CalendarText.weekday(for: selectedDate))
+                Text(CalendarText.lunarDate(for: selectedDate))
+            }
+            .font(.system(size: 11))
+            .foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity, alignment: .center)
         }
-        .padding(14)
-        .frame(width: 248)
+        .padding(12)
+        .frame(width: 244)
     }
 
     private func monthButton(_ label: String, image: String, offset: Int) -> some View {
@@ -2095,7 +2393,7 @@ private struct CalendarPopoverView: View {
         } label: {
             Text(CalendarText.dayNumber(for: date))
                 .font(.system(size: 12, weight: selected ? .semibold : .regular))
-                .foregroundStyle(selected ? Color.white : (inMonth ? Color.primary : Color.secondary.opacity(0.5)))
+                .foregroundStyle(selected ? Color(nsColor: .alternateSelectedControlTextColor) : (inMonth ? Color.primary : Color.secondary))
                 .frame(width: 28, height: 28)
                 .background {
                     if selected {
@@ -2108,6 +2406,7 @@ private struct CalendarPopoverView: View {
         .buttonStyle(.plain)
         .quickNoteHoverHighlight(cornerRadius: 14, enabled: !selected)
         .accessibilityLabel(CalendarText.fullDate(for: date))
+        .accessibilityAddTraits(selected ? .isSelected : [])
     }
 }
 
@@ -2172,8 +2471,10 @@ enum CalendarText {
         calendar.firstWeekday = 1
         let month = startOfMonth(for: date, timeZone: timeZone)
         let leadingDays = calendar.component(.weekday, from: month) - calendar.firstWeekday
-        guard let first = calendar.date(byAdding: .day, value: -leadingDays, to: month) else { return [] }
-        return (0..<42).compactMap { calendar.date(byAdding: .day, value: $0, to: first) }
+        guard let dayCount = calendar.range(of: .day, in: .month, for: month)?.count,
+              let first = calendar.date(byAdding: .day, value: -leadingDays, to: month) else { return [] }
+        let cellCount = ((leadingDays + dayCount + 6) / 7) * 7
+        return (0..<cellCount).compactMap { calendar.date(byAdding: .day, value: $0, to: first) }
     }
 
     static func isSameDay(_ lhs: Date, _ rhs: Date, timeZone: TimeZone = .current) -> Bool {

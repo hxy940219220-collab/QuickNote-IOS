@@ -5,6 +5,17 @@ import XCTest
 
 @MainActor
 final class NotePanelControllerTests: XCTestCase {
+    func testNoteDraggingCannotMoveTheWindowBackgroundButTitlebarStillCan() throws {
+        let existing = Set(NSApp.windows.map(ObjectIdentifier.init))
+        let controller = NotePanelController(rootView: EmptyView())
+        defer { withExtendedLifetime(controller) {} }
+        let panel = try XCTUnwrap(NSApp.windows.first { !existing.contains(ObjectIdentifier($0)) } as? NSPanel)
+        XCTAssertFalse(panel.isMovableByWindowBackground,
+                       "便签拖放不能被背景移动窗口抢走，窗口只能从标题栏拖动")
+        XCTAssertTrue(panel.isMovable)
+        XCTAssertTrue(panel.styleMask.contains(.titled))
+    }
+
     func testPanelFrameCentersWithinVisibleFrameWithNonZeroOrigin() {
         let visibleFrame = NSRect(x: 1_920, y: 48, width: 1_440, height: 900)
 

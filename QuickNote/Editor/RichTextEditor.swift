@@ -231,6 +231,28 @@ struct AIFormattingPlan {
     第一段有文字的内容使用 title；章节标题、编号主题和概括性短句使用 heading；章节内的小标题使用 subheading；代码、命令和结构化数据使用 monospaced；其余使用 body。主动识别层级，不要把标题全部归为 body。不要输出 Markdown 或解释。
     """
 
+    static let outputSchema = Data(#"""
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["paragraphs"],
+      "properties": {
+        "paragraphs": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["index", "style"],
+            "properties": {
+              "index": {"type": "integer"},
+              "style": {"type": "string", "enum": ["title", "heading", "subheading", "body", "monospaced"]}
+            }
+          }
+        }
+      }
+    }
+    """#.utf8)
+
     static func parse(_ response: String) throws -> AIFormattingPlan {
         guard let start = response.firstIndex(of: "{"),
               let end = response.lastIndex(of: "}"),
@@ -525,10 +547,78 @@ struct EditorSelectionState: Equatable {
     var isInTable = false
 }
 
+private final class EditorPlaceholderLabel: NSTextField {
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+}
+
 final class QuickNoteTextView: NSTextView {
     weak var editorController: RichTextEditorController?
+    override func mouseDown(with event: NSEvent) {
+        editorController?.dismissSelectionToolbar()
+        super.mouseDown(with: event)
+        editorController?.showSelectionToolbar()
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        super.mouseUp(with: event)
+        editorController?.showSelectionToolbar()
+    }
+
+    override func keyDown(with event: NSEvent) {
+        let dismissed = editorController?.dismissSelectionToolbar() ?? false
+        if event.keyCode == 53, dismissed { return }
+        super.keyDown(with: event)
+        if selectedRange().length > 0, !hasMarkedText() {
+            editorController?.scheduleSelectionToolbar()
+        }
+    }
+
+    override func viewWillMove(toWindow newWindow: NSWindow?) {
+        if newWindow !== window { editorController?.dismissSelectionToolbar() }
+        super.viewWillMove(toWindow: newWindow)
+    }
     private var contextImageLocation: Int?
     private weak var contextAttachment: NSTextAttachment?
+    private lazy var placeholderLabel: EditorPlaceholderLabel = {
+        let label = EditorPlaceholderLabel(labelWithString: "开始记录…")
+        label.font = .systemFont(ofSize: 15, weight: .regular)
+        label.textColor = .placeholderTextColor
+        label.setAccessibilityElement(false)
+        label.sizeToFit()
+        return label
+    }()
+
+    func updatePlaceholder(color: NSColor? = nil) {
+        if placeholderLabel.superview !== self { addSubview(placeholderLabel) }
+        if let color { placeholderLabel.textColor = color.withAlphaComponent(0.35) }
+        placeholderLabel.setFrameOrigin(NSPoint(
+            x: textContainerOrigin.x + (textContainer?.lineFragmentPadding ?? 5),
+            y: textContainerOrigin.y
+        ))
+        // Pre-edit text belongs to NSTextView, before SwiftUI's document binding is updated.
+        placeholderLabel.isHidden = !string.isEmpty || hasMarkedText()
+    }
+
+    override func setMarkedText(_ string: Any, selectedRange: NSRange, replacementRange: NSRange) {
+        editorController?.dismissSelectionToolbar()
+        super.setMarkedText(string, selectedRange: selectedRange, replacementRange: replacementRange)
+        updatePlaceholder()
+    }
+
+    override func unmarkText() {
+        super.unmarkText()
+        updatePlaceholder()
+    }
+
+    override func didChangeText() {
+        updatePlaceholder()
+        super.didChangeText()
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        updatePlaceholder()
+        super.draw(dirtyRect)
+    }
 
     static func editingMenu() -> NSMenu {
         let menu = NSMenu()
@@ -780,7 +870,13 @@ enum EditorLink {
 final class RichTextEditorController: ObservableObject {
     private weak var textView: NSTextView?
     var window: NSWindow? { textView?.window }
+    var hasMarkedText: Bool { textView?.hasMarkedText() == true }
+    var selectedTextRange: NSRange? { textView?.selectedRange() }
+    var renderedText: String? { textView?.string }
+    private(set) var renderedNoteID: UUID?
     private var capturedSelection: NSRange?
+    private var selectionToolbar: SelectionFormatBar?
+    private var selectionToolbarTask: Task<Void, Never>?
     private(set) var isRestoringDocument = false
     @Published private(set) var canUndo = false
     @Published private(set) var selectionState = EditorSelectionState()
@@ -812,8 +908,9 @@ final class RichTextEditorController: ObservableObject {
         }
     }
 
-    func connect(_ textView: NSTextView) {
+    func connect(_ textView: NSTextView, noteID: UUID? = nil) {
         self.textView = textView
+        renderedNoteID = noteID
         (textView as? QuickNoteTextView)?.editorController = self
         refreshUndoAvailability()
         refreshSelectionState()
@@ -859,20 +956,80 @@ final class RichTextEditorController: ObservableObject {
     }
 
     func captureSelection() {
+        dismissSelectionToolbar()
         capturedSelection = textView?.selectedRange()
+    }
+
+    func showSelectionToolbar() {
+        selectionToolbarTask?.cancel()
+        guard let text = textView as? QuickNoteTextView else { return }
+        if selectionToolbar == nil { selectionToolbar = SelectionFormatBar() }
+        selectionToolbar?.show(for: text, controller: self)
+    }
+
+    func scheduleSelectionToolbar() {
+        selectionToolbarTask?.cancel()
+        selectionToolbarTask = Task { @MainActor [weak self] in
+            do { try await Task.sleep(for: .milliseconds(160)) } catch { return }
+            guard !Task.isCancelled else { return }
+            self?.selectionToolbarTask = nil
+            self?.showSelectionToolbar()
+        }
+    }
+
+    @discardableResult
+    func dismissSelectionToolbar() -> Bool {
+        selectionToolbarTask?.cancel()
+        selectionToolbarTask = nil
+        let visible = selectionToolbar?.isVisible == true
+        selectionToolbar?.dismiss()
+        return visible
+    }
+
+    func selectionDidChange() {
+        if textView?.selectedRange().length == 0 { dismissSelectionToolbar() }
+        selectionToolbar?.refreshControls(selectionState)
     }
 
     @discardableResult
     func findText(_ query: String) -> Bool {
+        guard let textView, let range = NoteSearchText.firstRange(of: query, in: textView.string) else { return false }
+        reveal(range, in: textView)
+        return true
+    }
+
+    @discardableResult
+    func revealSearchMatch(_ snippet: NoteSearchSnippet?, query: String) -> Bool {
         guard let textView, !query.isEmpty else { return false }
-        let range = (textView.string as NSString).range(of: query,
-            options: [.caseInsensitive, .diacriticInsensitive], range: NSRange(location: 0, length: textView.string.utf16.count),
-            locale: .current)
-        guard range.location != NSNotFound else { return false }
+        if let snippet, let range = NoteSearchText.validatedRange(for: snippet, query: query, in: textView.string) {
+            reveal(range, in: textView)
+            return true
+        }
+        return findText(query)
+    }
+
+    @discardableResult
+    func revealAskCitation(_ chunk: NoteIndexChunk, revision: Int, question: String) -> Bool {
+        guard let textView, let range = NoteAskCitationLocation.resolve(
+            chunk, revision: revision, source: textView.string, question: question
+        ) else { return false }
+        reveal(range, in: textView)
+        return true
+    }
+
+    func focusEditor(restoring selection: NSRange? = nil) {
+        guard let textView else { return }
+        textView.window?.makeFirstResponder(textView)
+        if let selection, selection != textView.selectedRange(), Range(selection, in: textView.string) != nil {
+            textView.setSelectedRange(selection)
+            refreshSelectionState()
+        }
+    }
+
+    private func reveal(_ range: NSRange, in textView: NSTextView) {
         textView.setSelectedRange(range)
         textView.scrollRangeToVisible(range)
         refreshSelectionState()
-        return true
     }
 
     func prepareForExternalDocumentReplacement(in textView: NSTextView) {
@@ -886,6 +1043,7 @@ final class RichTextEditorController: ObservableObject {
     }
 
     func clearUndoHistory() {
+        dismissSelectionToolbar()
         capturedSelection = nil
         textView?.breakUndoCoalescing()
         textView?.undoManager?.removeAllActions()
@@ -1242,24 +1400,46 @@ final class RichTextEditorController: ObservableObject {
         guard let textView, let storage = textView.textStorage else { return }
         let selection = textView.selectedRange()
         let target = paragraphRange(in: textView)
-        if target.length == 0 {
-            let style = (textView.typingAttributes[.paragraphStyle] as? NSParagraphStyle)?
-                .mutableCopy() as? NSMutableParagraphStyle ?? NSMutableParagraphStyle()
+        func normalizedStyle(_ existing: NSParagraphStyle?) -> NSMutableParagraphStyle {
+            let style = existing?.mutableCopy() as? NSMutableParagraphStyle ?? NSMutableParagraphStyle()
             style.paragraphSpacingBefore = max(0, before)
             style.paragraphSpacing = max(0, after)
+            style.lineSpacing = 1
+            style.lineHeightMultiple = 0
+            style.minimumLineHeight = 0
+            style.maximumLineHeight = 0
+            return style
+        }
+        if target.length == 0 {
             registerUndoSnapshot(in: textView)
-            textView.typingAttributes[.paragraphStyle] = style
+            textView.typingAttributes[.paragraphStyle] = normalizedStyle(
+                textView.typingAttributes[.paragraphStyle] as? NSParagraphStyle)
+            if storage.length > 0 {
+                textView.typingAttributes[.font] = EditorTextStyle.body.font
+            }
             return
         }
         registerUndoSnapshot(in: textView)
+        storage.beginEditing()
         enumerateParagraphs(in: target, text: storage.string) { range in
-            let style = (storage.attribute(.paragraphStyle, at: range.location, effectiveRange: nil)
-                as? NSParagraphStyle)?.mutableCopy() as? NSMutableParagraphStyle ?? NSMutableParagraphStyle()
-            style.paragraphSpacingBefore = max(0, before)
-            style.paragraphSpacing = max(0, after)
+            let style = normalizedStyle(storage.attribute(.paragraphStyle, at: range.location,
+                effectiveRange: nil) as? NSParagraphStyle)
             storage.addAttribute(.paragraphStyle, value: style, range: range)
+            if style.textBlocks.isEmpty,
+               (storage.string as NSString).substring(with: range)
+                    .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                storage.addAttribute(.font, value: EditorTextStyle.body.font, range: range)
+            }
         }
+        storage.endEditing()
         commit(textView, preserving: selection)
+        if selection.length == 0,
+           (storage.string as NSString).substring(with: target)
+                .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            textView.typingAttributes[.font] = EditorTextStyle.body.font
+            textView.typingAttributes[.paragraphStyle] = normalizedStyle(
+                textView.typingAttributes[.paragraphStyle] as? NSParagraphStyle)
+        }
     }
 
     func detectLinks(in textView: NSTextView) {
@@ -2383,6 +2563,8 @@ struct RichTextEditor: NSViewRepresentable {
     var backgroundColor: NSColor = .textBackgroundColor
     var textColor: NSColor = .textColor
     var overridesDocumentTextColor = false
+    var displayScale: CGFloat = 1
+    var contentInsets = NSSize(width: 12, height: 12)
 
     func makeCoordinator() -> Coordinator { Coordinator(owner: self) }
 
@@ -2398,7 +2580,7 @@ struct RichTextEditor: NSViewRepresentable {
         textView.isAutomaticTextCompletionEnabled = false
         textView.isAutomaticLinkDetectionEnabled = true
         textView.font = EditorTextStyle.body.font
-        textView.textContainerInset = NSSize(width: 12, height: 12)
+        textView.textContainerInset = contentInsets
         textView.textStorage?.setAttributedString(document)
         controller.prepareChecklistAttachments(in: textView)
         controller.prepareFileAttachments(in: textView, normalizeImportedContent: false)
@@ -2407,7 +2589,7 @@ struct RichTextEditor: NSViewRepresentable {
         controller.applyDefaultParagraphSpacing(in: textView)
         applyTheme(to: scroll, textView: textView)
         controller.prepareTitleForEmptyDocument(in: textView)
-        controller.connect(textView)
+        controller.connect(textView, noteID: noteID)
         textView.delegate = context.coordinator
         context.coordinator.recordAttachmentCount(in: textView)
         DispatchQueue.main.async { [weak textView] in
@@ -2415,6 +2597,7 @@ struct RichTextEditor: NSViewRepresentable {
             controller.prepareFileAttachments(in: textView, force: false, normalizeImportedContent: false)
         }
         scroll.hasVerticalScroller = true
+        if abs(scroll.magnification - displayScale) > 0.001 { scroll.magnification = displayScale }
         return scroll
     }
 
@@ -2428,10 +2611,12 @@ struct RichTextEditor: NSViewRepresentable {
         textView.delegate = nil
         defer { textView.delegate = context.coordinator }
         applyTheme(to: scroll, textView: textView)
+        textView.textContainerInset = contentInsets
         if noteChanged {
             controller.clearUndoHistory()
             textView.typingAttributes = [.font: EditorTextStyle.body.font]
         } else if externalEditChanged {
+            controller.dismissSelectionToolbar()
             controller.prepareForExternalDocumentReplacement(in: textView)
         }
         // Link/attachment presentation can differ from the model without the document changing.
@@ -2448,10 +2633,15 @@ struct RichTextEditor: NSViewRepresentable {
             controller.prepareFileAttachments(in: textView, force: false, normalizeImportedContent: false)
             controller.prepareTitleForEmptyDocument(in: textView)
         }
-        if textView.selectedRange().location != clampedCursorLocation {
+        if !textView.hasMarkedText(), textView.selectedRange().location != clampedCursorLocation {
             textView.setSelectedRange(NSRange(location: clampedCursorLocation, length: 0))
         }
-        controller.connect(textView)
+        controller.connect(textView, noteID: noteID)
+    }
+
+    static func dismantleNSView(_ scroll: NSScrollView, coordinator: Coordinator) {
+        coordinator.owner.controller.dismissSelectionToolbar()
+        (scroll.documentView as? NSTextView)?.delegate = nil
     }
 
     private func applyTheme(to scroll: NSScrollView, textView: NSTextView) {
@@ -2460,11 +2650,17 @@ struct RichTextEditor: NSViewRepresentable {
         textView.drawsBackground = true
         textView.backgroundColor = backgroundColor
         textView.insertionPointColor = textColor
+        (textView as? QuickNoteTextView)?.updatePlaceholder(color: textColor)
         guard let layoutManager = textView.layoutManager else { return }
         let range = NSRange(location: 0, length: textView.textStorage?.length ?? 0)
         layoutManager.removeTemporaryAttribute(.foregroundColor, forCharacterRange: range)
         if overridesDocumentTextColor, range.length > 0 {
             layoutManager.addTemporaryAttribute(.foregroundColor, value: textColor, forCharacterRange: range)
+        } else if range.length > 0 {
+            textView.textStorage?.enumerateAttribute(.foregroundColor, in: range) { value, run, _ in
+                guard value == nil else { return }
+                layoutManager.addTemporaryAttribute(.foregroundColor, value: textColor, forCharacterRange: run)
+            }
         }
     }
 
@@ -2547,6 +2743,7 @@ struct RichTextEditor: NSViewRepresentable {
 
         func textViewDidChangeSelection(_ notification: Notification) {
             owner.controller.refreshSelectionState()
+            owner.controller.selectionDidChange()
             if let textView = notification.object as? NSTextView {
                 owner.onSelectionChange(textView.selectedRange().location)
             }

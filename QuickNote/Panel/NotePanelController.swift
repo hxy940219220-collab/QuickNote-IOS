@@ -5,7 +5,7 @@ import SwiftUI
 @MainActor
 final class NotePanelController: NSObject, NSWindowDelegate {
     static let editorWidth: CGFloat = 520
-    static let drawerWidth: CGFloat = 210
+    static let drawerWidth: CGFloat = NoteChrome.sidebarWidth
     static let windowStyleMask: NSWindow.StyleMask = [
         .titled,
         .closable,
@@ -39,7 +39,9 @@ final class NotePanelController: NSObject, NSWindowDelegate {
         panel.collectionBehavior = [.moveToActiveSpace, .fullScreenAuxiliary]
         panel.animationBehavior = .none
         panel.hidesOnDeactivate = false
-        panel.isMovableByWindowBackground = true
+        // Content owns its drags (note organization, text selection and attachments).
+        // The standard title bar remains the window's drag region.
+        panel.isMovableByWindowBackground = false
         panel.contentViewController = NSHostingController(rootView: rootView)
         panel.minSize = NSSize(width: Self.editorWidth, height: 320)
     }

@@ -1,88 +1,72 @@
-# QuickNote-IOS
+# QuickNote
 
-### 把想法，留在手边。
+**本地优先的原生 macOS 便签。** 双击 Command 随手记，按 Option + Space 处理选中的文字，按 Command + Shift 框选屏幕识图。在本机查找旧笔记，或让 AI 根据相关片段回答并标出原文。
 
-QuickNote 是一款本地优先的 macOS 便签工具。双击 Command 随手记下灵感，用 Option + Space 理解选中文字，用 Command + Shift 框选屏幕识图取字。小鸟 Pip 接住语音和文件，让零散内容回到清晰的笔记里。
+支持 **macOS 14+**。GitHub 仓库名为 `QuickNote-IOS`，当前发布的是 macOS 应用。[项目介绍与演示](https://www.huangxiyuan.net/projects/quicknote)
 
-> 当前支持 **macOS 14+**。仓库名为 `QuickNote-IOS`，尚未提供 iPhone / iPad 版本。
+## 两个方向接入 Codex
 
-![QuickNote：把想法留在手边，双击 Command 随手记录](docs/images/showcase-hero.png)
+| 从哪里使用 | 可以做什么 |
+|---|---|
+| **QuickNote → Codex** | 在「设置 → AI 模型」选择 ChatGPT 账号（Codex）。安装本机 Codex CLI 后可使用已有 ChatGPT 登录，无需填写 API Key。支持划词、自定义问题、截图识图、AI 排版、语音转写后整理，以及问我的便签。 |
+| **Codex → QuickNote** | 通过本机 MCP，在 Codex 中搜索获授权的便签，从搜索结果打开正文。可选开启新建或追加提议，每条提议都在 QuickNote 内确认后写入。 |
 
-*以下为基于新版界面与演示数据设计的功能介绍图，并非未经处理的截图；语音整理结果为示例，不代表识别准确率。*
+![QuickNote 的 Codex 设置，展示登录状态、额度、模型与推理强度](docs/images/current/codex-settings.png)
 
-## 随手记，也能认真整理
+QuickNote 会检测 CLI 路径与登录状态，可打开官方登录页面，读取 Codex 返回的模型、推理档位及额度。可按功能选择 Codex、已配置的 API 或支持文字处理的 Apple 本机模型。额度只展示 Codex 实际返回的窗口。QuickNote 发出的模型请求使用临时会话，禁用命令执行和 MCP 工具。
 
-双击 Command 打开或收起便签，记完继续手头的工作。正文采用系统字体和标准段落间距，支持标题、清单、表格、链接、图片与文件附件；需要的时候，也能用 Command + Z 撤销文字和格式操作。
+### 让 Codex 读取指定便签
 
-文件夹负责分类，右下角的上一条 / 下一条按钮负责快速翻阅，不再占用顶部工具栏。也可使用 Command + Option + 左右方向键切换。
+1. 在 QuickNote 里打开「设置 → Codex 读取便签」，开启「读取授权便签」，勾选允许访问的文件夹或「便签集」。**敏感便签始终排除。**
+2. 在终端注册随应用构建的 MCP 工具。下例使用 `/Applications` 安装路径。
 
-## 认识 Pip，你的桌面小鸟
+   ```sh
+   codex mcp add quicknote -- /Applications/QuickNote.app/Contents/MacOS/quicknote-mcp
+   ```
 
-![认识 Pip：语音输入、文件拖入与状态提醒](docs/images/showcase-pip.png)
+3. 保持 QuickNote 打开，在 Codex 的新会话里搜索便签，并请它打开你指定的结果。读取正文时以 Markdown 和附件占位符呈现。需要写入时，在 QuickNote 打开「允许写入提议」，再到应用里审核和确认。
 
-Pip 不只是陪伴：悬停可以打开快捷入口，拖入文件可以收集内容，录音、识别和导入时会用气泡提示当前状态。支持拖动位置、调整大小和朝向，也保留日常互动的小对白。
+![QuickNote 的 MCP 授权位置和写入提议开关](docs/images/current/mcp-authorization.webp)
 
-在设置最上方开启「桌宠陪伴」，让记录入口留在手边。
+## 在本机找回旧笔记
 
-## 说完，自动整理
+- **全文搜索**覆盖标题、正文和标签，显示命中片段与所属文件夹，可用键盘在同一便签的不同命中之间切换。
+- **问我的便签**从搜索面板按 Tab 进入。QuickNote 在本机检索相关片段，再由所选模型回答。点击回答里的引用可回到对应便签和原文位置。敏感便签排除在提问检索之外。
 
-语音先在本机转写，并在离线模型可用时进行增强复核。录音结束后，已配置的 AI 模型会自动结合本次文字纠错、润色和自然分段，不需要再点一次「AI 识别」。整理后可以「一键复制」，也可以选择目标「存入笔记」。
+![问我的便签使用合成资料返回答案和可点击的来源引用](docs/images/current/note-ask.webp)
 
-![说完自动整理：语境纠错、自然分段、一键复制与存入笔记](docs/images/showcase-voice.png)
+## 从文字、图片和语音到便签
 
-AI 服务暂时繁忙时会有限重试；失败则保留原始转写，支持手动重试，无需重新录音。**同音词、专有名词和含糊发音仍可能需要人工确认，不能保证 100% 准确。**
+- **划词 AI**支持解释、分析、翻译、拓展与自定义问题。可拖动面板标题或空白处，结果底栏可换存入目标，ⓘ 显示发送范围和处理来源。
+- **截图识图**有六条快捷指令，包括提取原文、翻译、整理表格与生成待办。也能直接提问。预览保持图片比例，结果出现时窗口向下展开。图片和结果可分别存入便签。
+- **语音记录**先在 Mac 上转写，离线模型可用时做增强复核。录音结束可用所选模型自动整理本次转写，失败时保留原文。语音面板可开启整理前确认。
+- **AI 排版**先生成可预览的排版方案，在应用内确认后应用。便签支持富文本、标题、表格、清单、附件、文件夹、主题和版本记录。
 
-## 找笔记，不打断思路
+| 划词结果和来源说明 | 截图识图结果 |
+|---|---|
+| ![划词弹窗的结果、存入按钮及发送范围说明](docs/images/current/selection.webp) | ![图片识别窗口展示原图、快捷指令及结果](docs/images/current/screenshot-ai.png) |
 
-侧栏的放大镜打开紧凑搜索浮层。未输入时查看最近便签，输入后搜索标题、正文和标签；结果同时显示所属文件夹。支持键盘操作、Esc 关闭，也可以点击弹窗外侧关闭。
+以上截图均使用合成便签、账号和演示结果。
 
-![想找的一搜就到：搜索标题、正文和标签，点击外侧收起](docs/images/showcase-search.png)
+## 数据留在哪里
 
-## 选中文字，立即理解
+便签与附件保存在本机 `~/Library/Application Support/QuickNote/`，API Key 由 macOS 钥匙串保护。基础编辑、全文搜索和离线语音转写可以在本机完成。
 
-在支持文字选择的应用里选中一段内容，按 **Option + Space（⌥ + 空格）** 打开「选中内容」面板。点击解释、分析、翻译或拓展，按当前任务处理文字；原文和处理结果都可以导入便签，不需要手动复制到另一个聊天窗口。
+调用模型时，界面会显示处理来源。**本机 Codex 指本机运行的 CLI**，使用 ChatGPT 账号时模型请求仍由 ChatGPT 服务处理。问便签发送本次问题及检索片段，语音整理发送本次转写文字。MCP 读取范围与模型来源分别配置。
 
-![划词 AI：选中文字后按 Option + Space，解释、分析、翻译、拓展并导入便签](docs/images/showcase-selection.png)
+## 从源码构建
 
-例如：阅读英文资料时选中一句话，按快捷键后点击「翻译」，再把译文存入笔记。处理前需配置文字模型；所选内容会发送至配置的服务商。
+需要 macOS 14+、Xcode 与 [XcodeGen](https://github.com/yonaskolb/XcodeGen)。离线语音模型由脚本按需下载并校验，首次约 230 MB。
 
-## 框选屏幕，识图取字
-
-**同时按下 Command + Shift（⌘ + ⇧），松开两键后框选屏幕区域**，打开「图片识别」面板。不需要再按数字键。
-
-![截图识别：Command + Shift 框选屏幕，提取原文、分析图片并导入便签](docs/images/showcase-screenshot.png)
-
-点「提取原文」识别图片里的文字，或选择总结要点、翻译中文、整理表格、生成待办、排查问题；也可以直接输入问题。截图和分析结果分别支持「导入图片」「导入分析」，方便收下原始资料与整理结果。
-
-适合不能直接选中文字的图片、截图和扫描资料。首次使用需授予屏幕录制权限，并配置支持图片的模型；所选截图会发送至配置的服务商。
-
-## 模型与阅读设置
-
-- **自选模型**：最多保存 6 个 API 接入，文字和图片任务分别选择模型；备用服务转发由你控制。
-- **阅读主题**：系统默认之外，提供暖纸、鼠尾草、暮光紫、午夜墨与雾蓝五套配色。
-
-## 本地优先，数据去向明确
-
-便签以 RTFD 保存在本机 `~/Library/Application Support/QuickNote/`，API Key 存入 macOS 钥匙串。基础记录不依赖 AI 服务。
-
-调用 AI 时会将所选内容发送到你配置的服务商；语音自动整理发送本次转写文字，**不发送录音或整个便签库**。无法访问的旧钥匙串条目会保留，不改动系统密码。请勿将不希望外发的敏感内容交给云端 AI。
-
-## 构建与运行
-
-需要 macOS 14+、Xcode 和 [XcodeGen](https://github.com/yonaskolb/XcodeGen)。语音模型不放入 Git；验证脚本会从官方发布下载并校验模型，首次约 230 MB。
-
-```bash
+```sh
 brew install xcodegen
-export QUICKNOTE_SIGNING_IDENTITY='Apple Development: YOUR_NAME (CERTIFICATE_ID)'
-export QUICKNOTE_DEVELOPMENT_TEAM='YOUR_TEAM_ID'
-./scripts/verify-p0.sh
+bash scripts/prepare-offline-speech.sh
+xcodegen generate
+xcodebuild build -project QuickNote.xcodeproj -scheme QuickNote \
+  -configuration Release -derivedDataPath /tmp/QuickNoteDerived
 open /tmp/QuickNoteDerived/Build/Products/Release/QuickNote.app
 ```
 
-首次使用快捷键时，请按应用内说明开启「输入监控」和「辅助功能」权限。
+上面的构建适合本地试用。若要用同一签名身份持续升级，请设置本人的 `QUICKNOTE_SIGNING_IDENTITY` 和 `QUICKNOTE_DEVELOPMENT_TEAM`，再运行 `./scripts/verify-p0.sh`。首次使用快捷键、划词或截图时，请按系统提示授权输入监控、辅助功能与屏幕录制。
 
-将签名占位值替换为本人的有效证书与团队标识，并在后续更新中保持签名身份稳定。验证脚本不会在证书不可用时回退到临时签名。仅本地调试可使用工程默认临时签名，但不要用它覆盖保存过密钥的正式安装。仓库不包含维护者个人签名配置。离线模型与原生运行时的许可证保留在 `QuickNote/Resources/Speech/`。
-
-界面截图可通过 `QuickNoteTests/ReadmeScreenshotTests.swift` 使用独立演示数据重新生成，不需要访问个人便签或调用 AI 服务。
-
-最近更新见 [2026-09-08 更新说明](docs/2026-09-08-release-notes.md)。
+离线模型及原生运行时的许可证位于 `QuickNote/Resources/Speech/`。

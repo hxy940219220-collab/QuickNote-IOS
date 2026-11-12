@@ -1,6 +1,33 @@
 import AppKit
 import SwiftUI
 
+enum NoteChrome {
+    static let sidebarWidth: CGFloat = 210
+    static let toolbarHeight: CGFloat = 32
+    static let toolbarControlHeight: CGFloat = 24
+    static let toolbarIconSize: CGFloat = 11
+    static let editorDisplayScale: CGFloat = 1
+    // RootNoteView already provides the horizontal gutter; do not double it here.
+    static let editorInsets = NSSize(width: 0, height: 16)
+    static let maximumEditorWidth: CGFloat = 820
+    static let sidebar = adaptive(0xF3F2EF, 0x252422)
+    static let inset = adaptive(0xE6E4E0, 0x363430)
+    static let editor = adaptive(0xFFFFFF, 0x1E1E1E)
+    static let text = adaptive(0x1C1C1E, 0xECEBE8)
+    static let accent = adaptive(0xC97A12, 0xE8A74C)
+    static let selection = adaptive(0xF6E8D7, 0x4B3927)
+    static let separator = adaptive(0xE3E1DC, 0x3C3935)
+
+    private static func adaptive(_ light: UInt32, _ dark: UInt32) -> NSColor {
+        NSColor(name: nil) { appearance in
+            let value = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? dark : light
+            return NSColor(srgbRed: CGFloat((value >> 16) & 255) / 255,
+                           green: CGFloat((value >> 8) & 255) / 255,
+                           blue: CGFloat(value & 255) / 255, alpha: 1)
+        }
+    }
+}
+
 enum NoteTheme: String, CaseIterable, Identifiable {
     case system
     case paper
@@ -28,7 +55,7 @@ enum NoteTheme: String, CaseIterable, Identifiable {
 
     var editorBackground: NSColor {
         switch self {
-        case .system: .textBackgroundColor
+        case .system: NoteChrome.editor
         case .paper: Self.color(0xF7F2E8)
         case .sage: Self.color(0xEEF3ED)
         case .lavender: Self.color(0xF0EEF5)
@@ -39,7 +66,7 @@ enum NoteTheme: String, CaseIterable, Identifiable {
 
     var sidebarBackground: NSColor {
         switch self {
-        case .system: .controlBackgroundColor
+        case .system: NoteChrome.sidebar
         case .paper: Self.color(0xEFE8DC)
         case .sage: Self.color(0xE3EBE2)
         case .lavender: Self.color(0xE5E2ED)
@@ -50,7 +77,7 @@ enum NoteTheme: String, CaseIterable, Identifiable {
 
     var toolbarBackground: NSColor {
         switch self {
-        case .system: .windowBackgroundColor
+        case .system: NoteChrome.editor
         case .paper: Self.color(0xF3EDE3)
         case .sage: Self.color(0xE8EFE7)
         case .lavender: Self.color(0xEAE7F0)
@@ -61,7 +88,7 @@ enum NoteTheme: String, CaseIterable, Identifiable {
 
     var textColor: NSColor {
         switch self {
-        case .system: .textColor
+        case .system: NoteChrome.text
         case .paper: Self.color(0x282522)
         case .sage: Self.color(0x243029)
         case .lavender: Self.color(0x292732)
@@ -72,7 +99,7 @@ enum NoteTheme: String, CaseIterable, Identifiable {
 
     var accentColor: NSColor {
         switch self {
-        case .system: .secondaryLabelColor
+        case .system: NoteChrome.accent
         case .paper: Self.color(0xB8664A)
         case .sage: Self.color(0x5F7967)
         case .lavender: Self.color(0x756A91)

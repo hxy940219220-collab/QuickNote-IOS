@@ -1,4 +1,5 @@
 import AppKit
+import Security
 import SwiftData
 import SwiftUI
 import XCTest
@@ -7,6 +8,78 @@ import XCTest
 /// Renders the shipping views with disposable sample data. No user notes, microphone or API calls.
 @MainActor
 final class ReadmeScreenshotTests: XCTestCase {
+    func testRenderCodexAccountScreenshots() async throws {
+        guard let path = ProcessInfo.processInfo.environment["QUICKNOTE_ACCOUNT_SCREENSHOTS"] else {
+            throw XCTSkip("Set QUICKNOTE_ACCOUNT_SCREENSHOTS to capture settings")
+        }
+        let output = URL(fileURLWithPath: path, isDirectory: true)
+        try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+        let suite = "QuickNote-Codex-Screenshots-\(UUID())"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let keychain = APIKeyKeychain(copyMatching: { _, _ in errSecItemNotFound })
+        let store = AIConfigurationStore(defaults: defaults, keychain: keychain)
+        let target = CodexLocalTarget(executable: URL(fileURLWithPath: "/opt/homebrew/bin/codex"),
+                                      sha256: "synthetic", version: "0.162.1", model: nil, effort: "low")
+        var signedIn = CodexLocalInspection()
+        signedIn.executable = target.executable
+        signedIn.version = target.version
+        signedIn.accountTarget = target
+        signedIn.target = target
+        signedIn.loggedIn = true
+        signedIn.verified = true
+        var signedOut = signedIn
+        signedOut.target = nil
+        signedOut.loggedIn = false
+        signedOut.verified = false
+        var missing = CodexLocalInspection()
+        missing.isMissing = true
+        let signedInFixture = CodexSettingsPresentation.Fixture(
+            inspection: signedIn, account: .init(email: "demo@example.test", planType: "plus"),
+            models: [
+                .init(id: "demo", title: "演示模型", efforts: ["low", "medium", "high"],
+                      isDefault: true, defaultEffort: "low"),
+                .init(id: "demo-fast", title: "演示轻量模型", efforts: ["low", "high"], isDefault: false)
+            ],
+            rateLimits: .init(
+                fiveHour: .init(usedPercent: 23, resetsAt: Date(timeIntervalSince1970: 1_794_509_600)),
+                weekly: .init(usedPercent: 64, resetsAt: Date(timeIntervalSince1970: 1_794_941_600))
+            )
+        )
+        store.defaultSourceSelection = .codex
+        try await captureAccountSettings(store, fixture: signedInFixture, file: output.appending(path: "codex-signed-in.png"))
+        try await captureAccountSettings(store, fixture: .init(inspection: signedOut),
+                                         file: output.appending(path: "codex-signed-out.png"))
+        try await captureAccountSettings(store, fixture: .init(inspection: missing),
+                                         file: output.appending(path: "codex-missing.png"))
+        store.defaultSourceSelection = .api
+        store.apiDefaultTextSource = .apple
+        store.setFeatureSource(.system, for: .selection)
+        try await captureAccountSettings(store, fixture: .init(inspection: signedOut),
+                                         file: output.appending(path: "apple-local-source.png"), expanded: true)
+    }
+
+    private func captureAccountSettings(
+        _ store: AIConfigurationStore, fixture: CodexSettingsPresentation.Fixture, file: URL, expanded: Bool = false
+    ) async throws {
+        let view = AISettingsView(store: store, codexSettings: .init(store: store, fixture: fixture),
+                                  expandFeatureSources: expanded)
+        let host = NSHostingView(rootView: view)
+        let window = NSPanel(contentRect: NSRect(x: 80, y: 80, width: 720, height: expanded ? 760 : 690),
+                             styleMask: [.titled, .nonactivatingPanel], backing: .buffered, defer: false)
+        window.title = "AI 模型"
+        window.appearance = NSAppearance(named: .aqua)
+        window.isReleasedWhenClosed = false
+        window.contentView = host
+        window.orderFront(nil)
+        defer { window.orderOut(nil); window.contentView = nil }
+        try await Task.sleep(for: .milliseconds(220))
+        host.layoutSubtreeIfNeeded()
+        let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+        host.cacheDisplay(in: host.bounds, to: bitmap)
+        try XCTUnwrap(bitmap.representation(using: .png, properties: [:])).write(to: file)
+    }
+
     func testRenderCurrentReadmeScreenshots() async throws {
         let output = FileManager.default.temporaryDirectory.appending(path: "quicknote-readme-current")
         try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)

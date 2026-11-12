@@ -20,7 +20,7 @@ final class DesktopPetVoiceTests: XCTestCase {
             var calls = 0
             var failing = true
             let voice = DesktopPetVoiceController(session: session, allNotes: repository.allNotes, pet: pet,
-                showSettings: {}, openNote: { _ in }, analyze: { _, text in
+                store: localVoiceStore(defaults), showSettings: {}, openNote: { _ in }, analyze: { _, text in
                     calls += 1
                     if failing { throw AIAnalyzerError.server(status: status, message: "System is too busy now") }
                     XCTAssertEqual(text, "修改后的文字")
@@ -49,7 +49,7 @@ final class DesktopPetVoiceTests: XCTestCase {
         }
         var calls = 0
         let voice = DesktopPetVoiceController(session: session, allNotes: repository.allNotes, pet: pet,
-            showSettings: {}, openNote: { _ in }, analyze: { _, _ in
+            store: localVoiceStore(defaults), showSettings: {}, openNote: { _ in }, analyze: { _, _ in
                 calls += 1
                 throw AIAnalyzerError.server(status: 503, message: "busy")
             })
@@ -76,7 +76,7 @@ final class DesktopPetVoiceTests: XCTestCase {
         var calls = 0
         let completed = expectation(description: "third request recovers")
         let voice = DesktopPetVoiceController(session: session, allNotes: repository.allNotes, pet: pet,
-            showSettings: {}, openNote: { _ in }, analyze: { _, text in
+            store: localVoiceStore(defaults), showSettings: {}, openNote: { _ in }, analyze: { _, text in
                 calls += 1
                 XCTAssertEqual(text, "像由心生")
                 if calls < 3 { throw AIAnalyzerError.server(status: 503, message: "System is too busy now") }
@@ -150,7 +150,7 @@ final class DesktopPetVoiceTests: XCTestCase {
         let pet = DesktopPetController(defaults: defaults)
         defer { pet.stop() }
         let voice = DesktopPetVoiceController(session: session, allNotes: repository.allNotes, pet: pet,
-            showSettings: {}, openNote: { _ in }, analyze: { _, _ in
+            store: localVoiceStore(defaults), showSettings: {}, openNote: { _ in }, analyze: { _, _ in
                 try await Task.sleep(for: .seconds(21))
                 return AITextResult(text: "相由心生，这个“相”是什么意思？", providerName: "延迟测试")
             })
@@ -176,8 +176,11 @@ final class DesktopPetVoiceTests: XCTestCase {
         let pet = DesktopPetController(defaults: defaults)
         defer { pet.stop() }
         var calls = 0
+        let store = AIConfigurationStore(defaults: defaults)
+        store.setFeatureSource(.codex, for: .voiceOrganization)
+        XCTAssertFalse(store.confirmVoicePolishing)
         let voice = DesktopPetVoiceController(session: session, allNotes: repository.allNotes, pet: pet,
-            showSettings: {}, openNote: { _ in XCTFail("不能自动打开便签") },
+            store: store, showSettings: {}, openNote: { _ in XCTFail("不能自动打开便签") },
             analyze: { instruction, material in
                 calls += 1
                 XCTAssertTrue(instruction.contains("同音"))
@@ -189,6 +192,7 @@ final class DesktopPetVoiceTests: XCTestCase {
             }, confirmSending: { _ in XCTFail("自动整理不能弹第二次确认框"); return false })
         voice.show(startImmediately: false)
         defer { voice.close() }
+        XCTAssertEqual(voice.polishingDestination, "整理将发送至 Codex（ChatGPT 账号）")
         voice.recorder.start() // Complete synchronously before microphone authorization can run.
         let token = voice.recorder.generation
         voice.recorder.receiveRecognition("像由心生这个像到底是什么意思", isFinal: false, error: nil, token: token)
@@ -221,6 +225,51 @@ final class DesktopPetVoiceTests: XCTestCase {
         XCTAssertEqual(calls, 1, "复制、还原和存入不能再次调用 AI")
     }
 
+    func testOptionalPolishingConsentPreservesTranscriptAndAllowsRetry() async throws {
+        let (container, repository, documents, session) = try fixture()
+        defer { withExtendedLifetime(container) {}; try? FileManager.default.removeItem(at: documents.root) }
+        let name = "QuickNote-Voice-Polishing-Consent-\(UUID())"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: name))
+        defer { defaults.removePersistentDomain(forName: name) }
+        let pet = DesktopPetController(defaults: defaults)
+        defer { pet.stop() }
+        let store = AIConfigurationStore(defaults: defaults)
+        store.setFeatureSource(.codex, for: .voiceOrganization)
+        store.confirmVoicePolishing = true
+        var allowsSending = false
+        var confirmations = 0
+        var calls = 0
+        let didPolish = expectation(description: "Accepted retry receives only the transcript")
+        let voice = DesktopPetVoiceController(session: session, allNotes: repository.allNotes, pet: pet,
+            store: store, showSettings: {}, openNote: { _ in }, analyze: { _, text in
+                calls += 1
+                XCTAssertEqual(text, "松风路见面")
+                didPolish.fulfill()
+                return AITextResult(text: "松风路见面。", providerName: "隔离测试")
+            }, confirmSending: { content in
+                confirmations += 1
+                XCTAssertTrue(content.contains("语音转写文字"))
+                return allowsSending
+            })
+        voice.show(startImmediately: false)
+        defer { voice.close() }
+        voice.recorder.start()
+        voice.recorder.receiveRecognition("松风路见面", isFinal: true, error: nil, token: voice.recorder.generation)
+        XCTAssertEqual(confirmations, 1)
+        XCTAssertEqual(calls, 0)
+        XCTAssertEqual(voice.recorder.transcript, "松风路见面")
+        XCTAssertTrue(voice.canRetryPolishing)
+        XCTAssertFalse(voice.isWorking)
+
+        allowsSending = true
+        voice.retryPolishing()
+        await fulfillment(of: [didPolish], timeout: 1)
+        XCTAssertEqual(confirmations, 2)
+        XCTAssertEqual(calls, 1)
+        XCTAssertEqual(voice.recorder.transcript, "松风路见面。")
+        XCTAssertEqual(voice.unpolishedTranscript, "松风路见面")
+    }
+
     func testAutomaticPolishFailureKeepsRawAndCancellationRejectsLateCompletion() async throws {
         let (container, repository, documents, session) = try fixture()
         defer { withExtendedLifetime(container) {}; try? FileManager.default.removeItem(at: documents.root) }
@@ -231,7 +280,7 @@ final class DesktopPetVoiceTests: XCTestCase {
         defer { pet.stop() }
         for outcome in ["", "   ", String(repeating: "字", count: 12_001), "throw"] {
             let voice = DesktopPetVoiceController(session: session, allNotes: repository.allNotes, pet: pet,
-                showSettings: {}, openNote: { _ in }, analyze: { _, _ in
+                store: localVoiceStore(defaults), showSettings: {}, openNote: { _ in }, analyze: { _, _ in
                     if outcome == "throw" { throw URLError(.timedOut) }
                     return AITextResult(text: outcome, providerName: "隔离测试")
                 })
@@ -249,7 +298,7 @@ final class DesktopPetVoiceTests: XCTestCase {
         let reply = OfflineReply(began)
         var calls = 0
         let voice = DesktopPetVoiceController(session: session, allNotes: repository.allNotes, pet: pet,
-            showSettings: {}, openNote: { _ in }, analyze: { _, _ in
+            store: localVoiceStore(defaults), showSettings: {}, openNote: { _ in }, analyze: { _, _ in
                 calls += 1
                 return AITextResult(text: try await reply.result(), providerName: "隔离测试")
             })
@@ -285,7 +334,7 @@ final class DesktopPetVoiceTests: XCTestCase {
         let began = expectation(description: "unresponsive provider")
         let reply = OfflineReply(began)
         let voice = DesktopPetVoiceController(session: session, allNotes: repository.allNotes, pet: pet,
-            showSettings: {}, openNote: { _ in }, analyze: { _, _ in
+            store: localVoiceStore(defaults), showSettings: {}, openNote: { _ in }, analyze: { _, _ in
                 AITextResult(text: try await reply.result(), providerName: "隔离测试")
             }, polishingTimeout: .milliseconds(100))
         voice.show(startImmediately: false)
@@ -503,8 +552,10 @@ final class DesktopPetVoiceTests: XCTestCase {
         defer { defaults.removePersistentDomain(forName: name) }
         let pet = DesktopPetController(defaults: defaults)
         defer { pet.stop() }
+        let store = AIConfigurationStore(defaults: defaults)
+        store.setFeatureSource(.system, for: .voiceOrganization)
         let voice = DesktopPetVoiceController(session: session, allNotes: repository.allNotes, pet: pet,
-            showSettings: {}, openNote: { _ in })
+            store: store, showSettings: {}, openNote: { _ in })
         voice.show(startImmediately: false)
         defer { voice.close() }
         let window = try XCTUnwrap(NSApp.windows.first { $0.title == "说给小鸟听" && $0.isVisible })
@@ -665,8 +716,10 @@ final class DesktopPetVoiceTests: XCTestCase {
         defer { defaults.removePersistentDomain(forName: name) }
         let pet = DesktopPetController(defaults: defaults)
         defer { pet.stop() }
+        let store = AIConfigurationStore(defaults: defaults)
+        store.setFeatureSource(.system, for: .voiceOrganization)
         let voice = DesktopPetVoiceController(session: session, allNotes: repository.allNotes, pet: pet,
-            showSettings: {}, openNote: { _ in XCTFail("开始录音不能打开便签") })
+            store: store, showSettings: {}, openNote: { _ in XCTFail("开始录音不能打开便签") })
         voice.show()
         // Cancel synchronously before the authorization task runs: no microphone or OS prompts in tests.
         let phase = voice.recorder.phase
@@ -698,7 +751,7 @@ final class DesktopPetVoiceTests: XCTestCase {
         let pet = DesktopPetController(defaults: defaults)
         defer { pet.stop() }
         let voice = DesktopPetVoiceController(session: session, allNotes: repository.allNotes, pet: pet,
-            showSettings: {}, openNote: { _ in XCTFail("听写写入不能弹出便签窗口") },
+            store: localVoiceStore(defaults), showSettings: {}, openNote: { _ in XCTFail("听写写入不能弹出便签窗口") },
             analyze: { _, _ in XCTFail("直接听写不调用 AI"); throw AIAnalyzerError.invalidResponse },
             confirmSending: { _ in XCTFail("直接听写不上传"); return false })
         voice.show(startImmediately: false)
@@ -754,7 +807,7 @@ final class DesktopPetVoiceTests: XCTestCase {
         var pending: CheckedContinuation<AITextResult, any Error>?
         let began = expectation(description: "AI suspended")
         let voice = DesktopPetVoiceController(session: session, allNotes: repository.allNotes, pet: pet,
-            showSettings: {}, openNote: { _ in }, analyze: { _, _ in
+            store: localVoiceStore(defaults), showSettings: {}, openNote: { _ in }, analyze: { _, _ in
                 try await withCheckedThrowingContinuation { pending = $0; began.fulfill() }
             }, confirmSending: { _ in true })
         voice.show(startImmediately: false)
@@ -788,7 +841,7 @@ final class DesktopPetVoiceTests: XCTestCase {
         let pet = DesktopPetController(defaults: defaults)
         defer { pet.stop() }
         let voice = DesktopPetVoiceController(session: session, allNotes: repository.allNotes, pet: pet,
-            showSettings: {}, openNote: { _ in })
+            store: localVoiceStore(defaults), showSettings: {}, openNote: { _ in })
         voice.show(startImmediately: false)
         defer { voice.hide() }
         let window = try XCTUnwrap(NSApp.windows.first(where: { $0.title == "说给小鸟听" && $0.isVisible }))
@@ -983,7 +1036,7 @@ final class DesktopPetVoiceTests: XCTestCase {
         var calls = 0
         var onConfirm: (() -> Void)?
         let voice = DesktopPetVoiceController(session: session, allNotes: repository.allNotes, pet: pet,
-            showSettings: {}, openNote: { _ in }, analyze: { _, _ in
+            store: localVoiceStore(defaults), showSettings: {}, openNote: { _ in }, analyze: { _, _ in
                 calls += 1
                 return AITextResult(text: #"{"action":"create","content":"明天开会","targetTitle":""}"#, providerName: "测试")
             }, confirmSending: { _ in onConfirm?(); return true })
@@ -1036,7 +1089,7 @@ final class DesktopPetVoiceTests: XCTestCase {
         var pending: CheckedContinuation<AITextResult, any Error>?
         let began = expectation(description: "AI boundary suspended")
         let voice = DesktopPetVoiceController(session: session, allNotes: repository.allNotes, pet: pet,
-            showSettings: {}, openNote: { _ in }, analyze: { _, _ in
+            store: localVoiceStore(defaults), showSettings: {}, openNote: { _ in }, analyze: { _, _ in
                 try await withCheckedThrowingContinuation { pending = $0; began.fulfill() }
             }, confirmSending: { _ in true })
         voice.show(startImmediately: false)
@@ -1094,7 +1147,7 @@ final class DesktopPetVoiceTests: XCTestCase {
         let pet = DesktopPetController(defaults: defaults)
         defer { pet.stop() }
         let voice = DesktopPetVoiceController(session: session, allNotes: repository.allNotes, pet: pet,
-            showSettings: {}, openNote: { _ in }, analyze: { _, _ in
+            store: localVoiceStore(defaults), showSettings: {}, openNote: { _ in }, analyze: { _, _ in
                 XCTFail("本地记录不应调用 AI")
                 throw AIAnalyzerError.invalidResponse
             }, confirmSending: { _ in XCTFail("本地记录不应申请上传"); return false })
@@ -1120,6 +1173,90 @@ final class DesktopPetVoiceTests: XCTestCase {
         voice.applyPreview()
         XCTAssertEqual(try repository.allNotes().count, 2)
         XCTAssertEqual(session.document.string, saved)
+    }
+
+    func testSensitiveVoiceTargetOmitsRecognitionHintsAndBlocksFormattingBeforeConsent() throws {
+        let (container, repository, documents, session) = try fixture()
+        defer { withExtendedLifetime(container) {}; try? FileManager.default.removeItem(at: documents.root) }
+        try session.createAndOpen()
+        let note = try XCTUnwrap(session.currentNote)
+        _ = try session.importContent(NSAttributedString(string: "敏感合成标题\n正文样例"), into: note.id, at: .end)
+        try session.setSensitive(true, for: note)
+        let publicNote = repository.createNote()
+        publicNote.title = "公开合成标题"
+        try repository.save()
+        let defaultsName = "QuickNote-Voice-Sensitive-\(UUID())"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: defaultsName))
+        defer { defaults.removePersistentDomain(forName: defaultsName) }
+        let pet = DesktopPetController(defaults: defaults)
+        defer { pet.stop() }
+        let voice = DesktopPetVoiceController(session: session, allNotes: repository.allNotes, pet: pet,
+            store: localVoiceStore(defaults), showSettings: {}, openNote: { _ in }, analyze: { _, _ in
+                XCTFail("敏感便签不应调用 AI")
+                throw AIAnalyzerError.invalidResponse
+            }, confirmSending: { _ in XCTFail("敏感便签不应弹出发送确认"); return false })
+        voice.show(startImmediately: false)
+        defer { voice.hide() }
+
+        voice.invalidateAIInput(for: note.id)
+        XCTAssertTrue(voice.recorder.contextHints.contains("公开合成标题"))
+        XCTAssertFalse(voice.recorder.contextHints.contains("敏感合成标题"))
+
+        voice.recorder.transcript = "记录一段手工输入的合成文字"
+        voice.recordVerbatim()
+        voice.selectTarget(note.id)
+        voice.selectAction(.format)
+        voice.preparePreview()
+        XCTAssertNil(voice.preview)
+        XCTAssertFalse(voice.isWorking)
+        XCTAssertTrue(voice.notice.contains("敏感"))
+
+        voice.selectAction(.append)
+        voice.preparePreview()
+        XCTAssertEqual(voice.preview?.targetID, note.id)
+        XCTAssertEqual(voice.preview?.action, .append)
+    }
+
+    func testVoiceFormattingRechecksEligibilityAfterConsent() throws {
+        let (container, repository, documents, session) = try fixture()
+        defer { withExtendedLifetime(container) {}; try? FileManager.default.removeItem(at: documents.root) }
+        try session.createAndOpen()
+        let note = try XCTUnwrap(session.currentNote)
+        _ = try session.importContent(NSAttributedString(string: "合成标题\n合成正文"), into: note.id, at: .end)
+        let defaultsName = "QuickNote-Voice-Consent-\(UUID())"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: defaultsName))
+        defer { defaults.removePersistentDomain(forName: defaultsName) }
+        let pet = DesktopPetController(defaults: defaults)
+        defer { pet.stop() }
+        var didConfirm = false
+        let voice = DesktopPetVoiceController(session: session, allNotes: repository.allNotes, pet: pet,
+            store: localVoiceStore(defaults), showSettings: {}, openNote: { _ in }, analyze: { _, _ in
+                XCTFail("确认时变为敏感的便签不应调用 AI")
+                throw AIAnalyzerError.invalidResponse
+            }, confirmSending: { _ in
+                didConfirm = true
+                do { try session.setSensitive(true, for: note) }
+                catch { XCTFail("合成便签标记失败：\(error)") }
+                return true
+            })
+        voice.show(startImmediately: false)
+        defer { voice.hide() }
+        voice.recorder.transcript = "无损排版"
+        voice.recordVerbatim()
+        voice.selectTarget(note.id)
+        voice.selectAction(.format)
+        voice.preparePreview()
+        XCTAssertTrue(didConfirm)
+        XCTAssertTrue(note.isSensitive)
+        XCTAssertFalse(voice.isWorking)
+        XCTAssertNil(voice.preview)
+        XCTAssertTrue(voice.notice.contains("敏感"))
+    }
+
+    private func localVoiceStore(_ defaults: UserDefaults) -> AIConfigurationStore {
+        let store = AIConfigurationStore(defaults: defaults)
+        store.defaultFeatureSource = .system
+        return store
     }
 
     private func fixture() throws -> (ModelContainer, NoteRepository, NoteDocumentStore, NoteSession) {

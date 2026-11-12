@@ -12,11 +12,31 @@ struct EdgeRailView: View {
     let preview: (NoteRecord?) -> Void
     let select: (NoteRecord) -> Void
     let expandedChanged: (Bool) -> Void
+    var pendingCount = 0
+    var openProposals: () -> Void = {}
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var expanded = false
     @State private var transitionTask: Task<Void, Never>?
 
     var body: some View {
+        VStack(spacing: 2) {
+            if pendingCount > 0 {
+                Button(action: openProposals) {
+                    Text(pendingCount.formatted())
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .frame(width: 22, height: 18)
+                        .background(Color.accentColor, in: Capsule())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("待确认写入 \(pendingCount) 项")
+            }
+            rail
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var rail: some View {
         Group {
             if expanded {
                 VStack(spacing: 0) {

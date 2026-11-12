@@ -34,10 +34,16 @@ final class NoteSession: ObservableObject {
     private var importCursors: [UUID: (location: Int, revision: Int)] = [:]
     private var persistedDocumentData: Data?
     private var externalSavePending = false
+    var hasPendingExternalSave: Bool { externalSavePending }
     private var history: NoteVersionStore { NoteVersionStore(root: documents.root) }
     private let defaults: UserDefaults
 
     var onSaved: (() -> Void)?
+    var onIndexChange: ((NoteIndexChange, Bool) -> Void)?
+    var onIndexReload: (() -> Void)?
+    var prepareSensitiveIndexRemoval: ((UUID) throws -> Void)?
+    var onNoteBecameIneligibleForAI: ((UUID) -> Void)?
+    private var pendingIndexNotes: [UUID: Bool] = [:]
 
     func documentURL(for note: NoteRecord) -> URL {
         documents.root.appending(path: note.documentPath)
@@ -85,6 +91,57 @@ final class NoteSession: ObservableObject {
         contentRevisions[noteID, default: 0]
     }
 
+    func isEligibleForAI(noteID: UUID) -> Bool {
+        (try? repository.note(withID: noteID))?.isEligibleForAI == true
+    }
+
+    func setSensitive(_ sensitive: Bool, for note: NoteRecord) throws {
+        try requireNoPendingOperation()
+        let stored = try editableNote(note.id)
+        let previous = stored.isSensitive
+        guard previous != sensitive else { return }
+        try persistCurrent(notify: false)
+        do {
+            if sensitive { try prepareSensitiveIndexRemoval?(stored.id) }
+            stored.isSensitive = sensitive
+            try saveRepository()
+        } catch {
+            stored.isSensitive = previous
+            // Requeue the last committed value if preparing the mark evicted it.
+            queueIndexChange(stored.id, immediately: true)
+            publishIndexChanges()
+            throw error
+        }
+        queueIndexChange(stored.id, immediately: true)
+        publishIndexChanges()
+        if sensitive { onNoteBecameIneligibleForAI?(stored.id) }
+        onSaved?()
+    }
+
+    private func queueIndexChange(_ id: UUID, immediately: Bool = false) {
+        guard onIndexChange != nil else { return }
+        pendingIndexNotes[id] = immediately || pendingIndexNotes[id] == true
+    }
+
+    private func publishIndexChanges() {
+        guard let onIndexChange, !pendingIndexNotes.isEmpty else { return }
+        let changes = pendingIndexNotes
+        pendingIndexNotes.removeAll(keepingCapacity: true)
+        for (id, immediately) in changes {
+            do {
+                if let note = try repository.note(withID: id), note.isEligibleForAI {
+                    onIndexChange(.saved(NoteIndexSnapshot(noteID: id, title: note.title, text: note.plainText,
+                                                           revision: contentRevision(for: id))), immediately)
+                } else {
+                    onIndexChange(.removed(id), true)
+                }
+            } catch {
+                onIndexChange(.removed(id), true)
+                queueIndexChange(id, immediately: immediately)
+            }
+        }
+    }
+
     func documentSnapshot(for noteID: UUID) throws -> NSAttributedString {
         let note = try editableNote(noteID)
         let source = currentNote?.id == noteID ? document : try loadDocument(for: note)
@@ -104,6 +161,8 @@ final class NoteSession: ObservableObject {
         repository.restoreDeleted(note)
         do { try saveRepository() } catch { note.deletedAt = deletedAt; throw error }
         contentRevisions[note.id, default: 0] += 1
+        queueIndexChange(note.id, immediately: true)
+        publishIndexChanges()
         onSaved?()
     }
 
@@ -136,17 +195,7 @@ final class NoteSession: ObservableObject {
         let imported = NSMutableAttributedString(attributedString: content)
         AttachmentPresentation.spaceMediaBlocks(in: imported)
         if position == .newNote {
-            if let title {
-                let title = title.trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !title.isEmpty, title.count <= 120,
-                      title.rangeOfCharacter(from: .newlines) == nil else {
-                    throw NoteRecoveryError(message: "请填写 1–120 字的单行便签标题。")
-                }
-                let style = NSMutableParagraphStyle()
-                style.paragraphSpacing = 8
-                imported.insert(NSAttributedString(string: title + "\n",
-                    attributes: [.font: EditorTextStyle.title.font, .paragraphStyle: style]), at: 0)
-            }
+            if let title { try insertImportTitle(title, into: imported) }
             try createAndOpen()
             let note = currentNote!
             try replaceDocument(NoteHeadingNormalizer.normalized(imported, promoteFirstLine: true), for: note, cursor: imported.length)
@@ -188,6 +237,55 @@ final class NoteSession: ObservableObject {
         return noteID
     }
 
+    func proposalDocumentSnapshot(for id: UUID) throws -> NSAttributedString {
+        _ = try editableNote(id)
+        if currentNote?.id == id { return NSAttributedString(attributedString: document) }
+        return try documents.load(id: id)
+    }
+
+    @discardableResult
+    func importNewNoteProposal(_ content: NSAttributedString, title: String, folder: NoteFolder?) throws -> UUID {
+        try requireNoPendingOperation()
+        guard content.length > 0 else { throw NoteRecoveryError(message: "没有可导入的内容。") }
+        let imported = NSMutableAttributedString(attributedString: content)
+        AttachmentPresentation.spaceMediaBlocks(in: imported)
+        try insertImportTitle(title, into: imported)
+        let replacement = NoteHeadingNormalizer.normalized(imported, promoteFirstLine: true)
+        try persistCurrent(notify: false)
+
+        // Save the complete package before inserting its row. A failed file save leaves no empty note.
+        let id = UUID()
+        try documents.save(replacement, id: id)
+        let note = repository.createNote(id: id)
+        if let folder { repository.move(note, to: folder) }
+        note.cursorLocation = replacement.length
+        updateMetadata(note, document: replacement)
+        externalEditRevision += 1
+        activate(note, document: replacement)
+        do {
+            try saveRepository()
+            publishIndexChanges()
+            onSaved?()
+        } catch {
+            externalSavePending = true
+            let failure = NoteContentAppliedError(underlyingError: error)
+            saveError = failure
+            throw failure
+        }
+        return id
+    }
+
+    private func insertImportTitle(_ title: String, into content: NSMutableAttributedString) throws {
+        let title = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !title.isEmpty, title.count <= 120, title.rangeOfCharacter(from: .newlines) == nil else {
+            throw NoteRecoveryError(message: "请填写 1–120 字的单行便签标题。")
+        }
+        let style = NSMutableParagraphStyle()
+        style.paragraphSpacing = 8
+        content.insert(NSAttributedString(string: title + "\n",
+            attributes: [.font: EditorTextStyle.title.font, .paragraphStyle: style]), at: 0)
+    }
+
     func applyAIFormattedDocument(_ replacement: NSAttributedString, original: NSAttributedString,
                                   expectedRevision: Int, noteID: UUID) throws {
         try requireNoPendingOperation()
@@ -217,6 +315,7 @@ final class NoteSession: ObservableObject {
     func importBackup(from url: URL) throws -> Int {
         try requireNoPendingOperation()
         let count = try repository.importBackup(from: url, documents: documents, defaults: defaults, save: saveRepository)
+        onIndexReload?()
         onSaved?()
         return count
     }
@@ -250,6 +349,7 @@ final class NoteSession: ObservableObject {
                 note.cursorLocation = cursor
                 updateMetadata(note, document: replacement)
                 try saveRepository()
+                publishIndexChanges()
                 onSaved?()
             }
         } catch {
@@ -274,6 +374,7 @@ final class NoteSession: ObservableObject {
         note.title = document.string.components(separatedBy: .newlines)
             .map { $0.trimmingCharacters(in: .whitespaces) }.first(where: { !$0.isEmpty }) ?? "新便签"
         note.updatedAt = .now
+        queueIndexChange(note.id)
     }
 
     private func documentsMatch(_ lhs: NSAttributedString, _ rhs: NSAttributedString) throws -> Bool {
@@ -439,6 +540,8 @@ final class NoteSession: ObservableObject {
                 }
             }
             repository.delete(note)
+            onIndexChange?(.removed(note.id), true)
+            onNoteBecameIneligibleForAI?(note.id)
             do {
                 try saveRepository()
             } catch {
@@ -446,6 +549,7 @@ final class NoteSession: ObservableObject {
                 return true
             }
             saveError = nil
+            publishIndexChanges()
             onSaved?()
             return true
         } catch {
@@ -515,13 +619,16 @@ final class NoteSession: ObservableObject {
             pending.note = note
             let emptyDocument = NSAttributedString(string: "")
             try documents.save(emptyDocument, id: note.id)
+            queueIndexChange(note.id)
             try saveRepository()
+            publishIndexChanges()
             activate(note, document: emptyDocument)
         case let .setPinned(note, intendedValue, updatedAt):
             try persistCurrent(notify: false)
             note.isPinned = intendedValue
             note.updatedAt = updatedAt
             try saveRepository()
+            publishIndexChanges()
         }
     }
 
@@ -551,6 +658,7 @@ final class NoteSession: ObservableObject {
         guard let note = currentNote else {
             if externalSavePending {
                 try saveRepository()
+                publishIndexChanges()
                 externalSavePending = false
                 saveError = nil
                 if notify { onSaved?() }
@@ -578,6 +686,7 @@ final class NoteSession: ObservableObject {
         isDirty = false
         externalSavePending = false
         saveError = nil
+        publishIndexChanges()
         if notify { onSaved?() }
     }
 
